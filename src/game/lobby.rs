@@ -14,7 +14,7 @@ pub struct Lobby {
 pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
     Some(HttpResponse::Ok()
         .json(state.lobbies
-            .lock()
+            .read()
             .unwrap()
             .iter()
             .map(|(_, lobby)| lobby.clone())
@@ -25,7 +25,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
 
 #[get("/{id}")]
 pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> Option<HttpResponse> {
-    let lobbies = state.lobbies.lock().unwrap();
+    let lobbies = state.lobbies.read().unwrap();
     lobbies
         .get(&info.0)
         .map(| lobby | {
@@ -36,7 +36,7 @@ pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> 
 #[post("/")]
 pub async fn create_lobby(state: web::Data<AppState>) -> Option<HttpResponse> {
     let id = Uuid::new_v4();
-    let mut lobbies = state.lobbies.lock().unwrap();
+    let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id, Lobby{
         id: id,
         creator: None

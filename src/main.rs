@@ -4,13 +4,13 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use actix::Actor;
 use std::clone::Clone;
-use std::sync::{Arc, Mutex};
+use std::sync::RwLock;
 
 mod ws;
 mod game;
 
 pub struct AppState {
-    lobbies: Arc<Mutex<HashMap<Uuid, lobby::Lobby>>>, // <- Mutex is necessary to mutate safely across threads
+    lobbies: RwLock<HashMap<Uuid, lobby::Lobby>>,
 }
 
 #[actix_rt::main]
@@ -18,7 +18,7 @@ async fn main() -> std::io::Result<()> {
     // Start chat server actor
     let server = ws::server::LobbyWebsocket::default().start();
     let state = web::Data::new(AppState {
-        lobbies: Arc::new(Mutex::new(HashMap::new())),
+        lobbies: RwLock::new(HashMap::new()),
     });
 
     HttpServer::new(move || {

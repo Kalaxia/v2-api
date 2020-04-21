@@ -4,9 +4,16 @@ use uuid::Uuid;
 use crate::game::player;
 use crate::AppState;
 
+#[derive(Copy, Clone, Serialize, Deserialize)]
+enum LobbyStatus{
+    Gathering,
+    InProgress
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
     id: Uuid,
+    status: LobbyStatus,
     creator: Option<player::Player>,
 }
 
@@ -39,7 +46,8 @@ pub async fn create_lobby(state: web::Data<AppState>) -> Option<HttpResponse> {
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id, Lobby{
         id: id,
+        status: LobbyStatus::Gathering,
         creator: None
     });
-    Some(HttpResponse::Ok().json(lobbies.get(&id)))
+    Some(HttpResponse::Created().json(lobbies.get(&id)))
 }

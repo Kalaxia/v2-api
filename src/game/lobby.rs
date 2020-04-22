@@ -1,17 +1,25 @@
 use actix_web::{get, post, web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use crate::lib::auth::Claims;
 use crate::game::player;
 use crate::AppState;
+
+#[derive(Copy, Clone, Serialize, Deserialize)]
+enum LobbyStatus{
+    Gathering,
+    InProgress
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
     id: Uuid,
+    status: LobbyStatus,
     creator: Option<player::Player>,
 }
 
 #[get("/")]
-pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_lobbies(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
@@ -34,12 +42,13 @@ pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> 
 }
 
 #[post("/")]
-pub async fn create_lobby(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
     let id = Uuid::new_v4();
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id, Lobby{
         id: id,
-        creator: None
+        status: LobbyStatus::Gathering,
+        creator: Some(claims.player)
     });
-    Some(HttpResponse::Ok().json(lobbies.get(&id)))
+    Some(HttpResponse::Created().json(lobbies.get(&id)))
 }

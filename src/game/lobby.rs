@@ -19,7 +19,7 @@ pub struct Lobby {
 }
 
 #[get("/")]
-pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_lobbies(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
@@ -48,7 +48,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     lobbies.insert(id, Lobby{
         id: id,
         status: LobbyStatus::Gathering,
-        creator: None
+        creator: Some(claims.player)
     });
     Some(HttpResponse::Created().json(lobbies.get(&id)))
 }

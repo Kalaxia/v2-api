@@ -5,8 +5,8 @@ use crate::lib::auth;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Player {
-    id: Uuid,
-    username: String
+    pub id: Uuid,
+    pub username: String
 }
 
 #[post("/login")]

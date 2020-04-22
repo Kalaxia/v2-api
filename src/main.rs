@@ -1,5 +1,6 @@
 use actix_web::{web, App, HttpServer};
 use game::lobby;
+use game::player;
 use std::collections::HashMap;
 use uuid::Uuid;
 use actix::Actor;
@@ -8,6 +9,7 @@ use std::sync::RwLock;
 
 mod ws;
 mod game;
+mod lib;
 
 pub struct AppState {
     lobbies: RwLock<HashMap<Uuid, lobby::Lobby>>,
@@ -26,11 +28,19 @@ async fn main() -> std::io::Result<()> {
             .data(server.clone())
             .app_data(state.clone())
             .service(
-                web::scope("/lobbies")
-                .service(lobby::create_lobby)
-                .service(lobby::get_lobbies)
-                .service(lobby::get_lobby)
+                web::scope("/api")
+                .service(
+                    web::scope("/lobbies")
+                    .service(lobby::create_lobby)
+                    .service(lobby::get_lobbies)
+                    .service(lobby::get_lobby)
+                )
+                .service(
+                    web::scope("/players")
+                    //.service(player::register)
+                )
             )
+            .service(player::login)
             .service(web::resource("/ws/").to(ws::client::entrypoint))
     })
     .bind("127.0.0.1:8080")?

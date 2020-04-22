@@ -16,3 +16,6 @@ rand = "0.7.3"
 log = "0.4.8"
 serde = "1.0.106"
 uuid = { version = "0.8", features = ["v4", "serde"] }
+jsonwebtoken = "7.1.0"
+futures = "0.3.4"
+actix-service = "1.0.5"

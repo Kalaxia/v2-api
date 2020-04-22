@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use actix::*;
 use actix_web::{web, Error, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
+use crate::lib::auth::Claims;
 use crate::game::{ lobby, player};
 use crate::ws::server;
 use uuid::Uuid;
@@ -16,6 +17,7 @@ pub async fn entrypoint(
     req: HttpRequest,
     stream: web::Payload,
     srv: web::Data<Addr<server::LobbyWebsocket>>,
+    claims: Claims,
 ) -> Result<HttpResponse, Error> {
     ws::start(
         ClientSession {
@@ -24,7 +26,7 @@ pub async fn entrypoint(
             name: None,
             lobby: None,
             addr: srv.get_ref().clone(),
-            player: player::register_player()
+            player: claims.player,
         },
         &req,
         stream,

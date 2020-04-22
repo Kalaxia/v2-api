@@ -1,6 +1,7 @@
 use actix_web::{get, post, web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use crate::lib::auth::Claims;
 use crate::game::player;
 use crate::AppState;
 
@@ -41,7 +42,7 @@ pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> 
 }
 
 #[post("/")]
-pub async fn create_lobby(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
     let id = Uuid::new_v4();
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id, Lobby{

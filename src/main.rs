@@ -2,30 +2,31 @@ use actix_web::{web, App, HttpServer};
 use game::lobby;
 use game::player;
 use std::collections::HashMap;
-use uuid::Uuid;
-use actix::Actor;
 use std::clone::Clone;
 use std::sync::RwLock;
+use uuid::Uuid;
 
 mod ws;
 mod game;
 mod lib;
 
+use game::player::{Player, PlayerID};
+
 pub struct AppState {
     lobbies: RwLock<HashMap<Uuid, lobby::Lobby>>,
+    players: RwLock<HashMap<PlayerID, Player>>,
 }
 
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     // Start chat server actor
-    let server = ws::server::LobbyWebsocket::default().start();
     let state = web::Data::new(AppState {
         lobbies: RwLock::new(HashMap::new()),
+        players: RwLock::new(HashMap::new()),
     });
 
     HttpServer::new(move || {
         App::new()
-            .data(server.clone())
             .app_data(state.clone())
             .service(
                 web::scope("/api")

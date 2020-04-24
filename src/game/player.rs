@@ -1,25 +1,27 @@
-use actix_web::{post, HttpResponse};
+use actix_web::{web, post};
+use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::lib::{Result, auth};
+use crate::{AppState, lib::{Result, auth}, ws::client::ClientSession};
 
-#[derive(Serialize, Deserialize, Clone)]
 pub struct Player {
-    pub id: Uuid,
-    pub username: String
+    pub username: String,
+    pub websocket: Option<Addr<ClientSession>>,
 }
 
+#[derive(Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct PlayerID(Uuid);
+
 #[post("/login")]
-pub async fn login() -> Result<HttpResponse> {
+pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
     let player = Player {
-        id: Uuid::new_v4(),
-        username: String::from("")
+        username: String::from(""),
+        websocket: None,
     };
-    #[derive(Serialize)]
-    struct TokenResponse {
-        token: String
-    };
-    auth::create_jwt(auth::Claims { player, exp: 10000000000 })
-        .map(|token| HttpResponse::Ok().json(TokenResponse{ token }))
-        .map_err(Into::into)
+
+    let mut players = state.players.write().unwrap();
+    let pid = PlayerID(Uuid::new_v4());
+    players.insert(pid, player);
+    
+    Ok(auth::Claims { pid })
 }

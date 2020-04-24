@@ -100,7 +100,7 @@ impl Handler<Disconnect> for LobbyWebsocket {
     type Result = ();
 
     fn handle(&mut self, msg: Disconnect, _: &mut Context<Self>) {
-        println!("Someone disconnected");
+        println!("{} disconnected !", &msg.id);
 
         // remove address
         self.sessions.remove(&msg.id);

@@ -10,10 +10,13 @@ mod ws;
 mod game;
 mod lib;
 
-use game::player::{Player, PlayerID};
+use game::{
+    player::{Player, PlayerID},
+    lobby::{Lobby, LobbyID},
+};
 
 pub struct AppState {
-    lobbies: RwLock<HashMap<Uuid, lobby::Lobby>>,
+    lobbies: RwLock<HashMap<LobbyID, Lobby>>,
     players: RwLock<HashMap<PlayerID, Player>>,
 }
 

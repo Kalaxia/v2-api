@@ -5,6 +5,9 @@ use crate::lib::auth::Claims;
 use crate::game::player;
 use crate::AppState;
 
+#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Debug)]
+pub struct LobbyID(Uuid);
+
 #[derive(Copy, Clone, Serialize, Deserialize)]
 enum LobbyStatus{
     Gathering,
@@ -13,7 +16,6 @@ enum LobbyStatus{
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
-    id: Uuid,
     status: LobbyStatus,
     creator: Option<player::PlayerID>,
 }
@@ -32,7 +34,7 @@ pub async fn get_lobbies(state: web::Data<AppState>, claims: Claims) -> Option<H
 }
 
 #[get("/{id}")]
-pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>) -> Option<HttpResponse> {
     let lobbies = state.lobbies.read().unwrap();
     lobbies
         .get(&info.0)
@@ -43,10 +45,9 @@ pub async fn get_lobby(info: web::Path<(Uuid,)>, state: web::Data<AppState>) -> 
 
 #[post("/")]
 pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
-    let id = Uuid::new_v4();
+    let id = LobbyID(Uuid::new_v4());
     let mut lobbies = state.lobbies.write().unwrap();
-    lobbies.insert(id, Lobby{
-        id: id,
+    lobbies.insert(id.clone(), Lobby{
         status: LobbyStatus::Gathering,
         creator: Some(claims.pid)
     });

@@ -1,4 +1,4 @@
-use actix_web::{post, HttpResponse};
+use actix_web::{get, post, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::lib::auth;
@@ -23,4 +23,9 @@ pub async fn login() -> Option<HttpResponse> {
         .map(|token| HttpResponse::Ok().json(TokenResponse{ token }))
         .map_err(|_| HttpResponse::Unauthorized())
         .unwrap())
+}
+
+#[get("/me")]
+pub async fn get_current_player(claims: auth::Claims) -> Option<HttpResponse> {
+    Some(HttpResponse::Ok().json(claims.player))
 }

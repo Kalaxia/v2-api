@@ -1,7 +1,7 @@
 use actix_web::{post, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::lib::auth;
+use crate::lib::{Result, auth};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Player {
@@ -10,7 +10,7 @@ pub struct Player {
 }
 
 #[post("/login")]
-pub async fn login() -> Option<HttpResponse> {
+pub async fn login() -> Result<HttpResponse> {
     let player = Player {
         id: Uuid::new_v4(),
         username: String::from("")
@@ -19,8 +19,7 @@ pub async fn login() -> Option<HttpResponse> {
     struct TokenResponse {
         token: String
     };
-    Some(auth::create_jwt(auth::Claims { player, exp: 10000000000 })
+    auth::create_jwt(auth::Claims { player, exp: 10000000000 })
         .map(|token| HttpResponse::Ok().json(TokenResponse{ token }))
-        .map_err(|_| HttpResponse::Unauthorized())
-        .unwrap())
+        .map_err(Into::into)
 }

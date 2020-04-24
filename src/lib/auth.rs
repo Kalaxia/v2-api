@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
-use jsonwebtoken::errors::{Error as JwtError, ErrorKind};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{errors::Error as JwtError, decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use actix_web::dev::Payload;
-use actix_web::{Error, FromRequest, HttpRequest};
-use crate::game::player::Player;
+use actix_web::{FromRequest, HttpRequest};
+use crate::{lib::error::ServerError, game::player::Player};
 use futures::future::{ready, Ready};
 
 const JWT_SECRET: [u8; 6] = *b"secret";
@@ -15,8 +14,8 @@ pub struct Claims {
 }
 
 impl FromRequest for Claims {
-    type Error = Error;
-    type Future = Ready<Result<Self, Error>>;
+    type Error = ServerError;
+    type Future = Ready<Result<Self, ServerError>>;
     type Config = ();
 
     fn from_request(req: &HttpRequest, _: &mut Payload) -> <Self as FromRequest>::Future {
@@ -24,11 +23,14 @@ impl FromRequest for Claims {
             Some(header) => header.to_str().unwrap().split(' ').last().unwrap(),
             None => panic!("Not authorization header found")
         };
-        ready(decode_jwt(token).map_err(|err| match *err.kind() {
-            ErrorKind::InvalidToken => panic!("Token is invalid"), // Example on how to handle a specific error
-            ErrorKind::InvalidIssuer => panic!("Issuer is invalid"), // Example on how to handle a specific error
-            _ => panic!("Some other errors")
-        }))
+        ready(decode_jwt(token).map_err(Into::into))
+
+
+//              .map_err(|err| match *err.kind() {
+//            ErrorKind::InvalidToken => panic!("Token is invalid"), // Example on how to handle a specific error
+//            ErrorKind::InvalidIssuer => panic!("Issuer is invalid"), // Example on how to handle a specific error
+//            _ => panic!("Some other errors")
+//        }))
     }
 }
 

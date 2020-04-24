@@ -15,7 +15,7 @@ enum LobbyStatus{
 pub struct Lobby {
     id: Uuid,
     status: LobbyStatus,
-    creator: Option<player::Player>,
+    creator: Option<player::PlayerID>,
 }
 
 #[get("/")]
@@ -48,7 +48,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     lobbies.insert(id, Lobby{
         id: id,
         status: LobbyStatus::Gathering,
-        creator: Some(claims.player)
+        creator: Some(claims.pid)
     });
     Some(HttpResponse::Created().json(lobbies.get(&id)))
 }

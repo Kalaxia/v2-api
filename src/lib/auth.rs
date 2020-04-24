@@ -21,7 +21,7 @@ impl FromRequest for Claims {
     fn from_request(req: &HttpRequest, _: &mut Payload) -> <Self as FromRequest>::Future {
         let token = match req.headers().get("Authorization") {
             Some(header) => header.to_str().unwrap().split(' ').last().unwrap(),
-            None => panic!("Not authorization header found")
+            None => panic!("No authorization header found")
         };
         ready(decode_jwt(token).map_err(Into::into))
 

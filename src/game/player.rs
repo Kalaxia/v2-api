@@ -24,7 +24,7 @@ pub async fn login() -> Result<HttpResponse> {
         .map_err(Into::into)
 }
 
-#[get("/me")]
+#[get("/me/")]
 pub async fn get_current_player(claims: auth::Claims) -> Option<HttpResponse> {
     Some(HttpResponse::Ok().json(claims.player))
 }

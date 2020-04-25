@@ -44,6 +44,7 @@ impl std::error::Error for ServerError {}
 
 impl ResponseError for ServerError {
     fn status_code(&self) -> StatusCode {
+        println!("{:?}", self);
         match self {
             ServerError::ActixWebError(e) => e.as_response_error().status_code(),
             ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
@@ -56,4 +57,5 @@ impl ResponseError for ServerError {
 #[derive(Debug)]
 pub enum InternalError {
     PlayerUnknown,
+    NoAuthorizationGiven,
 }

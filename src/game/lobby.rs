@@ -27,7 +27,7 @@ pub struct Lobby {
 }
 
 #[get("/")]
-pub async fn get_lobbies(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
+pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
@@ -69,15 +69,17 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     Some(HttpResponse::Created().json(lobbies.get(&id)))
 }
 
-#[delete("/{id}/player")]
+#[delete("/{id}/players/")]
 pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
     -> Option<HttpResponse>
 {
+    let mut remove_lobby = false;
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies
         .get_mut(&info.0)
         .map(|lobby| {
             lobby.players.remove(&claims.pid);
+            remove_lobby = lobby.players.is_empty();
 
             let players = state.players.read().unwrap();
             for (id, player::Player { websocket, ..}) in players.iter() {
@@ -89,5 +91,23 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
             }
         })?;
 
-    Some(HttpResponse::Ok().body(""))
+    if remove_lobby {
+        lobbies.remove(&info.0);
+    }
+
+    Some(HttpResponse::Ok().finish())
 }
+
+#[post("/{id}/players/")]
+pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
+    -> Option<HttpResponse>
+{
+    let mut lobbies = state.lobbies.write().unwrap();
+    let lobby = lobbies.get_mut(&info.0)?;
+
+    lobby.players.insert(claims.pid);
+
+    Some(HttpResponse::NoContent().finish())
+}
+
+

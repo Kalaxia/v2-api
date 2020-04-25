@@ -38,10 +38,12 @@ async fn main() -> std::io::Result<()> {
                     .service(lobby::create_lobby)
                     .service(lobby::get_lobbies)
                     .service(lobby::get_lobby)
+                    .service(lobby::join_lobby)
+                    .service(lobby::leave_lobby)
                 )
                 .service(
                     web::scope("/players")
-                    //.service(player::register)
+                    .service(player::get_current_player)
                 )
             )
             .service(player::login)

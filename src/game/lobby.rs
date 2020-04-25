@@ -109,5 +109,3 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
 
     Some(HttpResponse::NoContent().finish())
 }
-
-

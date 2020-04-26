@@ -4,7 +4,6 @@ use game::player;
 use std::collections::HashMap;
 use std::clone::Clone;
 use std::sync::RwLock;
-use uuid::Uuid;
 
 mod ws;
 mod game;
@@ -44,6 +43,9 @@ async fn main() -> std::io::Result<()> {
                 .service(
                     web::scope("/players")
                     .service(player::get_current_player)
+                    .service(player::update_username)
+                    .service(player::update_faction)
+                    .service(player::update_ready)
                 )
             )
             .service(player::login)

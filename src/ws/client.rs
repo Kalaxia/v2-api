@@ -74,6 +74,26 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for Clie
         };
 
         println!("WEBSOCKET MESSAGE: {:?}", msg);
+        match msg {
+            ws::Message::Ping(msg) => {
+                self.hb = Instant::now();
+                ctx.pong(&msg);
+            }
+            ws::Message::Pong(_) => {
+                self.hb = Instant::now();
+            }
+            ws::Message::Text(text) => {
+                
+            }
+            ws::Message::Binary(_) => println!("Unexpected binary"),
+            ws::Message::Close(_) => {
+                ctx.stop();
+            }
+            ws::Message::Continuation(_) => {
+                ctx.stop();
+            }
+            ws::Message::Nop => (),
+        };
     }
 }
 

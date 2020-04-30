@@ -9,8 +9,9 @@ use crate::{
     ws::client::ClientSession
 };
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct PlayerData {
+    pub id: PlayerID,
     pub username: String,
     pub faction: Option<FactionID>,
     pub ready: bool
@@ -41,8 +42,10 @@ pub struct PlayerReady{
 
 #[post("/login")]
 pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
+    let pid = PlayerID(Uuid::new_v4());
     let player = Player {
         data: PlayerData {
+            id: pid.clone(),
             username: String::from(""),
             faction: None,
             ready: false,
@@ -51,7 +54,6 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
     };
 
     let mut players = state.players.write().unwrap();
-    let pid = PlayerID(Uuid::new_v4());
     players.insert(pid, player);
     
     Ok(auth::Claims { pid })

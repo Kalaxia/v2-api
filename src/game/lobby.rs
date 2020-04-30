@@ -21,6 +21,7 @@ enum LobbyStatus{
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
+    id: LobbyID,
     status: LobbyStatus,
     creator: Option<player::PlayerID>,
     players: HashSet<player::PlayerID>,
@@ -28,24 +29,53 @@ pub struct Lobby {
 
 #[get("/")]
 pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
+    #[derive(Serialize)]
+    struct LobbyData{
+        id: LobbyID,
+        status: LobbyStatus,
+        creator: Option<player::PlayerData>,
+        nb_players: usize
+    }
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
             .unwrap()
             .iter()
-            .map(|(_, lobby)| lobby.clone())
-            .collect::<Vec<Lobby>>()
+            .map(|(_, lobby)| LobbyData{
+                id: lobby.id.clone(),
+                status: lobby.status.clone(),
+                creator: Some(state.players.read().unwrap().get(&lobby.creator.unwrap()).unwrap().data.clone()),
+                nb_players: lobby.players.len()
+            })
+            .collect::<Vec<LobbyData>>()
         )
     )
 }
 
 #[get("/{id}")]
-pub async fn get_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Option<HttpResponse> {
     let lobbies = state.lobbies.read().unwrap();
+    let players = state.players.read().unwrap();
     lobbies
         .get(&info.0)
         .map(| lobby | {
-            HttpResponse::Ok().json(lobby)
+            #[derive(Serialize)]
+            struct LobbyData{
+                id: LobbyID,
+                status: LobbyStatus,
+                creator: Option<player::PlayerData>,
+                players: HashSet<player::PlayerData>,
+            }
+            let mut data = LobbyData{
+                id: lobby.id.clone(),
+                status: lobby.status.clone(),
+                creator: Some(players.get(&lobby.creator.unwrap()).unwrap().data.clone()),
+                players: HashSet::new()
+            };
+            for pid in lobby.players.iter() {
+                data.players.insert(players.get(pid).unwrap().data.clone());
+            }
+            HttpResponse::Ok().json(data)
         })
 }
 
@@ -54,6 +84,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     let id = LobbyID(Uuid::new_v4());
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id.clone(), Lobby {
+        id: id.clone(),
         status: LobbyStatus::Gathering,
         creator: Some(claims.pid.clone()),
         players: [claims.pid].iter().cloned().collect(),

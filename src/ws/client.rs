@@ -54,7 +54,16 @@ impl Handler<protocol::LobbyMessage> for ClientSession {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::LobbyMessage, ctx: &mut Self::Context) {
-        ctx.text(format!("{:?}", msg))
+        ctx.text(serde_json::to_string(&msg).unwrap())
+    }
+}
+
+/// Handle messages from chat server, we simply send it to peer websocket
+impl Handler<protocol::PlayerMessage> for ClientSession {
+    type Result = ();
+
+    fn handle(&mut self, msg: protocol::PlayerMessage, ctx: &mut Self::Context) {
+        ctx.text(serde_json::to_string(&msg).unwrap())
     }
 }
 

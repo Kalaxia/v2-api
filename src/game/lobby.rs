@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     lib::auth::Claims,
     game::player,
-    ws::protocol::LobbyMessage,
+    ws::protocol,
     AppState,
 };
 use std::collections::HashSet;
@@ -93,7 +93,10 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     let players = state.players.read().unwrap();
     for (_, player::Player { websocket, .. }) in players.iter() {
         websocket.as_ref().map(|ws| {
-            ws.do_send(LobbyMessage::LobbyCreated);
+            ws.do_send(protocol::LobbyMessage{
+                action: protocol::Action::LobbyCreated,
+                lobby: lobbies.get(&id.clone()).unwrap().clone()
+            });
         });
     }
 
@@ -113,10 +116,13 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
             remove_lobby = lobby.players.is_empty();
 
             let players = state.players.read().unwrap();
-            for (id, player::Player { websocket, ..}) in players.iter() {
+            for (id, player) in players.iter() {
                 if *id != claims.pid && lobby.players.contains(id) {
-                    websocket.as_ref().map(|ws| {
-                        ws.do_send(LobbyMessage::PlayerDisconnected);
+                    player.websocket.as_ref().map(|ws| {
+                        ws.do_send(protocol::PlayerMessage{
+                            action: protocol::Action::PlayerDisconnected,
+                            player: player.data.clone()
+                        });
                     });
                 }
             }

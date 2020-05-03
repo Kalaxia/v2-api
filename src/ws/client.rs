@@ -50,19 +50,12 @@ impl Actor for ClientSession {
 }
 
 /// Handle messages from chat server, we simply send it to peer websocket
-impl Handler<protocol::LobbyMessage> for ClientSession {
+impl<T> Handler<protocol::Message<T>> for ClientSession
+where
+    T: Clone + Send + serde::Serialize {
     type Result = ();
 
-    fn handle(&mut self, msg: protocol::LobbyMessage, ctx: &mut Self::Context) {
-        ctx.text(serde_json::to_string(&msg).unwrap())
-    }
-}
-
-/// Handle messages from chat server, we simply send it to peer websocket
-impl Handler<protocol::PlayerMessage> for ClientSession {
-    type Result = ();
-
-    fn handle(&mut self, msg: protocol::PlayerMessage, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: protocol::Message<T>, ctx: &mut Self::Context)  {
         ctx.text(serde_json::to_string(&msg).unwrap())
     }
 }

@@ -7,8 +7,7 @@ use crate::{
     ws::protocol,
     AppState,
 };
-use std::collections::HashSet;
-
+use std::collections::{HashMap, HashSet};
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Debug)]
 pub struct LobbyID(Uuid);
@@ -25,6 +24,30 @@ pub struct Lobby {
     status: LobbyStatus,
     creator: Option<player::PlayerID>,
     players: HashSet<player::PlayerID>,
+}
+
+impl Lobby {
+    pub fn ws_broadcast<T: 'static>(
+        &self,
+        players: &HashMap<player::PlayerID, player::Player>,
+        message: &protocol::Message<T>,
+        skip_id: Option<&player::PlayerID>
+    )
+    where
+        T: Clone + Send + Serialize
+    {
+        for (id, player) in players.iter() {
+            if Some(id) != skip_id && self.players.contains(id) {
+                player.websocket.as_ref().map(|ws| {
+                    ws.do_send(message.clone());
+                });
+            }
+        }
+    }
+
+    pub fn has_player(&self, pid: player::PlayerID) -> bool {
+        self.players.contains(&pid)
+    }
 }
 
 #[get("/")]
@@ -93,9 +116,9 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
     let players = state.players.read().unwrap();
     for (_, player::Player { websocket, .. }) in players.iter() {
         websocket.as_ref().map(|ws| {
-            ws.do_send(protocol::LobbyMessage{
+            ws.do_send(protocol::Message::<Lobby>{
                 action: protocol::Action::LobbyCreated,
-                lobby: lobbies.get(&id.clone()).unwrap().clone()
+                data: lobbies.get(&id.clone()).unwrap().clone()
             });
         });
     }
@@ -116,16 +139,10 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
             remove_lobby = lobby.players.is_empty();
 
             let players = state.players.read().unwrap();
-            for (id, player) in players.iter() {
-                if *id != claims.pid && lobby.players.contains(id) {
-                    player.websocket.as_ref().map(|ws| {
-                        ws.do_send(protocol::PlayerMessage{
-                            action: protocol::Action::PlayerDisconnected,
-                            player: player.data.clone()
-                        });
-                    });
-                }
-            }
+            lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
+                action: protocol::Action::PlayerDisconnected,
+                data: players.get(&claims.pid).unwrap().data.clone()
+            }, Some(&claims.pid));
         })?;
 
     if remove_lobby {
@@ -140,9 +157,14 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     -> Option<HttpResponse>
 {
     let mut lobbies = state.lobbies.write().unwrap();
+    let players = state.players.read().unwrap();
     let lobby = lobbies.get_mut(&info.0)?;
 
     lobby.players.insert(claims.pid);
+    lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
+        action: protocol::Action::PlayerJoined,
+        data: players.get(&claims.pid).unwrap().data.clone()
+    }, Some(&claims.pid));
 
     Some(HttpResponse::NoContent().finish())
 }

@@ -1,29 +1,18 @@
-use actix::Message;
-use serde::{Serialize, Deserialize};
-use crate::game::{
-    lobby::Lobby,
-    player::PlayerID,
-    player::PlayerData
-};
+use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub enum Action {
     LobbyCreated,
     LobbyUpdated,
+    LobbyRemoved,
     PlayerJoined,
+    PlayerUpdate,
     PlayerDisconnected
 }
 
-#[derive(Message, Serialize)]
+#[derive(actix::Message, Serialize, Clone)]
 #[rtype(result = "()")]
-pub struct PlayerMessage {
+pub struct Message<T> {
     pub action: Action,
-    pub player: PlayerData
-}
-
-#[derive(Message, Serialize)]
-#[rtype(result = "()")]
-pub struct LobbyMessage{
-    pub action: Action,
-    pub lobby: Lobby
+    pub data: T
 }

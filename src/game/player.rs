@@ -35,7 +35,7 @@ pub struct PlayerUsername{
 
 #[derive(Deserialize)]
 pub struct PlayerFaction{
-    pub faction: FactionID
+    pub faction_id: FactionID
 }
 
 #[derive(Deserialize)]
@@ -104,10 +104,14 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
 pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
+    let factions = state.factions.read().unwrap();
     let lobbies = state.lobbies.read().unwrap();
     let mut players = state.players.write().unwrap();
     let data = players.get_mut(&claims.pid).map(|p| {
-        p.data.faction = Some(json_data.faction);
+        if !factions.contains_key(&json_data.faction_id) {
+            panic!("faction not found");
+        }
+        p.data.faction = Some(json_data.faction_id);
         p.data.clone()
     })?;
     Player::notify_update(data, &players, &lobbies);
@@ -115,13 +119,13 @@ pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<Pla
 }
 
 #[patch("/me/ready")]
-pub async fn update_ready(state: web::Data<AppState>, json_data: web::Json<PlayerReady>, claims: auth::Claims)
+pub async fn update_ready(state: web::Data<AppState>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
     let lobbies = state.lobbies.read().unwrap();
     let mut players = state.players.write().unwrap();
     let data = players.get_mut(&claims.pid).map(|p| {
-        p.data.ready = json_data.ready;
+        p.data.ready = !p.data.ready;
         p.data.clone()
     })?;
     Player::notify_update(data, &players, &lobbies);

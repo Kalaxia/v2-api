@@ -10,11 +10,13 @@ mod game;
 mod lib;
 
 use game::{
+    faction::{Faction, FactionID, generate_factions},
     player::{Player, PlayerID},
     lobby::{Lobby, LobbyID},
 };
 
 pub struct AppState {
+    factions: RwLock<HashMap<FactionID, Faction>>,
     lobbies: RwLock<HashMap<LobbyID, Lobby>>,
     players: RwLock<HashMap<PlayerID, Player>>,
 }
@@ -23,6 +25,7 @@ pub struct AppState {
 async fn main() -> std::io::Result<()> {
     // Start chat server actor
     let state = web::Data::new(AppState {
+        factions: RwLock::new(generate_factions()),
         lobbies: RwLock::new(HashMap::new()),
         players: RwLock::new(HashMap::new()),
     });

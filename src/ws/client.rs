@@ -84,7 +84,7 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for Clie
             ws::Message::Pong(_) => {
                 self.hb = Instant::now();
             }
-            ws::Message::Text(text) => {
+            ws::Message::Text(_text) => {
                 
             }
             ws::Message::Binary(_) => println!("Unexpected binary"),

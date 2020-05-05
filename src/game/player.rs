@@ -16,6 +16,7 @@ use crate::{
 pub struct PlayerData {
     pub id: PlayerID,
     pub username: String,
+    pub lobby: Option<LobbyID>,
     pub faction: Option<FactionID>,
     pub ready: bool
 }
@@ -44,16 +45,12 @@ pub struct PlayerReady{
 }
 
 impl Player {
-    pub fn notify_update(data: PlayerData, players: &HashMap<PlayerID, Player>, lobbies: &HashMap<LobbyID, Lobby>) {
-        lobbies.iter()
-            .find(|(_, l)| l.has_player(data.id))
-            .map(|(_, l)| {
-                let id = data.id;
-                l.ws_broadcast(&players, &protocol::Message::<PlayerData>{
-                    action: protocol::Action::PlayerUpdate,
-                    data
-                }, Some(&id))
-            });
+    pub fn notify_update(data: PlayerData, players: &HashMap<PlayerID, Player>, lobby: &Lobby) {
+        let id = data.id;
+        lobby.ws_broadcast(&players, &protocol::Message::<PlayerData>{
+            action: protocol::Action::PlayerUpdate,
+            data
+        }, Some(&id))
     }
 }
 
@@ -64,6 +61,7 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
         data: PlayerData {
             id: pid.clone(),
             username: String::from(""),
+            lobby: None,
             faction: None,
             ready: false,
         },
@@ -96,7 +94,7 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
         p.data.username = json_data.username.clone();
         p.data.clone()
     })?;
-    Player::notify_update(data, &players, &lobbies);
+    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
     Some(HttpResponse::NoContent().finish())
 }
 
@@ -114,7 +112,7 @@ pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<Pla
         p.data.faction = Some(json_data.faction_id);
         p.data.clone()
     })?;
-    Player::notify_update(data, &players, &lobbies);
+    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
     Some(HttpResponse::NoContent().finish())
 }
 
@@ -128,6 +126,6 @@ pub async fn update_ready(state: web::Data<AppState>, claims: auth::Claims)
         p.data.ready = !p.data.ready;
         p.data.clone()
     })?;
-    Player::notify_update(data, &players, &lobbies);
+    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
     Some(HttpResponse::NoContent().finish())
 }

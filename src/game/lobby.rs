@@ -32,8 +32,7 @@ impl Lobby {
         players: &HashMap<player::PlayerID, player::Player>,
         message: &protocol::Message<T>,
         skip_id: Option<&player::PlayerID>
-    )
-    where
+    ) where
         T: Clone + Send + Serialize
     {
         for (id, player) in players.iter() {
@@ -105,6 +104,13 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 #[post("/")]
 pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
     let id = LobbyID(Uuid::new_v4());
+    let data = state.players.write().unwrap().get_mut(&claims.pid).map(|p| {
+        if p.data.lobby != None {
+            panic!("player is already in a lobby");
+        }
+        p.data.lobby = Some(id.clone());
+        p.data.clone()
+    })?;
     let mut lobbies = state.lobbies.write().unwrap();
     lobbies.insert(id.clone(), Lobby {
         id: id.clone(),
@@ -113,15 +119,10 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
         players: [claims.pid].iter().cloned().collect(),
     });
 
-    let players = state.players.read().unwrap();
-    for (_, player::Player { websocket, .. }) in players.iter() {
-        websocket.as_ref().map(|ws| {
-            ws.do_send(protocol::Message::<Lobby>{
-                action: protocol::Action::LobbyCreated,
-                data: lobbies.get(&id.clone()).unwrap().clone()
-            });
-        });
-    }
+    state.ws_broadcast(&protocol::Message::<Lobby>{
+        action: protocol::Action::LobbyCreated,
+        data: lobbies.get(&id.clone()).unwrap().clone()
+    }, Some(data.id.clone()), Some(true));
 
     Some(HttpResponse::Created().json(lobbies.get(&id)))
 }
@@ -130,25 +131,30 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<
 pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
     -> Option<HttpResponse>
 {
-    let mut remove_lobby = false;
+    let mut players = state.players.write().unwrap();
     let mut lobbies = state.lobbies.write().unwrap();
-    lobbies
-        .get_mut(&info.0)
-        .map(|lobby| {
-            lobby.players.remove(&claims.pid);
-            remove_lobby = lobby.players.is_empty();
+    let mut lobby = lobbies.get_mut(&info.0).unwrap();
+    let data = players.get_mut(&claims.pid).map(|p| {
+        if p.data.lobby != Some(lobby.id.clone()) {
+            panic!("player was not in this lobby")
+        }
+        p.data.lobby = None;
+        p.data.clone()
+    })?;
+    lobby.players.remove(&claims.pid);
+    lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
+        action: protocol::Action::PlayerDisconnected,
+        data: data.clone()
+    }, Some(&claims.pid));
+    drop(players);
 
-            let players = state.players.read().unwrap();
-            lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
-                action: protocol::Action::PlayerDisconnected,
-                data: players.get(&claims.pid).unwrap().data.clone()
-            }, Some(&claims.pid));
-        })?;
-
-    if remove_lobby {
+    if lobby.players.is_empty() {
+        state.ws_broadcast(&protocol::Message::<Lobby>{
+            action: protocol::Action::LobbyRemoved,
+            data: lobby.clone()
+        }, Some(data.id.clone()), Some(true));
         lobbies.remove(&info.0);
     }
-
     Some(HttpResponse::Ok().finish())
 }
 
@@ -157,13 +163,20 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     -> Option<HttpResponse>
 {
     let mut lobbies = state.lobbies.write().unwrap();
-    let players = state.players.read().unwrap();
-    let lobby = lobbies.get_mut(&info.0)?;
+    let mut players = state.players.write().unwrap();
+    let mut lobby = lobbies.get_mut(&info.0)?;
+    let data = players.get_mut(&claims.pid).map(|p| {
+        if p.data.lobby != None {
+            panic!("already joined a lobby")
+        }
+        p.data.lobby = Some(lobby.id.clone());
+        p.data.clone()
+    })?;
 
     lobby.players.insert(claims.pid);
     lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
         action: protocol::Action::PlayerJoined,
-        data: players.get(&claims.pid).unwrap().data.clone()
+        data
     }, Some(&claims.pid));
 
     Some(HttpResponse::NoContent().finish())

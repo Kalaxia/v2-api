@@ -21,6 +21,25 @@ pub struct AppState {
     players: RwLock<HashMap<PlayerID, Player>>,
 }
 
+impl AppState {
+    pub fn ws_broadcast<T: 'static>(
+        &self,
+        message: &ws::protocol::Message<T>,
+        skip_id: Option<PlayerID>,
+        only_free_players: Option<bool>
+    ) where
+        T: Clone + Send + serde::Serialize
+    {
+        let mut players = self.players.read().unwrap();
+        let ofp = only_free_players.unwrap_or(false);
+        players.iter().for_each(|(_, p)| {
+            if (!ofp || (ofp && p.data.lobby == None)) && Some(p.data.id) != skip_id {
+                p.websocket.as_ref().map(|ws| ws.do_send(message.clone()));
+            }
+        });
+    }
+}
+
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     // Start chat server actor

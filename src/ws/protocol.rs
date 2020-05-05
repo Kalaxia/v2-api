@@ -4,6 +4,7 @@ use serde::Serialize;
 pub enum Action {
     LobbyCreated,
     LobbyUpdated,
+    LobbyNameUpdated,
     LobbyRemoved,
     PlayerJoined,
     PlayerUpdate,

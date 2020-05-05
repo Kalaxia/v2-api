@@ -13,17 +13,17 @@ use std::collections::{HashMap, HashSet};
 pub struct LobbyID(Uuid);
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
-enum LobbyStatus{
+pub enum LobbyStatus{
     Gathering,
     InProgress,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
-    id: LobbyID,
-    status: LobbyStatus,
-    creator: Option<player::PlayerID>,
-    players: HashSet<player::PlayerID>,
+    pub id: LobbyID,
+    pub status: LobbyStatus,
+    pub creator: Option<player::PlayerID>,
+    pub players: HashSet<player::PlayerID>,
 }
 
 impl Lobby {

@@ -88,13 +88,28 @@ pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
 pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<PlayerUsername>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let lobbies = state.lobbies.read().unwrap();
     let mut players = state.players.write().unwrap();
     let data = players.get_mut(&claims.pid).map(|p| {
         p.data.username = json_data.username.clone();
         p.data.clone()
     })?;
-    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
+    let lobbies = state.lobbies.read().unwrap();
+    let lobby = lobbies.get(&data.clone().lobby.unwrap()).unwrap();
+    Player::notify_update(data.clone(), &players, lobby);
+    drop(players);
+
+    if lobby.creator == Some(data.id) {
+        #[derive(Serialize, Clone)]
+        struct LobbyName{
+            id: LobbyID,
+            name: String
+        };
+        state.ws_broadcast(&protocol::Message::<LobbyName>{
+            action: protocol::Action::LobbyNameUpdated,
+            data: LobbyName{ id: lobby.id.clone(), name: data.username.clone() }
+        }, Some(data.id), Some(true));
+    }
+
     Some(HttpResponse::NoContent().finish())
 }
 

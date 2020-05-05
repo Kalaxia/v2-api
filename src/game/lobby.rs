@@ -138,6 +138,9 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
         if p.data.lobby != Some(lobby.id.clone()) {
             panic!("player was not in this lobby")
         }
+        p.data.username = String::from("");
+        p.data.faction = None;
+        p.data.ready = false;
         p.data.lobby = None;
         p.data.clone()
     })?;

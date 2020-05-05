@@ -1,25 +1,146 @@
-use actix_web::{post, HttpResponse};
+use actix_web::{web, get, patch, post, HttpResponse};
+use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::lib::{Result, auth};
+use std::collections::HashMap;
+use crate::{
+    AppState,
+    game::lobby::{LobbyID, Lobby},
+    game::faction::FactionID,
+    lib::{Result, auth},
+    ws::protocol,
+    ws::client::ClientSession
+};
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
+pub struct PlayerData {
+    pub id: PlayerID,
+    pub username: String,
+    pub lobby: Option<LobbyID>,
+    pub faction: Option<FactionID>,
+    pub ready: bool
+}
+
 pub struct Player {
-    pub id: Uuid,
+    pub data: PlayerData,
+    pub websocket: Option<Addr<ClientSession>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct PlayerID(Uuid);
+
+#[derive(Deserialize)]
+pub struct PlayerUsername{
     pub username: String
 }
 
+#[derive(Deserialize)]
+pub struct PlayerFaction{
+    pub faction_id: FactionID
+}
+
+#[derive(Deserialize)]
+pub struct PlayerReady{
+    pub ready: bool
+}
+
+impl Player {
+    pub fn notify_update(data: PlayerData, players: &HashMap<PlayerID, Player>, lobby: &Lobby) {
+        let id = data.id;
+        lobby.ws_broadcast(&players, &protocol::Message::<PlayerData>{
+            action: protocol::Action::PlayerUpdate,
+            data
+        }, Some(&id))
+    }
+}
+
 #[post("/login")]
-pub async fn login() -> Result<HttpResponse> {
+pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
+    let pid = PlayerID(Uuid::new_v4());
     let player = Player {
-        id: Uuid::new_v4(),
-        username: String::from("")
+        data: PlayerData {
+            id: pid.clone(),
+            username: String::from(""),
+            lobby: None,
+            faction: None,
+            ready: false,
+        },
+        websocket: None,
     };
-    #[derive(Serialize)]
-    struct TokenResponse {
-        token: String
-    };
-    auth::create_jwt(auth::Claims { player, exp: 10000000000 })
-        .map(|token| HttpResponse::Ok().json(TokenResponse{ token }))
-        .map_err(Into::into)
+
+    let mut players = state.players.write().unwrap();
+    players.insert(pid, player);
+    
+    Ok(auth::Claims { pid })
+}
+
+#[get("/me/")]
+pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
+    -> Option<HttpResponse>
+{
+    let players = state.players.read().unwrap();
+    players
+        .get(&claims.pid)
+        .map(|p| HttpResponse::Ok().json(p.data.clone()))
+}
+
+#[patch("/me/username")]
+pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<PlayerUsername>, claims: auth::Claims)
+    -> Option<HttpResponse>
+{
+    let mut players = state.players.write().unwrap();
+    let data = players.get_mut(&claims.pid).map(|p| {
+        p.data.username = json_data.username.clone();
+        p.data.clone()
+    })?;
+    let lobbies = state.lobbies.read().unwrap();
+    let lobby = lobbies.get(&data.clone().lobby.unwrap()).unwrap();
+    Player::notify_update(data.clone(), &players, lobby);
+    drop(players);
+
+    if lobby.creator == Some(data.id) {
+        #[derive(Serialize, Clone)]
+        struct LobbyName{
+            id: LobbyID,
+            name: String
+        };
+        state.ws_broadcast(&protocol::Message::<LobbyName>{
+            action: protocol::Action::LobbyNameUpdated,
+            data: LobbyName{ id: lobby.id.clone(), name: data.username.clone() }
+        }, Some(data.id), Some(true));
+    }
+
+    Some(HttpResponse::NoContent().finish())
+}
+
+#[patch("/me/faction")]
+pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
+    -> Option<HttpResponse>
+{
+    let factions = state.factions.read().unwrap();
+    let lobbies = state.lobbies.read().unwrap();
+    let mut players = state.players.write().unwrap();
+    let data = players.get_mut(&claims.pid).map(|p| {
+        if !factions.contains_key(&json_data.faction_id) {
+            panic!("faction not found");
+        }
+        p.data.faction = Some(json_data.faction_id);
+        p.data.clone()
+    })?;
+    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
+    Some(HttpResponse::NoContent().finish())
+}
+
+#[patch("/me/ready")]
+pub async fn update_ready(state: web::Data<AppState>, claims: auth::Claims)
+    -> Option<HttpResponse>
+{
+    let lobbies = state.lobbies.read().unwrap();
+    let mut players = state.players.write().unwrap();
+    let data = players.get_mut(&claims.pid).map(|p| {
+        p.data.ready = !p.data.ready;
+        p.data.clone()
+    })?;
+    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
+    Some(HttpResponse::NoContent().finish())
 }

@@ -1,12 +1,13 @@
 use std::time::{Duration, Instant};
 
 use actix::*;
-use actix_web::{web, Error, HttpRequest, HttpResponse};
+use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use crate::lib::auth::Claims;
-use crate::game::{ lobby, player};
-use crate::ws::server;
-use uuid::Uuid;
+use crate::{
+    lib::{Result, error::InternalError, auth::Claims},
+    ws::protocol,
+    AppState,
+};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
@@ -16,38 +17,22 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn entrypoint(
     req: HttpRequest,
     stream: web::Payload,
-    srv: web::Data<Addr<server::LobbyWebsocket>>,
+    state: web::Data<AppState>,
     claims: Claims,
-) -> Result<HttpResponse, Error> {
-    ws::start(
-        ClientSession {
-            id: Uuid::new_v4(),
-            hb: Instant::now(),
-            name: None,
-            lobby: None,
-            addr: srv.get_ref().clone(),
-            player: claims.player,
+) -> Result<HttpResponse> {
+    let mut players = state.players.write().unwrap();
+
+    match players.get_mut(&claims.pid) {
+        Some(player) => {
+            let (addr, resp) = ws::start_with_addr(ClientSession{ hb:Instant::now() }, &req, stream)?;
+            player.websocket = Some(addr);
+            Ok(resp)
         },
-        &req,
-        stream,
-    )
+        None => Err(InternalError::PlayerUnknown.into())
+    }
 }
 
-struct ClientSession {
-    /// unique session id
-    id: Uuid,
-    /// Client must send ping at least once per 10 seconds (CLIENT_TIMEOUT),
-    /// otherwise we drop connection.
-    hb: Instant,
-    /// joined room
-    lobby: Option<lobby::Lobby>,
-    /// peer name
-    name: Option<String>,
-    /// Chat server
-    addr: Addr<server::LobbyWebsocket>,
-
-    player: player::Player
-}
+pub struct ClientSession { hb:Instant }
 
 impl Actor for ClientSession {
     type Context = ws::WebsocketContext<Self>;
@@ -57,50 +42,29 @@ impl Actor for ClientSession {
     fn started(&mut self, ctx: &mut Self::Context) {
         // we'll start heartbeat process on session start.
         self.hb(ctx);
-
-        // register self in chat server. `AsyncContext::wait` register
-        // future within context, but context waits until this future resolves
-        // before processing any other events.
-        // HttpContext::state() is instance of WsChatSessionState, state is shared
-        // across all routes within application
-        let addr = ctx.address();
-        self.addr
-            .send(server::Connect {
-                addr: addr.recipient(),
-            })
-            .into_actor(self)
-            .then(|res, act, ctx| {
-                match res {
-                    Ok(Some(res)) => act.id = res,
-                    // something is wrong with chat server
-                    _ => ctx.stop(),
-                }
-                fut::ready(())
-            })
-            .wait(ctx);
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        // notify chat server
-        self.addr.do_send(server::Disconnect { id: self.id });
         Running::Stop
     }
 }
 
 /// Handle messages from chat server, we simply send it to peer websocket
-impl Handler<server::Message> for ClientSession {
+impl<T> Handler<protocol::Message<T>> for ClientSession
+where
+    T: Clone + Send + serde::Serialize {
     type Result = ();
 
-    fn handle(&mut self, msg: server::Message, ctx: &mut Self::Context) {
-        ctx.text(msg.0);
+    fn handle(&mut self, msg: protocol::Message<T>, ctx: &mut Self::Context)  {
+        ctx.text(serde_json::to_string(&msg).unwrap())
     }
 }
 
 /// WebSocket message handler
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ClientSession {
+impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for ClientSession {
     fn handle(
         &mut self,
-        msg: Result<ws::Message, ws::ProtocolError>,
+        msg: std::result::Result<ws::Message, ws::ProtocolError>,
         ctx: &mut Self::Context,
     ) {
         let msg = match msg {
@@ -120,14 +84,8 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ClientSession {
             ws::Message::Pong(_) => {
                 self.hb = Instant::now();
             }
-            ws::Message::Text(text) => {
-                let m = text.trim();
-                let msg = m.to_owned();
-                // send message to chat server
-                self.addr.do_send(server::ClientMessage {
-                    id: self.id,
-                    msg,
-                })
+            ws::Message::Text(_text) => {
+                
             }
             ws::Message::Binary(_) => println!("Unexpected binary"),
             ws::Message::Close(_) => {
@@ -137,7 +95,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for ClientSession {
                 ctx.stop();
             }
             ws::Message::Nop => (),
-        }
+        };
     }
 }
 
@@ -151,9 +109,6 @@ impl ClientSession {
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 // heartbeat timed out
                 println!("Websocket Client heartbeat failed, disconnecting!");
-
-                // notify chat server
-                act.addr.do_send(server::Disconnect { id: act.id });
 
                 // stop actor
                 ctx.stop();

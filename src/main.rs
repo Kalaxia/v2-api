@@ -94,9 +94,11 @@ async fn main() -> std::io::Result<()> {
     builder.set_private_key_file(get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem").unwrap(), SslFiletype::PEM).unwrap();
     builder.set_certificate_chain_file(env::var_os("SSL_CERTIFICATE", "../var/ssl/cert.pem").unwrap()).unwrap();
 
+    let state = web::Data::new(generate_state());
+
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .app_data(web::Data::new(generate_state())).configure(config))
+        .app_data(state.clone()).configure(config))
         .bind_openssl(get_env("LISTENING_URL", "127.0.0.1:80"), builder)?
         .run()
         .await
@@ -108,9 +110,11 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
+    let state = web::Data::new(generate_state());
+
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .app_data(web::Data::new(generate_state())).configure(config))
+        .app_data(state.clone()).configure(config))
         .bind(get_env("LISTENING_URL", "127.0.0.1:80"))?
         .run()
         .await

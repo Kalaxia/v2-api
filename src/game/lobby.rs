@@ -58,6 +58,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
         creator: Option<player::PlayerData>,
         nb_players: usize
     }
+    let players = state.players.read().unwrap();
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
@@ -66,7 +67,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
             .map(|(_, lobby)| LobbyData{
                 id: lobby.id.clone(),
                 status: lobby.status.clone(),
-                creator: Some(state.players.read().unwrap().get(&lobby.creator.unwrap()).unwrap().data.clone()),
+                creator: players.get(&lobby.creator.unwrap()).map(|p| p.data.clone()),
                 nb_players: lobby.players.len()
             })
             .collect::<Vec<LobbyData>>()

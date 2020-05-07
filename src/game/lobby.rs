@@ -146,7 +146,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     })?;
     lobby.players.remove(&claims.pid);
     lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
-        action: protocol::Action::PlayerDisconnected,
+        action: protocol::Action::PlayerLeft,
         data: data.clone()
     }, Some(&claims.pid));
     drop(players);

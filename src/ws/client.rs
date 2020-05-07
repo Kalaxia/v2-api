@@ -5,6 +5,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use crate::{
     lib::{Result, error::InternalError, auth::Claims},
+    game::{player::{PlayerID, PlayerData}},
     ws::protocol,
     AppState,
 };
@@ -21,18 +22,58 @@ pub async fn entrypoint(
     claims: Claims,
 ) -> Result<HttpResponse> {
     let mut players = state.players.write().unwrap();
+    let p = players.get_mut(&claims.pid);
 
-    match players.get_mut(&claims.pid) {
-        Some(player) => {
-            let (addr, resp) = ws::start_with_addr(ClientSession{ hb:Instant::now() }, &req, stream)?;
-            player.websocket = Some(addr);
-            Ok(resp)
-        },
-        None => Err(InternalError::PlayerUnknown.into())
+    if p.is_none() {
+        return Err(InternalError::PlayerUnknown.into());
     }
+    let player = p.unwrap();
+    let (addr, resp) = ws::start_with_addr(ClientSession{
+        hb: Instant::now(),
+        state: state.clone(),
+        pid: player.data.id.clone()
+    }, &req, stream)?;
+    player.websocket = Some(addr);
+    let data = player.data.clone();
+    drop(players);
+
+    state.ws_broadcast(&protocol::Message::<PlayerData>{
+        action: protocol::Action::PlayerConnected,
+        data: data.clone()
+    }, Some(data.id.clone()), Some(true));
+
+    Ok(resp)
 }
 
-pub struct ClientSession { hb:Instant }
+pub struct ClientSession {
+    hb: Instant,
+    state: web::Data<AppState>,
+    pid: PlayerID
+}
+
+impl ClientSession {
+    fn logout(&self) {
+        let mut players = self.state.players.write().unwrap();
+        let data = players.get(&self.pid).unwrap().data.clone();
+        players.remove(&self.pid);
+
+        if (data.lobby != None) {
+            let mut lobbies = self.state.lobbies.write().unwrap();
+            let mut lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).unwrap();
+            lobby.players.remove(&self.pid);
+            lobby.ws_broadcast(&players, &protocol::Message::<PlayerData>{
+                action: protocol::Action::PlayerLeft,
+                data: data.clone()
+            }, Some(&self.pid));
+        }
+        drop(players);
+
+        self.state.ws_broadcast(&protocol::Message::<PlayerData>{
+            action: protocol::Action::PlayerDisconnected,
+            data: data.clone()
+        }, Some(self.pid), Some(true));
+    }
+}
 
 impl Actor for ClientSession {
     type Context = ws::WebsocketContext<Self>;
@@ -45,6 +86,7 @@ impl Actor for ClientSession {
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
+        self.logout();
         Running::Stop
     }
 }

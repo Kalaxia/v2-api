@@ -178,10 +178,14 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     })?;
 
     lobby.players.insert(claims.pid);
-    lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
+    let message = &protocol::Message::<player::PlayerData>{
         action: protocol::Action::PlayerJoined,
         data
-    }, Some(&claims.pid));
+    };
+    lobby.ws_broadcast(&players, message, Some(&claims.pid));
+    drop(players);
+
+    state.ws_broadcast(message, Some(claims.pid), Some(true));
 
     Some(HttpResponse::NoContent().finish())
 }

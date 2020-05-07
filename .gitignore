@@ -1,1 +1,7 @@
 /target
+
+.dist.env
+kalaxia.dist.env
+
+/var/ssl/*
+!/**/.gitkeep

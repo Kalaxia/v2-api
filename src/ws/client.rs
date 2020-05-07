@@ -5,6 +5,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use crate::{
     lib::{Result, error::InternalError, auth::Claims},
+    game::{player::PlayerData},
     ws::protocol,
     AppState,
 };
@@ -21,15 +22,23 @@ pub async fn entrypoint(
     claims: Claims,
 ) -> Result<HttpResponse> {
     let mut players = state.players.write().unwrap();
+    let p = players.get_mut(&claims.pid);
 
-    match players.get_mut(&claims.pid) {
-        Some(player) => {
-            let (addr, resp) = ws::start_with_addr(ClientSession{ hb:Instant::now() }, &req, stream)?;
-            player.websocket = Some(addr);
-            Ok(resp)
-        },
-        None => Err(InternalError::PlayerUnknown.into())
+    if p.is_none() {
+        return Err(InternalError::PlayerUnknown.into());
     }
+    let player = p.unwrap();
+    let (addr, resp) = ws::start_with_addr(ClientSession{ hb:Instant::now() }, &req, stream)?;
+    player.websocket = Some(addr);
+    let data = player.data.clone();
+    drop(players);
+
+    state.ws_broadcast(&protocol::Message::<PlayerData>{
+        action: protocol::Action::PlayerConnected,
+        data: data.clone()
+    }, Some(data.id.clone()), Some(true));
+
+    Ok(resp)
 }
 
 pub struct ClientSession { hb:Instant }

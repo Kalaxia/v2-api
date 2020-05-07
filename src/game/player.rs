@@ -74,6 +74,19 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
     Ok(auth::Claims { pid })
 }
 
+#[get("/count/")]
+pub async fn get_nb_players(state:web::Data<AppState>)
+    -> Option<HttpResponse>
+{
+    #[derive(Serialize)]
+    struct PlayersCount {
+        nb_players: usize
+    }
+    Some(HttpResponse::Ok().json(PlayersCount{
+        nb_players: state.players.read().map_or(0, |players| players.len())
+    }))
+}
+
 #[get("/me/")]
 pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
     -> Option<HttpResponse>

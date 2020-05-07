@@ -67,6 +67,7 @@ fn config(cfg: &mut web::ServiceConfig) {
         )
         .service(
             web::scope("/players")
+            .service(player::get_nb_players)
             .service(player::get_current_player)
             .service(player::update_username)
             .service(player::update_faction)

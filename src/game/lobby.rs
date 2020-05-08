@@ -9,7 +9,7 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Debug)]
+#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LobbyID(Uuid);
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
@@ -54,7 +54,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
         creator: Option<player::PlayerData>,
         nb_players: usize
     }
-    let players = state.players.read().unwrap();
+    let players = state.players.read().expect("Players RwLock poisoned");
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
@@ -73,29 +73,28 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
 
 #[get("/{id}")]
 pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Option<HttpResponse> {
-    let lobbies = state.lobbies.read().unwrap();
-    let players = state.players.read().unwrap();
-    lobbies
-        .get(&info.0)
-        .map(| lobby | {
-            #[derive(Serialize)]
-            struct LobbyData{
-                id: LobbyID,
-                status: LobbyStatus,
-                creator: Option<player::PlayerData>,
-                players: HashSet<player::PlayerData>,
-            }
-            let mut data = LobbyData{
-                id: lobby.id.clone(),
-                status: lobby.status.clone(),
-                creator: Some(players.get(&lobby.creator.unwrap()).unwrap().data.clone()),
-                players: HashSet::new()
-            };
-            for pid in lobby.players.iter() {
-                data.players.insert(players.get(pid).unwrap().data.clone());
-            }
-            HttpResponse::Ok().json(data)
-        })
+    let lobbies = state.lobbies.read().expect("Lobbies RwLock poisoned");
+    let players = state.players.read().expect("Players RwLock poisoned");
+
+    let lobby = lobbies.get(&info.0)?;
+    let creator = lobby.creator.and_then(|creator| players.get(&creator)).map(|p| p.data.clone());
+
+    #[derive(Serialize)]
+    struct LobbyData{
+        id: LobbyID,
+        status: LobbyStatus,
+        creator: Option<player::PlayerData>,
+        players: HashSet<player::PlayerData>,
+    }
+
+    let data = LobbyData{
+        id: lobby.id,
+        status: lobby.status,
+        creator,
+        players: lobby.players.iter().filter_map(|pid| Some(players.get(pid)?.data.clone())).collect(),
+    };
+
+    Some(HttpResponse::Ok().json(data))
 }
 
 #[post("/")]

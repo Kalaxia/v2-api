@@ -58,17 +58,23 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
         creator: Option<player::PlayerData>,
         nb_players: usize
     }
+
     let players = state.players.read().expect("Players RwLock poisoned");
+
     Some(HttpResponse::Ok()
         .json(state.lobbies
             .read()
-            .unwrap()
+            .expect("Lobbies RwLock poisoned")
             .iter()
-            .map(|(_, lobby)| LobbyData{
-                id: lobby.id.clone(),
-                status: lobby.status.clone(),
-                creator: players.get(&lobby.creator.unwrap()).map(|p| p.data.clone()),
-                nb_players: lobby.players.len()
+            .map(|(_, lobby)| {
+                let creator = lobby.creator.and_then(|pid| players.get(&pid));
+
+                LobbyData {
+                    id: lobby.id,
+                    status: lobby.status,
+                    creator: creator.map(|p| p.data.clone()),
+                    nb_players: lobby.players.len()
+                }
             })
             .collect::<Vec<LobbyData>>()
         )
@@ -105,7 +111,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<HttpResponse> {
     // Get the requesting player identity
     let pid = claims.pid;
-    let mut players = state.players.write().unwrap();
+    let mut players = state.players.write().expect("Players RwLock poisoned");
     let player = players.get_mut(&pid).ok_or(InternalError::PlayerUnknown)?;
 
     // If already in lobby, then error
@@ -126,7 +132,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     player.data.lobby = Some(id);
 
     // Insert the lobby into the list
-    let mut lobbies = state.lobbies.write().unwrap();
+    let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
     lobbies.insert(id, new_lobby.clone());
 
     // Notify plauers for lobby creation
@@ -187,8 +193,8 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
     -> Result<HttpResponse>
 {
-    let mut lobbies = state.lobbies.write().unwrap();
-    let mut players = state.players.write().unwrap();
+    let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
+    let mut players = state.players.write().expect("Players RwLock poisoned");
 
     let lobby = lobbies.get_mut(&info.0).ok_or(InternalError::LobbyUnknown)?;
 

@@ -57,9 +57,9 @@ impl ClientSession {
         let data = players.get(&self.pid).unwrap().data.clone();
         players.remove(&self.pid);
 
-        if (data.lobby != None) {
+        if data.lobby != None {
             let mut lobbies = self.state.lobbies.write().unwrap();
-            let mut lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).unwrap();
+            let lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).unwrap();
             lobby.players.remove(&self.pid);
             lobby.ws_broadcast(&players, &protocol::Message::<PlayerData>{
                 action: protocol::Action::PlayerLeft,

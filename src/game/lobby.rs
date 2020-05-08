@@ -43,10 +43,6 @@ impl Lobby {
             }
         }
     }
-
-    pub fn has_player(&self, pid: player::PlayerID) -> bool {
-        self.players.contains(&pid)
-    }
 }
 
 #[get("/")]
@@ -134,7 +130,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 {
     let mut players = state.players.write().unwrap();
     let mut lobbies = state.lobbies.write().unwrap();
-    let mut lobby = lobbies.get_mut(&info.0).unwrap();
+    let lobby = lobbies.get_mut(&info.0).unwrap();
     let data = players.get_mut(&claims.pid).map(|p| {
         if p.data.lobby != Some(lobby.id.clone()) {
             panic!("player was not in this lobby")
@@ -168,7 +164,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
 {
     let mut lobbies = state.lobbies.write().unwrap();
     let mut players = state.players.write().unwrap();
-    let mut lobby = lobbies.get_mut(&info.0)?;
+    let lobby = lobbies.get_mut(&info.0)?;
     let data = players.get_mut(&claims.pid).map(|p| {
         if p.data.lobby != None {
             panic!("already joined a lobby")

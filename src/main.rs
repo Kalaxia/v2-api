@@ -35,7 +35,7 @@ impl AppState {
     ) where
         T: Clone + Send + serde::Serialize
     {
-        let mut players = self.players.read().unwrap();
+        let players = self.players.read().unwrap();
         let ofp = only_free_players.unwrap_or(false);
         players.iter().for_each(|(_, p)| {
             if (!ofp || (ofp && p.data.lobby == None)) && Some(p.data.id) != skip_id {
@@ -110,7 +110,7 @@ async fn main() -> std::io::Result<()> {
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
-
+    
     let state = web::Data::new(generate_state());
 
     HttpServer::new(move || App::new()

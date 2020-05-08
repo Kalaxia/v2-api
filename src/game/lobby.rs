@@ -2,7 +2,11 @@ use actix_web::{delete, get, post, web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::{
-    lib::auth::Claims,
+    lib::{
+        Result,
+        error::{ServerError, InternalError},
+        auth::Claims
+    },
     game::player,
     ws::protocol,
     AppState,
@@ -98,29 +102,40 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 }
 
 #[post("/")]
-pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Option<HttpResponse> {
-    let id = LobbyID(Uuid::new_v4());
-    let data = state.players.write().unwrap().get_mut(&claims.pid).map(|p| {
-        if p.data.lobby != None {
-            panic!("player is already in a lobby");
-        }
-        p.data.lobby = Some(id.clone());
-        p.data.clone()
-    })?;
-    let mut lobbies = state.lobbies.write().unwrap();
-    lobbies.insert(id.clone(), Lobby {
-        id: id.clone(),
-        status: LobbyStatus::Gathering,
-        creator: Some(claims.pid.clone()),
-        players: [claims.pid].iter().cloned().collect(),
-    });
+pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<HttpResponse> {
+    // Get the requesting player identity
+    let pid = claims.pid;
+    let mut players = state.players.write().unwrap();
+    let player = players.get_mut(&pid).ok_or(InternalError::PlayerUnknown)?;
 
+    // If already in lobby, then error
+    if player.data.lobby.is_some() {
+        Err(InternalError::AlreadyInLobby)?
+    }
+
+    // Else, create a lobby
+    let id = LobbyID(Uuid::new_v4());
+    let new_lobby = Lobby {
+        id,
+        status: LobbyStatus::Gathering,
+        creator: Some(pid),
+        players: [pid].iter().copied().collect(),
+    };
+
+    // Put the player in the lobby
+    player.data.lobby = Some(id);
+
+    // Insert the lobby into the list
+    let mut lobbies = state.lobbies.write().unwrap();
+    lobbies.insert(id, new_lobby.clone());
+
+    // Notify plauers for lobby creation
     state.ws_broadcast(&protocol::Message::<Lobby>{
         action: protocol::Action::LobbyCreated,
-        data: lobbies.get(&id.clone()).unwrap().clone()
-    }, Some(data.id.clone()), Some(true));
+        data: new_lobby.clone(),
+    }, Some(player.data.id), Some(true));
 
-    Some(HttpResponse::Created().json(lobbies.get(&id)))
+    Ok(HttpResponse::Created().json(new_lobby))
 }
 
 #[delete("/{id}/players/")]

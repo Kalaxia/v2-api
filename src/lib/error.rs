@@ -44,12 +44,16 @@ impl std::error::Error for ServerError {}
 
 impl ResponseError for ServerError {
     fn status_code(&self) -> StatusCode {
+
+        use InternalError::*;
+
         println!("{:?}", self);
         match self {
             ServerError::ActixWebError(e) => e.as_response_error().status_code(),
             ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
             ServerError::InternalError(e) => match e {
-                InternalError::NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
+                NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
+                AlreadyInLobby => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -59,6 +63,10 @@ impl ResponseError for ServerError {
 
 #[derive(Debug)]
 pub enum InternalError {
+    // We couldn't map a PlayerID to an existing player
     PlayerUnknown,
+    // A player already in a lobby tries to create a lobby
+    AlreadyInLobby,
+    // A Claims was requested by the route but none were given
     NoAuthorizationGiven,
 }

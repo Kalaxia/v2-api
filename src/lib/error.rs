@@ -48,7 +48,10 @@ impl ResponseError for ServerError {
         match self {
             ServerError::ActixWebError(e) => e.as_response_error().status_code(),
             ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
-            ServerError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ServerError::InternalError(e) => match e {
+                InternalError::NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            },
             ServerError::ActixWSError(e) => e.status_code(),
         }
     }

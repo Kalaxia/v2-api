@@ -1,9 +1,5 @@
 version: '3.5'
 
-networks:
-    api:
-        driver: bridge
-
 services:
     api:
         container_name: kalaxia_v2_api

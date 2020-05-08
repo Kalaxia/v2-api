@@ -86,27 +86,27 @@ fn get_env(key: &str, default: &str) -> String {
 }
 
 #[actix_rt::main]
-#[cfg(target_feature="ssl-secure")]
+#[cfg(feature="ssl-secure")]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    builder.set_private_key_file(get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem").unwrap(), SslFiletype::PEM).unwrap();
-    builder.set_certificate_chain_file(env::var_os("SSL_CERTIFICATE", "../var/ssl/cert.pem").unwrap()).unwrap();
+    builder.set_private_key_file(get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem"), SslFiletype::PEM).unwrap();
+    builder.set_certificate_chain_file(get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem")).unwrap();
 
     let state = web::Data::new(generate_state());
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
         .app_data(state.clone()).configure(config))
-        .bind_openssl(get_env("LISTENING_URL", "127.0.0.1:80"), builder)?
+        .bind_openssl(get_env("LISTENING_URL", "127.0.0.1:443"), builder)?
         .run()
         .await
 }
 
 #[actix_rt::main]
-#[cfg(not(target_feature="ssl-secure"))]
+#[cfg(not(feature="ssl-secure"))]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();

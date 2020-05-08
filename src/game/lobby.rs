@@ -140,36 +140,47 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
 #[delete("/{id}/players/")]
 pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
-    -> Option<HttpResponse>
+    -> Result<HttpResponse>
 {
-    let mut players = state.players.write().unwrap();
-    let mut lobbies = state.lobbies.write().unwrap();
-    let lobby = lobbies.get_mut(&info.0).unwrap();
-    let data = players.get_mut(&claims.pid).map(|p| {
-        if p.data.lobby != Some(lobby.id.clone()) {
-            panic!("player was not in this lobby")
-        }
-        p.data.username = String::from("");
-        p.data.faction = None;
-        p.data.ready = false;
-        p.data.lobby = None;
-        p.data.clone()
-    })?;
+    let mut players = state.players.write().expect("Players RwLock poisoned");
+    let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
+
+    let lobby = lobbies.get_mut(&info.0).ok_or(InternalError::LobbyUnknown)?;
+
+    // Modify the player's shared data and return the new data
+    let data = players
+        .get_mut(&claims.pid)
+        .ok_or(InternalError::PlayerUnknown)
+        .and_then(|p| {
+            if p.data.lobby != Some(lobby.id) {
+                return Err(InternalError::NotInLobby)
+            }
+
+            p.data.username = String::from("");
+            p.data.faction = None;
+            p.data.ready = false;
+            p.data.lobby = None;
+            Ok(p.data.clone())
+        })?;
+
+    // Remove the player from the lobby's list and notify all remaining players
     lobby.players.remove(&claims.pid);
     lobby.ws_broadcast(&players, &protocol::Message::<player::PlayerData>{
         action: protocol::Action::PlayerLeft,
-        data: data.clone()
+        data
     }, Some(&claims.pid));
     drop(players);
 
+    // If it was the last player, remove the lobby and notify all players a lobby was closed
     if lobby.players.is_empty() {
         state.ws_broadcast(&protocol::Message::<Lobby>{
             action: protocol::Action::LobbyRemoved,
-            data: lobby.clone()
-        }, Some(data.id.clone()), Some(true));
+            data: lobby.clone(),
+        }, Some(claims.pid), Some(true));
         lobbies.remove(&info.0);
     }
-    Some(HttpResponse::Ok().finish())
+
+    Ok(HttpResponse::Ok().finish())
 }
 
 #[post("/{id}/players/")]

@@ -53,7 +53,7 @@ impl ResponseError for ServerError {
             ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
-                AlreadyInLobby => StatusCode::CONFLICT,
+                AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -65,8 +65,12 @@ impl ResponseError for ServerError {
 pub enum InternalError {
     // We couldn't map a PlayerID to an existing player
     PlayerUnknown,
+    // We couldn't map a LobbyID to an existing Lobby
+    LobbyUnknown,
     // A player already in a lobby tries to create a lobby
     AlreadyInLobby,
+    // A player wants to modify a lobby its not in
+    NotInLobby,
     // A Claims was requested by the route but none were given
     NoAuthorizationGiven,
 }

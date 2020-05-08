@@ -185,18 +185,23 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 
 #[post("/{id}/players/")]
 pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
-    -> Option<HttpResponse>
+    -> Result<HttpResponse>
 {
     let mut lobbies = state.lobbies.write().unwrap();
     let mut players = state.players.write().unwrap();
-    let lobby = lobbies.get_mut(&info.0)?;
-    let data = players.get_mut(&claims.pid).map(|p| {
-        if p.data.lobby != None {
-            panic!("already joined a lobby")
-        }
-        p.data.lobby = Some(lobby.id.clone());
-        p.data.clone()
-    })?;
+
+    let lobby = lobbies.get_mut(&info.0).ok_or(InternalError::LobbyUnknown)?;
+
+    let data = players
+        .get_mut(&claims.pid)
+        .ok_or(InternalError::PlayerUnknown)
+        .and_then(|p| {
+            if p.data.lobby.is_some() {
+                return Err(InternalError::AlreadyInLobby)
+            }
+            p.data.lobby = Some(lobby.id);
+            Ok(p.data.clone())
+        })?;
 
     lobby.players.insert(claims.pid);
     let message = &protocol::Message::<player::PlayerData>{
@@ -208,5 +213,5 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
 
     state.ws_broadcast(message, Some(claims.pid), Some(true));
 
-    Some(HttpResponse::NoContent().finish())
+    Ok(HttpResponse::NoContent().finish())
 }

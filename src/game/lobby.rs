@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     lib::{
         Result,
-        error::{ServerError, InternalError},
+        error::{InternalError},
         auth::Claims
     },
     game::player,
@@ -130,16 +130,18 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
     // Put the player in the lobby
     player.data.lobby = Some(id);
+    let data = player.data.clone();
 
     // Insert the lobby into the list
     let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
     lobbies.insert(id, new_lobby.clone());
+    drop(players);
 
     // Notify plauers for lobby creation
     state.ws_broadcast(&protocol::Message::<Lobby>{
         action: protocol::Action::LobbyCreated,
         data: new_lobby.clone(),
-    }, Some(player.data.id), Some(true));
+    }, Some(data.id), Some(true));
 
     Ok(HttpResponse::Created().json(new_lobby))
 }

@@ -6,6 +6,7 @@ pub enum Action {
     LobbyUpdated,
     LobbyNameUpdated,
     LobbyRemoved,
+    LobbyLaunched,
     PlayerConnected,
     PlayerJoined,
     PlayerUpdate,

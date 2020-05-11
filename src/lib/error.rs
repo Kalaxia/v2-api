@@ -53,6 +53,7 @@ impl ResponseError for ServerError {
             ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
+                AccessDenied => StatusCode::FORBIDDEN,
                 AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
@@ -63,6 +64,8 @@ impl ResponseError for ServerError {
 
 #[derive(Debug)]
 pub enum InternalError {
+    // A player tried to perform a restricted operation
+    AccessDenied,
     // We couldn't map a PlayerID to an existing player
     PlayerUnknown,
     // We couldn't map a LobbyID to an existing Lobby

@@ -53,7 +53,7 @@ pub struct ClientSession {
 
 impl ClientSession {
     fn logout(&self) {
-        let mut players = self.state.players.write().unwrap();
+        let mut players = self.state.players.write().expect("Players RwLock poisoned");
         let data = players.get(&self.pid).unwrap().data.clone();
         players.remove(&self.pid);
 

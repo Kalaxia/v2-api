@@ -7,7 +7,7 @@ use crate::{
         error::{InternalError},
         auth::Claims
     },
-    game::game::{Game, create_game},
+    game::game::{Game, GameData, create_game},
     game::player,
     ws::protocol,
     AppState,
@@ -143,42 +143,23 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
     let mut games = state.games.write().expect("Games RwLock poisoned");
 
-    let lobby = lobbies.get_mut(&info.0).ok_or(InternalError::LobbyUnknown)?;
+    let lobby = lobbies.get(&info.0).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_id = lobby.id.clone();
 
     if lobby.creator != Some(claims.pid.clone()) {
         Err(InternalError::AccessDenied)?
     }
-    let game = create_game(lobby.players.clone());
-    games.insert(game.id.clone(), game.clone());
-
-    lobby.players.iter().for_each(|pid| players
-        .get_mut(&pid)
-        .ok_or(InternalError::PlayerUnknown)
-        .and_then(|p| {
-            p.data.lobby = None;
-            p.data.game = Some(game.id.clone());
-            return Ok(())
-        }).unwrap()
-    );
-    #[derive(Serialize, Deserialize, Clone)]
-    struct LaunchData {
-        lobby: Lobby,
-        game: Game
-    }
-    let launch_data = LaunchData {
-        lobby: lobby.clone(),
-        game: game.clone()
-    };
-    lobby.ws_broadcast(&players, &protocol::Message::<LaunchData>{
-        action: protocol::Action::LobbyLaunched,
-        data: launch_data.clone()
-    }, None);
+    let (game_id, game) = create_game(lobby, &mut players);
+    games.insert(game_id.clone(), game.clone());
+    // Avoid deadlock in state broadcast
     drop(players);
-    state.ws_broadcast(&protocol::Message::<LaunchData>{
+
+    state.ws_broadcast(&protocol::Message::<Lobby>{
         action: protocol::Action::LobbyLaunched,
-        data: launch_data.clone(),
+        data: lobby.clone(),
     }, None, Some(true));
-    let lobby_id = lobby.id.clone();
+
+    // Clear the lobby
     drop(lobby);
     lobbies.remove(&lobby_id);
 

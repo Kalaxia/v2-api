@@ -23,6 +23,7 @@ pub struct PlayerData {
     pub ready: bool
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub data: PlayerData,
     pub websocket: Option<Addr<ClientSession>>,

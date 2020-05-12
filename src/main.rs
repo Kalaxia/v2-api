@@ -23,7 +23,7 @@ use game::{
 
 pub struct AppState {
     factions: RwLock<HashMap<FactionID, Faction>>,
-    games: RwLock<HashMap<GameID, Game>>,
+    games: RwLock<HashMap<GameID, actix::Addr<Game>>>,
     lobbies: RwLock<HashMap<LobbyID, Lobby>>,
     players: RwLock<HashMap<PlayerID, Player>>,
 }

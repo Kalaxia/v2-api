@@ -2,6 +2,7 @@ use serde::Serialize;
 
 #[derive(Serialize, Clone)]
 pub enum Action {
+    GameStarted,
     LobbyCreated,
     LobbyUpdated,
     LobbyNameUpdated,

@@ -2,6 +2,7 @@ use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use game::lobby;
 use game::player;
+use game::game::{GameID, Game};
 use std::collections::HashMap;
 use std::clone::Clone;
 use std::sync::RwLock;
@@ -22,6 +23,7 @@ use game::{
 
 pub struct AppState {
     factions: RwLock<HashMap<FactionID, Faction>>,
+    games: RwLock<HashMap<GameID, actix::Addr<Game>>>,
     lobbies: RwLock<HashMap<LobbyID, Lobby>>,
     players: RwLock<HashMap<PlayerID, Player>>,
 }
@@ -38,7 +40,7 @@ impl AppState {
         let players = self.players.read().unwrap();
         let ofp = only_free_players.unwrap_or(false);
         players.iter().for_each(|(_, p)| {
-            if (!ofp || (ofp && p.data.lobby == None)) && Some(p.data.id) != skip_id {
+            if (!ofp || (ofp && p.data.lobby == None && p.data.game == None)) && Some(p.data.id) != skip_id {
                 p.websocket.as_ref().map(|ws| ws.do_send(message.clone()));
             }
         });
@@ -48,6 +50,7 @@ impl AppState {
 fn generate_state() -> AppState {
     AppState {
         factions: RwLock::new(generate_factions()),
+        games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
         players: RwLock::new(HashMap::new()),
     }
@@ -64,6 +67,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(lobby::get_lobby)
             .service(lobby::join_lobby)
             .service(lobby::leave_lobby)
+            .service(lobby::launch_game)
         )
         .service(
             web::scope("/players")

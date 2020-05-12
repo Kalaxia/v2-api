@@ -7,6 +7,7 @@ use crate::{
         error::{InternalError},
         auth::Claims
     },
+    game::game::{Game, GameData, create_game},
     game::player,
     ws::protocol,
     AppState,
@@ -16,16 +17,9 @@ use std::collections::{HashMap, HashSet};
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LobbyID(Uuid);
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
-pub enum LobbyStatus{
-    Gathering,
-    InProgress,
-}
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
     pub id: LobbyID,
-    pub status: LobbyStatus,
     pub creator: Option<player::PlayerID>,
     pub players: HashSet<player::PlayerID>,
 }
@@ -54,7 +48,6 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
-        status: LobbyStatus,
         creator: Option<player::PlayerData>,
         nb_players: usize
     }
@@ -71,7 +64,6 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
 
                 LobbyData {
                     id: lobby.id,
-                    status: lobby.status,
                     creator: creator.map(|p| p.data.clone()),
                     nb_players: lobby.players.len()
                 }
@@ -92,14 +84,12 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
-        status: LobbyStatus,
         creator: Option<player::PlayerData>,
         players: HashSet<player::PlayerData>,
     }
 
     let data = LobbyData{
         id: lobby.id,
-        status: lobby.status,
         creator,
         players: lobby.players.iter().filter_map(|pid| Some(players.get(pid)?.data.clone())).collect(),
     };
@@ -123,7 +113,6 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     let id = LobbyID(Uuid::new_v4());
     let new_lobby = Lobby {
         id,
-        status: LobbyStatus::Gathering,
         creator: Some(pid),
         players: [pid].iter().copied().collect(),
     };
@@ -144,6 +133,37 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     }, Some(data.id), Some(true));
 
     Ok(HttpResponse::Created().json(new_lobby))
+}
+
+#[post("/{id}/launch/")]
+pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(LobbyID,)>)
+    -> Result<HttpResponse>
+{
+    let mut players = state.players.write().expect("Players RwLock poisoned");
+    let mut lobbies = state.lobbies.write().expect("Lobbies RwLock poisoned");
+    let mut games = state.games.write().expect("Games RwLock poisoned");
+
+    let lobby = lobbies.get(&info.0).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_id = lobby.id.clone();
+
+    if lobby.creator != Some(claims.pid.clone()) {
+        Err(InternalError::AccessDenied)?
+    }
+    let (game_id, game) = create_game(lobby, &mut players);
+    games.insert(game_id.clone(), game.clone());
+    // Avoid deadlock in state broadcast
+    drop(players);
+
+    state.ws_broadcast(&protocol::Message::<Lobby>{
+        action: protocol::Action::LobbyLaunched,
+        data: lobby.clone(),
+    }, None, Some(true));
+
+    // Clear the lobby
+    drop(lobby);
+    lobbies.remove(&lobby_id);
+
+    Ok(HttpResponse::NoContent().finish())
 }
 
 #[delete("/{id}/players/")]
@@ -188,7 +208,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
         lobbies.remove(&info.0);
     }
 
-    Ok(HttpResponse::Ok().finish())
+    Ok(HttpResponse::NoContent().finish())
 }
 
 #[post("/{id}/players/")]

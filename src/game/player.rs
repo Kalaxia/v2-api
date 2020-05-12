@@ -5,6 +5,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use crate::{
     AppState,
+    game::game::{GameID, Game},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     lib::{Result, auth},
@@ -16,11 +17,13 @@ use crate::{
 pub struct PlayerData {
     pub id: PlayerID,
     pub username: String,
+    pub game: Option<GameID>,
     pub lobby: Option<LobbyID>,
     pub faction: Option<FactionID>,
     pub ready: bool
 }
 
+#[derive(Clone)]
 pub struct Player {
     pub data: PlayerData,
     pub websocket: Option<Addr<ClientSession>>,
@@ -62,6 +65,7 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
             id: pid.clone(),
             username: String::from(""),
             lobby: None,
+            game: None,
             faction: None,
             ready: false,
         },

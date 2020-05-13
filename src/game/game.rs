@@ -77,15 +77,12 @@ pub fn create_game(lobby: &Lobby, players: &mut HashMap<PlayerID, Player>) -> (G
             systems: generate_systems()
         }
     };
-    lobby.players.iter().for_each(|pid| players
-        .get_mut(&pid)
-        .ok_or(InternalError::PlayerUnknown)
-        .and_then(|p| {
+    for pid in &lobby.players {
+        players.get_mut(pid).map(|p| {
             p.data.lobby = None;
-            p.data.game = Some(game.data.id.clone());
-            game.players.insert(p.data.id.clone(), p.clone());
-            return Ok(())
-        }).unwrap()
-    );
+            p.data.game = Some(game.data.id);
+            game.players.insert(p.data.id, p.clone())
+        });
+    }
     (game.data.id.clone(), game.start())
 }

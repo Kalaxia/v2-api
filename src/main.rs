@@ -1,5 +1,3 @@
-///! This crate is the 
-#![feature(concat_idents)]
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use game::lobby;
@@ -9,7 +7,6 @@ use std::collections::HashMap;
 use std::clone::Clone;
 use std::sync::RwLock;
 use std::env;
-use std::concat_idents;
 use env_logger;
 #[cfg(feature="ssl-secure")]
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
@@ -24,6 +21,8 @@ use game::{
     lobby::{Lobby, LobbyID},
 };
 
+/// Global state of the game, containing everything we need to access from everywhere.
+/// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
     factions: RwLock<HashMap<FactionID, Faction>>,
     games: RwLock<HashMap<GameID, actix::Addr<Game>>>,

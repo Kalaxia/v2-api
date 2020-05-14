@@ -21,7 +21,7 @@ pub async fn entrypoint(
     state: web::Data<AppState>,
     claims: Claims,
 ) -> Result<HttpResponse> {
-    let mut players = state.players.write().unwrap();
+    let mut players = state.players_mut();
     let p = players.get_mut(&claims.pid);
 
     if p.is_none() {
@@ -53,7 +53,7 @@ pub struct ClientSession {
 
 impl ClientSession {
     fn logout(&self) {
-        let mut players = self.state.players.write().expect("Players RwLock poisoned");
+        let mut players = self.state.players_mut();
         let data = players.get(&self.pid).unwrap().data.clone();
         players.remove(&self.pid);
 

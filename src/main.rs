@@ -1,3 +1,4 @@
+#![feature(concat_idents)]
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use game::lobby;
@@ -7,6 +8,7 @@ use std::collections::HashMap;
 use std::clone::Clone;
 use std::sync::RwLock;
 use std::env;
+use std::concat_idents;
 use env_logger;
 #[cfg(feature="ssl-secure")]
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
@@ -28,6 +30,17 @@ pub struct AppState {
     players: RwLock<HashMap<PlayerID, Player>>,
 }
 
+macro_rules! res_access {
+    { $name:ident , $name_mut:ident : $t:ty } => {
+        pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
+            self.$name.read().expect(concat!("AppState::", stringify!($name), "() RwLock poisoned"))
+        } 
+        pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
+            self.$name.write().expect(concat!("AppState::", stringify!($name_mut), " RwLock poisoned"))
+        } 
+    };
+}
+
 impl AppState {
     pub fn ws_broadcast<T: 'static>(
         &self,
@@ -45,6 +58,11 @@ impl AppState {
             }
         });
     }
+
+    res_access!{ factions, factions_mut : HashMap<FactionID, Faction> }
+    res_access!{ games, games_mut : HashMap<GameID, actix::Addr<Game>> }
+    res_access!{ lobbies, lobbies_mut : HashMap<LobbyID, Lobby> }
+    res_access!{ players, players_mut : HashMap<PlayerID, Player> }
 }
 
 fn generate_state() -> AppState {

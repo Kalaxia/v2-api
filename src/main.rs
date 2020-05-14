@@ -1,3 +1,4 @@
+///! This crate is the 
 #![feature(concat_idents)]
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
@@ -33,10 +34,10 @@ pub struct AppState {
 macro_rules! res_access {
     { $name:ident , $name_mut:ident : $t:ty } => {
         pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
-            self.$name.read().expect(concat!("AppState::", stringify!($name), "() RwLock poisoned"))
+            self.$name.read().expect(stringify!("AppState::", $name, "() RwLock poisoned"))
         } 
         pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
-            self.$name.write().expect(concat!("AppState::", stringify!($name_mut), " RwLock poisoned"))
+            self.$name.write().expect(stringify!("AppState::", $name_mut, "() RwLock poisoned"))
         } 
     };
 }

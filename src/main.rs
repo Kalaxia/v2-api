@@ -21,11 +21,24 @@ use game::{
     lobby::{Lobby, LobbyID},
 };
 
+/// Global state of the game, containing everything we need to access from everywhere.
+/// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
     factions: RwLock<HashMap<FactionID, Faction>>,
     games: RwLock<HashMap<GameID, actix::Addr<Game>>>,
     lobbies: RwLock<HashMap<LobbyID, Lobby>>,
     players: RwLock<HashMap<PlayerID, Player>>,
+}
+
+macro_rules! res_access {
+    { $name:ident , $name_mut:ident : $t:ty } => {
+        pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
+            self.$name.read().expect(stringify!("AppState::", $name, "() RwLock poisoned"))
+        } 
+        pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
+            self.$name.write().expect(stringify!("AppState::", $name_mut, "() RwLock poisoned"))
+        } 
+    };
 }
 
 impl AppState {
@@ -45,6 +58,11 @@ impl AppState {
             }
         });
     }
+
+    res_access!{ factions, factions_mut : HashMap<FactionID, Faction> }
+    res_access!{ games, games_mut : HashMap<GameID, actix::Addr<Game>> }
+    res_access!{ lobbies, lobbies_mut : HashMap<LobbyID, Lobby> }
+    res_access!{ players, players_mut : HashMap<PlayerID, Player> }
 }
 
 fn generate_state() -> AppState {

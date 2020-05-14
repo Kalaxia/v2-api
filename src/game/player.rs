@@ -72,7 +72,7 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
         websocket: None,
     };
 
-    let mut players = state.players.write().unwrap();
+    let mut players = state.players_mut();
     players.insert(pid, player);
     
     Ok(auth::Claims { pid })
@@ -95,7 +95,7 @@ pub async fn get_nb_players(state:web::Data<AppState>)
 pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let players = state.players.read().unwrap();
+    let players = state.players();
     players
         .get(&claims.pid)
         .map(|p| HttpResponse::Ok().json(p.data.clone()))
@@ -105,12 +105,12 @@ pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
 pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<PlayerUsername>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let mut players = state.players.write().unwrap();
+    let mut players = state.players_mut();
     let data = players.get_mut(&claims.pid).map(|p| {
         p.data.username = json_data.username.clone();
         p.data.clone()
     })?;
-    let lobbies = state.lobbies.read().unwrap();
+    let lobbies = state.lobbies();
     let lobby = lobbies.get(&data.clone().lobby.unwrap()).unwrap();
     Player::notify_update(data.clone(), &players, lobby);
     drop(players);
@@ -134,9 +134,9 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
 pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let factions = state.factions.read().unwrap();
-    let lobbies = state.lobbies.read().unwrap();
-    let mut players = state.players.write().unwrap();
+    let factions = state.factions();
+    let lobbies = state.lobbies();
+    let mut players = state.players_mut();
     let data = players.get_mut(&claims.pid).map(|p| {
         if !factions.contains_key(&json_data.faction_id) {
             panic!("faction not found");
@@ -152,8 +152,8 @@ pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<Pla
 pub async fn update_ready(state: web::Data<AppState>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let lobbies = state.lobbies.read().unwrap();
-    let mut players = state.players.write().unwrap();
+    let lobbies = state.lobbies();
+    let mut players = state.players_mut();
     let data = players.get_mut(&claims.pid).map(|p| {
         p.data.ready = !p.data.ready;
         p.data.clone()

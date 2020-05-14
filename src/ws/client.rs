@@ -14,14 +14,14 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Entry point for our route
+/// Entry point for our the WebSocket handshake
 pub async fn entrypoint(
     req: HttpRequest,
     stream: web::Payload,
     state: web::Data<AppState>,
     claims: Claims,
 ) -> Result<HttpResponse> {
-    let mut players = state.players.write().unwrap();
+    let mut players = state.players_mut();
     let p = players.get_mut(&claims.pid);
 
     if p.is_none() {
@@ -45,6 +45,7 @@ pub async fn entrypoint(
     Ok(resp)
 }
 
+/// WebSocket actor used to communicate with a player.
 pub struct ClientSession {
     hb: Instant,
     state: web::Data<AppState>,
@@ -53,7 +54,7 @@ pub struct ClientSession {
 
 impl ClientSession {
     fn logout(&self) {
-        let mut players = self.state.players.write().expect("Players RwLock poisoned");
+        let mut players = self.state.players_mut();
         let data = players.get(&self.pid).unwrap().data.clone();
         players.remove(&self.pid);
 

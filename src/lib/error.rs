@@ -62,18 +62,19 @@ impl ResponseError for ServerError {
     }
 }
 
+/// This enum represent all kinds of errors this specific server can encounter.
 #[derive(Debug)]
 pub enum InternalError {
-    // A player tried to perform a restricted operation
+    /// A player tried to perform a restricted operation
     AccessDenied,
-    // We couldn't map a PlayerID to an existing player
+    /// We couldn't map a PlayerID to an existing player
     PlayerUnknown,
-    // We couldn't map a LobbyID to an existing Lobby
+    /// We couldn't map a LobbyID to an existing Lobby
     LobbyUnknown,
-    // A player already in a lobby tries to create a lobby
+    /// A player already in a lobby tries to create a lobby
     AlreadyInLobby,
-    // A player wants to modify a lobby its not in
+    /// A player wants to modify a lobby its not in
     NotInLobby,
-    // A Claims was requested by the route but none were given
+    /// A Claims was requested by the route but none were given
     NoAuthorizationGiven,
 }

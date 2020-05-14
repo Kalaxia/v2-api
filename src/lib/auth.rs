@@ -8,6 +8,8 @@ use std::default::Default;
 
 const JWT_SECRET: & 'static [u8] = b"secret";
 
+/// This structure represent an HTTP authentication token.
+/// Every route with a `Claim` in its parameters will only allow authentified requests.
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
     pub pid:PlayerID,

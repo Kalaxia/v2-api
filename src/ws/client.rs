@@ -14,7 +14,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How long before lack of client response causes a timeout
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Entry point for our route
+/// Entry point for our the WebSocket handshake
 pub async fn entrypoint(
     req: HttpRequest,
     stream: web::Payload,
@@ -45,6 +45,7 @@ pub async fn entrypoint(
     Ok(resp)
 }
 
+/// WebSocket actor used to communicate with a player.
 pub struct ClientSession {
     hb: Instant,
     state: web::Data<AppState>,

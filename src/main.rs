@@ -1,10 +1,6 @@
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
-use game::lobby;
-use game::player;
-use game::game::{GameID, Game};
 use std::collections::HashMap;
-use std::clone::Clone;
 use std::sync::RwLock;
 use std::env;
 use env_logger;
@@ -16,18 +12,19 @@ mod game;
 mod lib;
 
 use game::{
-    faction::{Faction, FactionID, generate_factions},
-    player::{Player, PlayerID},
-    lobby::{Lobby, LobbyID},
+    game as g,
+    faction,
+    player,
+    lobby,
 };
 
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
-    factions: RwLock<HashMap<FactionID, Faction>>,
-    games: RwLock<HashMap<GameID, actix::Addr<Game>>>,
-    lobbies: RwLock<HashMap<LobbyID, Lobby>>,
-    players: RwLock<HashMap<PlayerID, Player>>,
+    factions: RwLock<HashMap<faction::FactionID, faction::Faction>>,
+    games: RwLock<HashMap<g::GameID, actix::Addr<g::Game>>>,
+    lobbies: RwLock<HashMap<lobby::LobbyID, lobby::Lobby>>,
+    players: RwLock<HashMap<player::PlayerID, player::Player>>,
 }
 
 macro_rules! res_access {
@@ -45,7 +42,7 @@ impl AppState {
     pub fn ws_broadcast<T: 'static>(
         &self,
         message: &ws::protocol::Message<T>,
-        skip_id: Option<PlayerID>,
+        skip_id: Option<player::PlayerID>,
         only_free_players: Option<bool>
     ) where
         T: Clone + Send + serde::Serialize
@@ -59,15 +56,15 @@ impl AppState {
         });
     }
 
-    res_access!{ factions, factions_mut : HashMap<FactionID, Faction> }
-    res_access!{ games, games_mut : HashMap<GameID, actix::Addr<Game>> }
-    res_access!{ lobbies, lobbies_mut : HashMap<LobbyID, Lobby> }
-    res_access!{ players, players_mut : HashMap<PlayerID, Player> }
+    res_access!{ factions, factions_mut : HashMap<faction::FactionID, faction::Faction> }
+    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }
+    res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, lobby::Lobby> }
+    res_access!{ players, players_mut : HashMap<player::PlayerID, player::Player> }
 }
 
 fn generate_state() -> AppState {
     AppState {
-        factions: RwLock::new(generate_factions()),
+        factions: RwLock::new(faction::generate_factions()),
         games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
         players: RwLock::new(HashMap::new()),
@@ -78,6 +75,10 @@ fn generate_state() -> AppState {
 fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
+        .service(
+            web::scope("/games")
+            .service(g::get_players)
+        )
         .service(
             web::scope("/lobbies")
             .service(lobby::create_lobby)

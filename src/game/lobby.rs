@@ -7,7 +7,7 @@ use crate::{
         error::{InternalError},
         auth::Claims
     },
-    game::game::{Game, GameData, create_game},
+    game::game::{create_game},
     game::player,
     ws::protocol,
     AppState,

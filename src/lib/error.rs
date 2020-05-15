@@ -55,6 +55,7 @@ impl ResponseError for ServerError {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
                 AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
+                PlayerUnknown | LobbyUnknown | GameUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -69,6 +70,8 @@ pub enum InternalError {
     AccessDenied,
     /// We couldn't map a PlayerID to an existing player
     PlayerUnknown,
+    /// We couldn't map a GameID to an existing game
+    GameUnknown,
     /// We couldn't map a LobbyID to an existing Lobby
     LobbyUnknown,
     /// A player already in a lobby tries to create a lobby

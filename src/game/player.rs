@@ -5,7 +5,7 @@ use uuid::Uuid;
 use std::collections::HashMap;
 use crate::{
     AppState,
-    game::game::{GameID, Game},
+    game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     lib::{Result, auth},

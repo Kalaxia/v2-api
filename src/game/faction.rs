@@ -15,8 +15,8 @@ pub enum FactionName{
     Adranite
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct FactionID(u8);
+#[derive(Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct FactionID(pub u8);
 
 pub fn generate_factions() -> HashMap<FactionID, Faction> {
     let mut factions = HashMap::new();

@@ -99,7 +99,7 @@ impl Game {
             if coordinates_check(i, system.coordinates.x, system.coordinates.y) || system.player != None {
                 continue;
             }
-            println!("System ({:?}, {:?}) is affected to player {:?} of faction {:?} at loop {:?}", system.coordinates.x, system.coordinates.y, player.username.clone(), player.faction.clone(), i);
+            println!("System ({:?}, {:?}) is affected to player {:?} of faction {:?} at loop {:?}", system.coordinates.x, system.coordinates.y, &player.username, &player.faction, i);
             system.player = Some(player.id.clone());
             return;
         }

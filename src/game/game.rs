@@ -4,8 +4,9 @@ use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use std::sync::Arc;
 use crate::{
-    lib::error::{InternalError},
+    lib::{Result, error::InternalError},
     game::{
         faction::{FactionID},
         lobby::Lobby,
@@ -117,7 +118,7 @@ impl Actor for Game {
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
     }
  
-    fn stopped(&mut self, ctx: &mut Context<Self>) {
+    fn stopped(&mut self, _ctx: &mut Context<Self>) {
         println!("Game is stopped");
     }
 }
@@ -128,15 +129,16 @@ pub struct GameDataMessage{
 }
 
 impl actix::Message for GameDataMessage {
-    type Result = ();
+    type Result = Arc<Vec<PlayerData>>;
 }
 
 impl Handler<GameDataMessage> for Game {
-    type Result = ();
+    type Result = Arc<Vec<PlayerData>>;
 
-    fn handle(&mut self, msg: GameDataMessage, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
         match msg.field.as_str() {
-            "players" => self.data.players.iter().map(|_, p| p.data.clone()).collect()
+            "players" => Arc::new(self.players.iter().map(|(_, p)| p.data.clone()).collect::<Vec<PlayerData>>()),
+            _ => Arc::new(Vec::new())
         }
     }
 }
@@ -159,10 +161,13 @@ pub fn create_game(lobby: &Lobby, players: &mut HashMap<PlayerID, Player>) -> (G
     (game.data.id.clone(), game.start())
 }
 
-#[get("/{id}/players")]
-pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Option<HttpResponse> {
-    let game = state.games().get(&info.0).ok_or(InternalError::GameUnknown).unwrap();
-    Some(HttpResponse::Ok().json(game.try_send(GameDataMessage{
-        field: String::from("players")
-    })))
+#[get("/{id}/players/")]
+pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
+    let games = state.games();
+    println!("{:?}", games.iter().count());
+    let game = games.get(&info.0).ok_or(InternalError::GameUnknown)?;
+    match game.send(GameDataMessage{ field: String::from("players") }).await {
+        Ok(data) => Ok(HttpResponse::Ok().json((*data).clone())),
+        _ => Ok(HttpResponse::InternalServerError().finish())
+    }
 }

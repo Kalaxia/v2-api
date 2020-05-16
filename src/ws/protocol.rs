@@ -20,6 +20,7 @@ pub enum Action {
 /// As long as `T` is `Serialize`, we can send whatever we want. It is up to the client to handle
 /// the deserialization given the documented structure of the data sent.
 #[derive(actix::Message, Serialize, Clone)]
+#[rtype(result = "()")]
 pub struct Message<T> {
     pub action: Action,
     pub data: T

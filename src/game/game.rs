@@ -71,9 +71,9 @@ impl Game {
             let place = self.find_place(fid, *i, &p.data);
             *i += 1;
 
-            // legitimate use of unwrap, because we KNOW `place` IS an existing system id
-            // if it is Some()
             if let Some(place) = place {
+                // legitimate use of unwrap, because we KNOW `place` IS an existing system id
+                // if it is Some()
                 self.data.systems.get_mut(&place).unwrap().player = Some(p.data.id);
             } else {
                 // else do something to handle the non-placed player

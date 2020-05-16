@@ -88,11 +88,11 @@ impl Game {
 
     fn assign_system(&mut self, fid: FactionID, i: u8, player: &PlayerData) {
         // Each faction is associated to a side of the grid
-        let coordinates_check: Box<dyn Fn(u8, u8, u8) -> bool> = match fid {
-            FactionID(1) => Box::new(|i, x, y| x > 0 || y < i),
-            FactionID(2) => Box::new(|i, x, y| x < MAP_SIZE - 1 || y < i),
-            FactionID(3) => Box::new(|i, x, y| y > 0 || x < i),
-            FactionID(4) => Box::new(|i, x, y| y < MAP_SIZE - 1 || x < i),
+        let coordinates_check: & dyn Fn(u8, u8, u8) -> bool = match fid {
+            FactionID(1) => &|i, x, y| x > 0 || y < i,
+            FactionID(2) => &|i, x, y| x < MAP_SIZE - 1 || y < i,
+            FactionID(3) => &|i, x, y| y > 0 || x < i,
+            FactionID(4) => &|i, x, y| y < MAP_SIZE - 1 || x < i,
             _ => return
         };
         for (_, system) in self.data.systems.iter_mut() {

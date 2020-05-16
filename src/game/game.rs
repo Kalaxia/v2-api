@@ -63,46 +63,44 @@ impl Game {
     }
 
     fn assign_systems(&mut self) {
-        let mut faction_players = HashMap::new();
-        // @TODO: I think we can call directly here self.assign_system but we must avoid mutable borrow
-        //     ``i`` has no current use (because the systems are not in order)
-        //     and the faction sorting does not decrease the complexity of assign_system()
-        //     so we could just assign the system when looping through the players
-        // Regroup players per faction
-        for (_, p) in self.players.iter() {
-            let fid = p.data.faction.unwrap().clone();
-            if !faction_players.contains_key(&fid) {
-                faction_players.insert(fid, HashSet::new());
-            }
-            faction_players.get_mut(&fid).unwrap().insert(p.data.clone());
-        }
+        let mut placed_per_faction = HashMap::new();
 
-        for (fid, players) in faction_players.iter() {
-            let mut i = 0;
-            for player in players.iter() {
-                self.assign_system(*fid, i, player);
-                i += 1;
+        for p in self.players.values() {
+            let fid = p.data.faction.unwrap().clone();
+            let i = placed_per_faction.entry(fid).or_insert(0);
+            let place = self.find_place(fid, *i, &p.data);
+            *i += 1;
+
+            // legitimate use of unwrap, because we KNOW `place` IS an existing system id
+            // if it is Some()
+            if let Some(place) = place {
+                self.data.systems.get_mut(&place).unwrap().player = Some(p.data.id);
+            } else {
+                // else do something to handle the non-placed player
+                // here we put unreachable!() because it is normaly the case.
+                unreachable!()
             }
         }
     }
 
-    fn assign_system(&mut self, fid: FactionID, i: u8, player: &PlayerData) {
+    fn find_place(&self, fid: FactionID, i: u8, player: &PlayerData) -> Option<SystemID> {
         // Each faction is associated to a side of the grid
         let coordinates_check: & dyn Fn(u8, u8, u8) -> bool = match fid {
             FactionID(1) => &|i, x, y| x > 0 || y < i,
             FactionID(2) => &|i, x, y| x < MAP_SIZE - 1 || y < i,
             FactionID(3) => &|i, x, y| y > 0 || x < i,
             FactionID(4) => &|i, x, y| y < MAP_SIZE - 1 || x < i,
-            _ => return
+            _ => unimplemented!() // better than "None" because normaly this function is total
         };
-        for (_, system) in self.data.systems.iter_mut() {
+        for (sid, system) in &self.data.systems {
             if coordinates_check(i, system.coordinates.x, system.coordinates.y) || system.player != None {
                 continue;
             }
             println!("System ({:?}, {:?}) is affected to player {:?} of faction {:?} at loop {:?}", system.coordinates.x, system.coordinates.y, &player.username, &player.faction, i);
-            system.player = Some(player.id.clone());
-            return;
+            return Some(*sid);
         }
+
+        return None
     }
 }
 

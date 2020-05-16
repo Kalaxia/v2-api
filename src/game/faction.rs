@@ -1,5 +1,9 @@
+use actix_web::{get, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use crate::{
+    AppState
+};
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Faction{
@@ -36,4 +40,9 @@ pub fn generate_factions() -> HashMap<FactionID, Faction> {
         color: (255,0,0)
     });
     factions
+}
+
+#[get("/")]
+pub async fn get_factions(state: web::Data<AppState>) -> Option<HttpResponse> {
+    Some(HttpResponse::Ok().json(&state.factions().iter().map(|(_, f)| f.clone()).collect::<Vec<Faction>>()))
 }

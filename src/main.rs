@@ -76,6 +76,10 @@ fn config(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api")
         .service(
+            web::scope("/factions")
+            .service(faction::get_factions)
+        )
+        .service(
             web::scope("/games")
             .service(g::get_players)
         )

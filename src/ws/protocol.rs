@@ -13,7 +13,8 @@ pub enum Action {
     PlayerJoined,
     PlayerUpdate,
     PlayerLeft,
-    PlayerDisconnected
+    PlayerDisconnected,
+    PlayerIncome,
 }
 
 /// This structure is generic over `T` to allow us to freely change the `T` sent for each message.

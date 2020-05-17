@@ -102,6 +102,31 @@ impl Game {
 
         return None
     }
+
+    fn produce_income(&mut self) {
+        let mut players_income = HashMap::new();
+        for (sid, system) in &self.data.systems {
+            if system.player != None {
+                let income = players_income.entry(system.player.unwrap().clone()).or_insert(0);
+                *income += 15;
+            }
+        }
+        #[derive(Serialize, Clone)]
+        struct PlayerIncome {
+            income: u8
+        }
+        for (pid, income) in players_income {
+            self.players.get_mut(&pid).map(|p| {
+                p.data.wallet += income as usize;
+                p.websocket.as_ref().map(|ws| {
+                    ws.do_send(protocol::Message::<PlayerIncome>{
+                        action: protocol::Action::PlayerIncome,
+                        data: PlayerIncome{ income }
+                    });
+                });
+            });
+        }
+    }
 }
 
 impl Actor for Game {
@@ -114,6 +139,7 @@ impl Actor for Game {
         }, None);
         ctx.run_later(Duration::new(1, 0), |this, _| this.init());
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
+        ctx.run_interval(Duration::new(5, 0), |this, _| this.produce_income());
     }
  
     fn stopped(&mut self, _ctx: &mut Context<Self>) {

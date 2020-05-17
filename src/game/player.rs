@@ -20,7 +20,8 @@ pub struct PlayerData {
     pub game: Option<GameID>,
     pub lobby: Option<LobbyID>,
     pub faction: Option<FactionID>,
-    pub ready: bool
+    pub ready: bool,
+    pub wallet: usize,
 }
 
 #[derive(Clone)]
@@ -68,6 +69,7 @@ pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
             game: None,
             faction: None,
             ready: false,
+            wallet: 0,
         },
         websocket: None,
     };

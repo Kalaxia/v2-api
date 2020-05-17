@@ -20,7 +20,7 @@ pub fn generate_factions() -> HashMap<FactionID, Faction> {
     factions.insert(FactionID(1), Faction{
         id: FactionID(1),
         name: String::from("Kalankar"),
-        color: (0,255,255)
+        color: (255,200,0)
     });
     factions.insert(FactionID(2), Faction{
         id: FactionID(2),

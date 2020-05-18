@@ -105,12 +105,14 @@ impl Game {
 
     fn produce_income(&mut self) {
         let mut players_income = HashMap::new();
-        for (sid, system) in &self.data.systems {
-            if system.player != None {
-                let income = players_income.entry(system.player.unwrap().clone()).or_insert(0);
-                *income += 15;
-            }
-        }
+
+        // Add money to each player based on the number of
+        // currently, the income is `some_player.income = some_player.number_of_systems_owned * 15`
+        self.data.systems
+            .values() // for each system
+            .flat_map(|system| system.player) // with a player in it
+            .for_each(|player| *players_income.entry(player).or_insert(0) += 15); // update the player's income
+
         #[derive(Serialize, Clone)]
         struct PlayerIncome {
             income: u8

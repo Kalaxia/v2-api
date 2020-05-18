@@ -113,6 +113,7 @@ impl Game {
             .flat_map(|system| system.player) // with a player in it
             .for_each(|player| *players_income.entry(player).or_insert(0) += 15); // update the player's income
 
+        // Notify the player for wallet update
         #[derive(Serialize, Clone)]
         struct PlayerIncome {
             income: usize

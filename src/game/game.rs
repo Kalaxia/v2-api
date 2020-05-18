@@ -115,11 +115,11 @@ impl Game {
 
         #[derive(Serialize, Clone)]
         struct PlayerIncome {
-            income: u8
+            income: usize
         }
         for (pid, income) in players_income {
             self.players.get_mut(&pid).map(|p| {
-                p.data.wallet += income as usize;
+                p.data.wallet += income;
                 p.websocket.as_ref().map(|ws| {
                     ws.do_send(protocol::Message::<PlayerIncome>{
                         action: protocol::Action::PlayerIncome,

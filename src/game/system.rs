@@ -2,6 +2,7 @@ use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap};
 use crate::game::{
+    fleet::fleet::{FleetID, Fleet},
     game::MAP_SIZE,
     player::{PlayerID}
 };
@@ -13,6 +14,7 @@ pub struct SystemID(Uuid);
 pub struct System {
     pub id: SystemID,
     pub player: Option<PlayerID>,
+    pub fleets: HashMap<FleetID, Fleet>,
     pub coordinates: Coordinates,
     pub unreachable: bool
 }
@@ -38,6 +40,7 @@ fn generate_system(x: u8, y: u8) -> System {
     System{
         id: SystemID(Uuid::new_v4()),
         player: None,
+        fleets: HashMap::new(),
         coordinates: Coordinates{ x, y },
         unreachable: false
     }

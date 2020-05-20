@@ -8,7 +8,7 @@ use crate::{
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
-    lib::{Result, auth},
+    lib::{Result, error::InternalError, auth},
     ws::protocol,
     ws::client::ClientSession
 };
@@ -55,6 +55,14 @@ impl Player {
             action: protocol::Action::PlayerUpdate,
             data
         }, Some(&id))
+    }
+
+    pub fn spend(&mut self, amount: usize) -> Result<()> {
+        if amount > self.data.wallet {
+            return Err(InternalError::NotEnoughMoney)?;
+        }
+        self.data.wallet -= amount;
+        Ok(())
     }
 }
 

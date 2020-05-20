@@ -12,6 +12,7 @@ mod game;
 mod lib;
 
 use game::{
+    fleet::fleet,
     game as g,
     faction,
     player,
@@ -82,6 +83,10 @@ fn config(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/games")
             .service(g::get_players)
+            .service(
+                web::scope("/{game_id}/fleets")
+                .service(fleet::create_fleet)
+            )
         )
         .service(
             web::scope("/lobbies")

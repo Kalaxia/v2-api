@@ -4,7 +4,7 @@ use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use crate::{
     lib::{Result, error::InternalError},
     game::{
@@ -23,7 +23,7 @@ pub struct GameID(Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct GameData {
     pub id: GameID,
-    systems: HashMap<SystemID, System>
+    pub systems: HashMap<SystemID, System>
 }
 
 pub struct Game {
@@ -151,22 +151,31 @@ impl Actor for Game {
 }
 
 #[derive(Serialize, Clone)]
-pub struct GameDataMessage{
-    field: String
+pub struct GamePlayersMessage{}
+#[derive(Serialize, Clone)]
+pub struct GameDataMessage{}
+
+impl actix::Message for GamePlayersMessage {
+    type Result = Arc<Vec<PlayerData>>;
 }
 
 impl actix::Message for GameDataMessage {
+    type Result = Arc<Mutex<GameData>>;
+}
+
+impl Handler<GamePlayersMessage> for Game {
     type Result = Arc<Vec<PlayerData>>;
+
+    fn handle(&mut self, _msg: GamePlayersMessage, _ctx: &mut Self::Context) -> Self::Result {
+        Arc::new(self.players.iter().map(|(_, p)| p.data.clone()).collect::<Vec<PlayerData>>())
+    }
 }
 
 impl Handler<GameDataMessage> for Game {
-    type Result = Arc<Vec<PlayerData>>;
+    type Result = Arc<Mutex<GameData>>;
 
-    fn handle(&mut self, msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
-        match msg.field.as_str() {
-            "players" => Arc::new(self.players.iter().map(|(_, p)| p.data.clone()).collect::<Vec<PlayerData>>()),
-            _ => Arc::new(Vec::new())
-        }
+    fn handle(&mut self, _msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
+        Arc::new(Mutex::new(self.data.clone()))
     }
 }
 
@@ -193,7 +202,7 @@ pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>)
     let games = state.games();
     println!("{:?}", games.iter().count());
     let game = games.get(&info.0).ok_or(InternalError::GameUnknown)?;
-    match game.send(GameDataMessage{ field: String::from("players") }).await {
+    match game.send(GamePlayersMessage{}).await {
         Ok(data) => Ok(HttpResponse::Ok().json((*data).clone())),
         _ => Ok(HttpResponse::InternalServerError().finish())
     }

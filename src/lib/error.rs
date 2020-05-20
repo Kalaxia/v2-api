@@ -54,8 +54,9 @@ impl ResponseError for ServerError {
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
+                NotEnoughMoney => StatusCode::BAD_REQUEST,
                 AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
-                PlayerUnknown | LobbyUnknown | GameUnknown => StatusCode::NOT_FOUND,
+                PlayerUnknown | LobbyUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -74,10 +75,14 @@ pub enum InternalError {
     GameUnknown,
     /// We couldn't map a LobbyID to an existing Lobby
     LobbyUnknown,
+    /// We couldn't map a SystemID to an existing System
+    SystemUnknown,
     /// A player already in a lobby tries to create a lobby
     AlreadyInLobby,
     /// A player wants to modify a lobby its not in
     NotInLobby,
     /// A Claims was requested by the route but none were given
     NoAuthorizationGiven,
+    /// A player tried to spend an unauthorized amount of money
+    NotEnoughMoney,
 }

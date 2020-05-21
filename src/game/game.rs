@@ -27,22 +27,24 @@ pub struct GameData {
 }
 
 pub struct Game {
-    players: HashMap<PlayerID, Player>,
-    data: GameData
+    players: Arc<Mutex<HashMap<PlayerID, Player>>>,
+    data: Arc<Mutex<GameData>>
 }
 
 pub const MAP_SIZE: u8 = 10;
 
 impl Game {
     fn init(&mut self) {
-        self.data.systems = generate_systems();
+        let mut data = self.data.lock().expect("Poisoned lock on game data");
+        (*data).systems = generate_systems();
+        drop(data);
         self.assign_systems();
     }
 
     fn begin(&self) {
         self.ws_broadcast(&protocol::Message::<GameData>{
             action: protocol::Action::GameStarted,
-            data: self.data.clone()
+            data: self.data.lock().expect("Poisoned lock on game data").clone()
         }, None);
     }
 
@@ -53,7 +55,8 @@ impl Game {
     ) where
         T: Clone + Send + Serialize
     {
-        for (id, player) in self.players.iter() {
+        let players = self.players.lock().expect("Poisoned lock on game players");
+        for (id, player) in players.iter() {
             if Some(id) != skip_id {
                 player.websocket.as_ref().map(|ws| {
                     ws.do_send(message.clone());
@@ -64,17 +67,19 @@ impl Game {
 
     fn assign_systems(&mut self) {
         let mut placed_per_faction = HashMap::new();
+        let players = self.players.lock().expect("Poisoned lock on game players");
+        let mut data = self.data.lock().expect("Poisoned lock on game data");
 
-        for p in self.players.values() {
+        for p in players.values() {
             let fid = p.data.faction.unwrap().clone();
             let i = placed_per_faction.entry(fid).or_insert(0);
-            let place = self.find_place(fid, *i, &p.data);
+            let place = self.find_place(fid, *i, &data.systems);
             *i += 1;
 
             if let Some(place) = place {
                 // legitimate use of unwrap, because we KNOW `place` IS an existing system id
                 // if it is Some()
-                self.data.systems.get_mut(&place).unwrap().player = Some(p.data.id);
+                data.systems.get_mut(&place).unwrap().player = Some(p.data.id);
             } else {
                 // else do something to handle the non-placed player
                 // here we put unreachable!() because it is normaly the case.
@@ -83,7 +88,7 @@ impl Game {
         }
     }
 
-    fn find_place(&self, fid: FactionID, i: u8, player: &PlayerData) -> Option<SystemID> {
+    fn find_place(&self, fid: FactionID, i: u8, systems: &HashMap<SystemID, System>) -> Option<SystemID> {
         // Each faction is associated to a side of the grid
         let coordinates_check: & dyn Fn(u8, u8, u8) -> bool = match fid {
             FactionID(1) => &|i, x, y| x > 0 || y < i,
@@ -92,23 +97,22 @@ impl Game {
             FactionID(4) => &|i, x, y| y < MAP_SIZE - 1 || x < i,
             _ => unimplemented!() // better than "None" because normaly this function is total
         };
-        for (sid, system) in &self.data.systems {
+        for (sid, system) in systems {
             if coordinates_check(i, system.coordinates.x, system.coordinates.y) || system.player != None {
                 continue;
             }
-            println!("System ({:?}, {:?}) is affected to player {:?} of faction {:?} at loop {:?}", system.coordinates.x, system.coordinates.y, &player.username, &player.faction, i);
-            return Some(*sid);
+            return Some(sid.clone());
         }
-
         return None
     }
 
     fn produce_income(&mut self) {
         let mut players_income = HashMap::new();
-
+        let mut players = self.players.lock().expect("Poisoned lock on game players");
+        let data = self.data.lock().expect("Poisoned lock on game data");
         // Add money to each player based on the number of
         // currently, the income is `some_player.income = some_player.number_of_systems_owned * 15`
-        self.data.systems
+        data.systems
             .values() // for each system
             .flat_map(|system| system.player) // with a player in it
             .for_each(|player| *players_income.entry(player).or_insert(0) += 15); // update the player's income
@@ -119,7 +123,7 @@ impl Game {
             income: usize
         }
         for (pid, income) in players_income {
-            self.players.get_mut(&pid).map(|p| {
+            players.get_mut(&pid).map(|p| {
                 p.data.wallet += income;
                 p.websocket.as_ref().map(|ws| {
                     ws.do_send(protocol::Message::<PlayerIncome>{
@@ -138,7 +142,7 @@ impl Actor for Game {
     fn started(&mut self, ctx: &mut Context<Self>) {
         self.ws_broadcast(&protocol::Message::<GameData>{
             action: protocol::Action::LobbyLaunched,
-            data: self.data.clone()
+            data: self.data.lock().expect("Poisoned lock on game data").clone()
         }, None);
         ctx.run_later(Duration::new(1, 0), |this, _| this.init());
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
@@ -156,7 +160,7 @@ pub struct GamePlayersMessage{}
 pub struct GameDataMessage{}
 
 impl actix::Message for GamePlayersMessage {
-    type Result = Arc<Vec<PlayerData>>;
+    type Result = Arc<Mutex<HashMap<PlayerID, Player>>>;
 }
 
 impl actix::Message for GameDataMessage {
@@ -164,10 +168,10 @@ impl actix::Message for GameDataMessage {
 }
 
 impl Handler<GamePlayersMessage> for Game {
-    type Result = Arc<Vec<PlayerData>>;
+    type Result = Arc<Mutex<HashMap<PlayerID, Player>>>;
 
     fn handle(&mut self, _msg: GamePlayersMessage, _ctx: &mut Self::Context) -> Self::Result {
-        Arc::new(self.players.iter().map(|(_, p)| p.data.clone()).collect::<Vec<PlayerData>>())
+        self.players.clone()
     }
 }
 
@@ -175,35 +179,37 @@ impl Handler<GameDataMessage> for Game {
     type Result = Arc<Mutex<GameData>>;
 
     fn handle(&mut self, _msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
-        Arc::new(Mutex::new(self.data.clone()))
+        self.data.clone()
     }
 }
 
 pub fn create_game(lobby: &Lobby, players: &mut HashMap<PlayerID, Player>) -> (GameID, Addr<Game>) {
-    let mut game = Game{
-        players: HashMap::new(),
-        data: GameData{
-            id: GameID(Uuid::new_v4()),
-            systems: HashMap::new()
-        }
-    };
+    let id = GameID(Uuid::new_v4());
+    let mut game_players = HashMap::new();
+    
     for pid in &lobby.players {
         players.get_mut(pid).map(|p| {
             p.data.lobby = None;
-            p.data.game = Some(game.data.id);
-            game.players.insert(p.data.id, p.clone())
+            p.data.game = Some(id.clone());
+            game_players.insert(p.data.id, p.clone())
         });
     }
-    (game.data.id.clone(), game.start())
+    let game = Game{
+        players: Arc::new(Mutex::new(game_players)),
+        data: Arc::new(Mutex::new(GameData{ id: id.clone(), systems: HashMap::new() }))
+    };
+    (id.clone(), game.start())
 }
 
 #[get("/{id}/players/")]
 pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
     let games = state.games();
-    println!("{:?}", games.iter().count());
     let game = games.get(&info.0).ok_or(InternalError::GameUnknown)?;
     match game.send(GamePlayersMessage{}).await {
-        Ok(data) => Ok(HttpResponse::Ok().json((*data).clone())),
+        Ok(locked_data) => {
+            let players = locked_data.lock().expect("Poisoned lock on game players");
+            Ok(HttpResponse::Ok().json((*players).iter().map(|(_, p)| p.data.clone()).collect::<Vec<PlayerData>>()))
+        },
         _ => Ok(HttpResponse::InternalServerError().finish())
     }
 }

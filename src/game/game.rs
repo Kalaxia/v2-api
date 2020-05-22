@@ -51,13 +51,13 @@ impl Game {
     fn ws_broadcast<T: 'static>(
         &self,
         message: &protocol::Message<T>,
-        skip_id: Option<&PlayerID>
+        skip_id: Option<PlayerID>
     ) where
         T: Clone + Send + Serialize
     {
         let players = self.players.lock().expect("Poisoned lock on game players");
         for (id, player) in players.iter() {
-            if Some(id) != skip_id {
+            if Some(*id) != skip_id {
                 player.websocket.as_ref().map(|ws| {
                     ws.do_send(message.clone());
                 });
@@ -103,7 +103,7 @@ impl Game {
             }
             return Some(sid.clone());
         }
-        return None
+        None
     }
 
     fn produce_income(&mut self) {
@@ -159,6 +159,14 @@ pub struct GamePlayersMessage{}
 #[derive(Serialize, Clone)]
 pub struct GameDataMessage{}
 
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameBroadcastMessage<T: 'static>
+where T: Clone + Send + Serialize {
+    pub message: protocol::Message<T>,
+    pub skip_id: Option<PlayerID>
+}
+
 impl actix::Message for GamePlayersMessage {
     type Result = Arc<Mutex<HashMap<PlayerID, Player>>>;
 }
@@ -180,6 +188,15 @@ impl Handler<GameDataMessage> for Game {
 
     fn handle(&mut self, _msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
         self.data.clone()
+    }
+}
+
+impl<T> Handler<GameBroadcastMessage<T>> for Game
+where T: Clone + Send + Serialize {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameBroadcastMessage<T>, ctx: &mut Self::Context) -> Self::Result {
+        self.ws_broadcast(&msg.message, msg.skip_id);
     }
 }
 

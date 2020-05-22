@@ -8,10 +8,11 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{GameID, GameDataMessage, GamePlayersMessage},
+        game::{GameID, GameDataMessage, GamePlayersMessage, GameBroadcastMessage},
         player::PlayerID,
         system::SystemID
     },
+    ws::protocol,
     AppState
 };
 
@@ -54,6 +55,13 @@ pub async fn create_fleet(state: web::Data<AppState>, json_data: web::Json<Fleet
                         system: system.id.clone(),
                     };
                     system.fleets.insert(fleet.id.clone(), fleet.clone());
+                    game.do_send(GameBroadcastMessage::<Fleet> {
+                        message: protocol::Message::<Fleet> {
+                            action: protocol::Action::FleetCreated,
+                            data: fleet.clone()
+                        },
+                        skip_id: Some(player.data.id.clone())
+                    });
                     Ok(HttpResponse::Created().json(fleet))
                 },
                 _ => Ok(HttpResponse::InternalServerError().finish())

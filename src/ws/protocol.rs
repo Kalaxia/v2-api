@@ -3,6 +3,7 @@ use serde::Serialize;
 /// Tokens representing the type of WS message sent to notify a player.
 #[derive(Serialize, Clone)]
 pub enum Action {
+    FleetCreated,
     GameStarted,
     LobbyCreated,
     LobbyUpdated,

@@ -1,8 +1,8 @@
 use jsonwebtoken::errors::{Error as JwtError};
 use actix_web::{http::StatusCode, Error as ActixWebError, ResponseError};
 use actix_web_actors::ws::ProtocolError;
+use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
-
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -16,6 +16,7 @@ pub enum ServerError {
     ActixWSError(ProtocolError),
     JwtError(JwtError),
     InternalError(InternalError),
+    MailboxError(MailboxError)
 }
 
 impl From<ActixWebError> for ServerError {
@@ -32,6 +33,10 @@ impl From<InternalError> for ServerError {
 
 impl From<ProtocolError> for ServerError {
     fn from(error:ProtocolError) -> Self { Self::ActixWSError(error) }
+}
+
+impl From<MailboxError> for ServerError {
+    fn from(error:MailboxError) -> Self { Self::MailboxError(error) }
 }
 
 impl Display for ServerError {
@@ -60,6 +65,7 @@ impl ResponseError for ServerError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
+            ServerError::MailboxError(_) => StatusCode::INTERNAL_SERVER_ERROR
         }
     }
 }

@@ -61,7 +61,7 @@ impl ResponseError for ServerError {
                 AccessDenied => StatusCode::FORBIDDEN,
                 NotEnoughMoney => StatusCode::BAD_REQUEST,
                 AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
-                PlayerUnknown | LobbyUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
+                PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -77,6 +77,8 @@ pub enum InternalError {
     AccessDenied,
     /// We couldn't map a PlayerID to an existing player
     PlayerUnknown,
+    /// We couldn't map a FleetID to an existing fleet
+    FleetUnknown,
     /// We couldn't map a GameID to an existing game
     GameUnknown,
     /// We couldn't map a LobbyID to an existing Lobby

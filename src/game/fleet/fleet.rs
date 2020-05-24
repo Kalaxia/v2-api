@@ -23,23 +23,20 @@ pub struct FleetID(Uuid);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Fleet{
-    id: FleetID,
-    system: SystemID,
-    player: PlayerID,
-}
-#[derive(Deserialize)]
-pub struct FleetCreationData {
-    system: SystemID
+    pub id: FleetID,
+    pub system: SystemID,
+    pub player: PlayerID,
+    pub nb_ships: usize,
 }
 
 #[post("/")]
-pub async fn create_fleet(state: web::Data<AppState>, json_data: web::Json<FleetCreationData>, info: web::Path<(GameID,)>, claims: Claims) -> Result<HttpResponse> {
+pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
     let mut games = state.games_mut();
     let game = games.get_mut(&info.0).ok_or(InternalError::GameUnknown)?;
     
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
-    let system = data.systems.get_mut(&json_data.system).ok_or(InternalError::SystemUnknown)?;
+    let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
 
     let players_data = game.send(GamePlayersMessage{}).await?;
     let mut players = players_data.lock().expect("Poisoned lock on game players");
@@ -53,6 +50,7 @@ pub async fn create_fleet(state: web::Data<AppState>, json_data: web::Json<Fleet
         id: FleetID(Uuid::new_v4()),
         player: player.data.id.clone(),
         system: system.id.clone(),
+        nb_ships: 1
     };
     system.fleets.insert(fleet.id.clone(), fleet.clone());
     game.do_send(GameBroadcastMessage::<Fleet> {

@@ -9,6 +9,10 @@ use crate::{
     lib::{Result, error::InternalError},
     game::{
         faction::{FactionID},
+        fleet::{
+            combat,
+            fleet::{Fleet, FleetID, FLEET_TRAVEL_TIME},
+        },
         lobby::Lobby,
         player::{PlayerID, Player, PlayerData},
         system::{SystemID, System, generate_systems}
@@ -134,6 +138,76 @@ impl Game {
             });
         }
     }
+
+    fn process_fleet_arrival(&self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
+        let mut data = self.data.lock().expect("Poisoned lock on game data");
+        let mut fleet = {
+            let mut system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
+            system.fleets.remove(&fleet_id.clone());
+            system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone()
+        };
+        let mut destination_system = data.systems.get_mut(&fleet.destination_system.unwrap()).ok_or(InternalError::SystemUnknown)?;
+
+        let players = self.players.lock().expect("Poisoned lock on game players");
+        let player = players.get(&fleet.player).ok_or(InternalError::PlayerUnknown)?;
+
+        match destination_system.player {
+            Some(system_owner_id) => {
+                let system_owner = players.get(&system_owner_id).ok_or(InternalError::PlayerUnknown)?;
+                if system_owner.data.faction != player.data.faction {
+                    if destination_system.fleets.len() > 0 {
+                        // Attacker victory
+                        if combat::engage(&mut fleet, &mut destination_system.fleets) == true {
+                            destination_system.fleets = HashMap::new(); // Clean defeated defenders fleets
+                            destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
+                            destination_system.player = Some(player.data.id.clone());
+                            self.ws_broadcast(&protocol::Message::<System>{
+                                action: protocol::Action::SystemConquerred,
+                                data: destination_system.clone()
+                            }, None);
+                        } else {
+                            let mut engaged_fleets = destination_system.fleets.clone();
+                            engaged_fleets.insert(fleet_id.clone(), fleet.clone());
+                            #[derive(Serialize, Clone)]
+                            struct CombatData {
+                                system: System,
+                                fleets: HashMap<FleetID, Fleet>,
+                            };
+                            self.ws_broadcast(&protocol::Message::<CombatData>{
+                                action: protocol::Action::CombatEnded,
+                                data: CombatData {
+                                    system: destination_system.clone(),
+                                    fleets: engaged_fleets,
+                                }
+                            }, None);
+                        }
+                        return Ok(());
+                    }
+                    destination_system.player = Some(player.data.id.clone());
+                    self.ws_broadcast(&protocol::Message::<System>{
+                        action: protocol::Action::SystemConquerred,
+                        data: destination_system.clone()
+                    }, None);
+                }
+            },
+            None => {
+                destination_system.player = Some(player.data.id.clone());
+                self.ws_broadcast(&protocol::Message::<System>{
+                    action: protocol::Action::SystemConquerred,
+                    data: destination_system.clone()
+                }, None);
+            }
+        }
+        destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
+        fleet.system = destination_system.id.clone();
+        fleet.destination_system = None;
+
+        self.ws_broadcast(&protocol::Message::<Fleet>{
+            action: protocol::Action::FleetArrived,
+            data: fleet.clone()
+        }, None);
+        Ok(())
+    }
 }
 
 impl Actor for Game {
@@ -167,6 +241,12 @@ where T: Clone + Send + Serialize {
     pub skip_id: Option<PlayerID>
 }
 
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameFleetTravelMessage{
+    pub fleet: Fleet
+}
+
 impl actix::Message for GamePlayersMessage {
     type Result = Arc<Mutex<HashMap<PlayerID, Player>>>;
 }
@@ -197,6 +277,20 @@ where T: Clone + Send + Serialize {
 
     fn handle(&mut self, msg: GameBroadcastMessage<T>, ctx: &mut Self::Context) -> Self::Result {
         self.ws_broadcast(&msg.message, msg.skip_id);
+    }
+}
+
+impl Handler<GameFleetTravelMessage> for Game {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
+        self.ws_broadcast(&protocol::Message::<Fleet>{
+            action: protocol::Action::FleetSailed,
+            data: msg.fleet.clone()
+        }, Some(msg.fleet.player));
+        ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
+            this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone());
+        });
     }
 }
 

@@ -59,7 +59,7 @@ impl ResponseError for ServerError {
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
-                NotEnoughMoney => StatusCode::BAD_REQUEST,
+                NotEnoughMoney | FleetInvalidDestination => StatusCode::BAD_REQUEST,
                 AlreadyInLobby | NotInLobby => StatusCode::CONFLICT,
                 PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -89,6 +89,8 @@ pub enum InternalError {
     AlreadyInLobby,
     /// A player wants to modify a lobby its not in
     NotInLobby,
+    /// A player wants to move a fleet to an invalid location
+    FleetInvalidDestination,
     /// A Claims was requested by the route but none were given
     NoAuthorizationGiven,
     /// A player tried to spend an unauthorized amount of money

@@ -3,7 +3,10 @@ use serde::Serialize;
 /// Tokens representing the type of WS message sent to notify a player.
 #[derive(Serialize, Clone)]
 pub enum Action {
+    CombatEnded,
     FleetCreated,
+    FleetArrived,
+    FleetSailed,
     GameStarted,
     LobbyCreated,
     LobbyUpdated,
@@ -16,6 +19,7 @@ pub enum Action {
     PlayerLeft,
     PlayerDisconnected,
     PlayerIncome,
+    SystemConquerred,
 }
 
 /// This structure is generic over `T` to allow us to freely change the `T` sent for each message.

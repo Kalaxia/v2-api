@@ -143,8 +143,9 @@ impl Game {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
         let mut fleet = {
             let mut system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
+            let mut f = system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone();
             system.fleets.remove(&fleet_id.clone());
-            system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone()
+            f
         };
         let mut destination_system = data.systems.get_mut(&fleet.destination_system.unwrap()).ok_or(InternalError::SystemUnknown)?;
 
@@ -158,7 +159,7 @@ impl Game {
                     if destination_system.fleets.len() > 0 {
                         // Attacker victory
                         if combat::engage(&mut fleet, &mut destination_system.fleets) == true {
-                            destination_system.fleets = HashMap::new(); // Clean defeated defenders fleets
+                            destination_system.fleets.clear(); // Clean defeated defenders fleets
                             destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
                             destination_system.player = Some(player.data.id.clone());
                             self.ws_broadcast(&protocol::Message::<System>{
@@ -198,9 +199,9 @@ impl Game {
                 }, None);
             }
         }
-        destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
         fleet.system = destination_system.id.clone();
         fleet.destination_system = None;
+        destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
 
         self.ws_broadcast(&protocol::Message::<Fleet>{
             action: protocol::Action::FleetArrived,

@@ -6,8 +6,7 @@ use crate::{
 };
 
 pub fn engage(attacker: &mut Fleet, mut defenders: &mut HashMap<FleetID, Fleet>) -> bool {
-    let mut nb_defense_ships = 0;
-    defenders.iter().for_each(|(_, f)| { nb_defense_ships += f.nb_ships });
+    let nb_defense_ships = defenders.iter().map(|(_, f)| f.nb_ships).sum();
 
     if attacker.nb_ships > nb_defense_ships {
         attacker.nb_ships -= nb_defense_ships;
@@ -20,7 +19,7 @@ pub fn engage(attacker: &mut Fleet, mut defenders: &mut HashMap<FleetID, Fleet>)
 
 fn distribute_losses(fleets: &mut HashMap<FleetID, Fleet>, total_ships: usize, losses: usize) {
     fleets.retain(|fid, f| {
-        let percent: f64 = f.nb_ships as f64 / total_ships as f64 * 100.0;
+        let percent: f64 = f.nb_ships as f64 / total_ships as f64;
         f.nb_ships = (losses as f64 * percent).floor() as usize;
         f.nb_ships > 0
     });

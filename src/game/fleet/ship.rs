@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse};
+use actix_web::{post, web, HttpResponse};
 use crate::{
     lib::{
         Result,
@@ -26,12 +26,12 @@ pub async fn add_ship(
     
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
-    let mut system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
+    let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
     let owner_id = system.player.clone();
 
     let players_data = game.send(GamePlayersMessage{}).await?;
     let mut players = players_data.lock().expect("Poisoned lock on game players");
-    let mut player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
+    let player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
 
     let mut fleet = system.fleets.get_mut(&info.2).ok_or(InternalError::FleetUnknown)?;
 

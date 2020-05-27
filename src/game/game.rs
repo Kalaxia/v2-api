@@ -2,7 +2,7 @@ use actix_web::{get, web, HttpResponse};
 use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use crate::{
@@ -142,8 +142,8 @@ impl Game {
     fn process_fleet_arrival(&self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
         let mut fleet = {
-            let mut system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
-            let mut f = system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone();
+            let system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
+            let f = system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone();
             system.fleets.remove(&fleet_id.clone());
             f
         };

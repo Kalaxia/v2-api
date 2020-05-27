@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse};
+use actix_web::{post, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
             GameFleetTravelMessage
         },
         player::PlayerID,
-        system::{System, SystemID, Coordinates}
+        system::{SystemID, Coordinates}
     },
     ws::protocol,
     AppState
@@ -61,11 +61,11 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
-    let mut system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
+    let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
 
     let players_data = game.send(GamePlayersMessage{}).await?;
     let mut players = players_data.lock().expect("Poisoned lock on game players");
-    let mut player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
+    let player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
     
     if system.player != Some(player.data.id) {
         return Err(InternalError::AccessDenied)?;
@@ -102,7 +102,7 @@ pub async fn travel(
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
     let destination_system = data.systems.get(&json_data.destination_system_id).ok_or(InternalError::SystemUnknown)?.clone();
-    let mut system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
+    let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
     let system_clone = system.clone();
     let mut fleet = system.fleets.get_mut(&info.2).ok_or(InternalError::FleetUnknown)?;
 

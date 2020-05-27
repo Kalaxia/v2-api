@@ -43,7 +43,7 @@ pub struct FleetTravelData {
 }
 
 impl Fleet {
-    fn check_travel_destination(&self, origin_coords: &Coordinates, dest_coords: &Coordinates) -> Result<()> {
+    fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
         if  dest_coords.x > origin_coords.x + 1 ||
             dest_coords.x < origin_coords.x - 1 ||
             dest_coords.y > origin_coords.y + 1 ||
@@ -113,7 +113,7 @@ pub async fn travel(
     if fleet.player != player.data.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
-    fleet.check_travel_destination(&system_clone.coordinates, &destination_system.coordinates)?;
+    fleet.check_travel_destination(system_clone.coordinates, destination_system.coordinates)?;
     fleet.destination_system = Some(destination_system.id.clone());
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
     Ok(HttpResponse::NoContent().json(fleet))

@@ -51,10 +51,10 @@ pub struct PlayerReady{
 impl Player {
     pub fn notify_update(data: PlayerData, players: &HashMap<PlayerID, Player>, lobby: &Lobby) {
         let id = data.id;
-        lobby.ws_broadcast(&players, &protocol::Message::<PlayerData>{
-            action: protocol::Action::PlayerUpdate,
+        lobby.ws_broadcast(&players, protocol::Message::new(
+            protocol::Action::PlayerUpdate,
             data
-        }, Some(&id))
+        ), Some(&id))
     }
 
     pub fn spend(&mut self, amount: usize) -> Result<()> {
@@ -131,10 +131,10 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
             id: LobbyID,
             name: String
         };
-        state.ws_broadcast(&protocol::Message::<LobbyName>{
-            action: protocol::Action::LobbyNameUpdated,
-            data: LobbyName{ id: lobby.id.clone(), name: data.username.clone() }
-        }, Some(data.id), Some(true));
+        state.ws_broadcast(protocol::Message::new(
+            protocol::Action::LobbyNameUpdated,
+            LobbyName{ id: lobby.id.clone(), name: data.username.clone() }
+        ), Some(data.id), Some(true));
     }
 
     Some(HttpResponse::NoContent().finish())

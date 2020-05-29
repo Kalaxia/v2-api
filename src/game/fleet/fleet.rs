@@ -16,7 +16,7 @@ use crate::{
             GameFleetTravelMessage
         },
         player::PlayerID,
-        system::{SystemID, Coordinates}
+        system::{System, SystemID, Coordinates}
     },
     ws::protocol,
     AppState
@@ -52,6 +52,12 @@ impl Fleet {
         }
         Ok(())
     }
+
+    pub fn change_system(&mut self, system: &mut System) {
+        self.system = system.id.clone();
+        self.destination_system = None;
+        system.fleets.insert(self.id.clone(), self.clone());
+    }
 }
 
 #[post("/")]
@@ -79,11 +85,11 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         nb_ships: 1
     };
     system.fleets.insert(fleet.id.clone(), fleet.clone());
-    game.do_send(GameBroadcastMessage::<Fleet> {
-        message: protocol::Message::<Fleet> {
-            action: protocol::Action::FleetCreated,
-            data: fleet.clone()
-        },
+    game.do_send(GameBroadcastMessage {
+        message: protocol::Message::new(
+            protocol::Action::FleetCreated,
+            fleet.clone()
+        ),
         skip_id: Some(player.data.id.clone())
     });
     Ok(HttpResponse::Created().json(fleet))

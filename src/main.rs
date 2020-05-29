@@ -41,14 +41,12 @@ macro_rules! res_access {
 }
 
 impl AppState {
-    pub fn ws_broadcast<T: 'static>(
+    pub fn ws_broadcast(
         &self,
-        message: &ws::protocol::Message<T>,
+        message: ws::protocol::Message,
         skip_id: Option<player::PlayerID>,
         only_free_players: Option<bool>
-    ) where
-        T: Clone + Send + serde::Serialize
-    {
+    ) {
         let players = self.players.read().unwrap();
         let ofp = only_free_players.unwrap_or(false);
         players.iter().for_each(|(_, p)| {

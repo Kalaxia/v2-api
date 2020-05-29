@@ -1,9 +1,16 @@
 use std::collections::HashMap;
 use crate::{
     game::{
-        fleet::fleet::{Fleet, FleetID}
+        fleet::fleet::{Fleet, FleetID},
+        system::{System}
     }
 };
+
+#[derive(serde::Serialize, Clone)]
+pub struct CombatData {
+    pub system: System,
+    pub fleets: HashMap<FleetID, Fleet>,
+}
 
 pub fn engage(attacker: &mut Fleet, mut defenders: &mut HashMap<FleetID, Fleet>) -> bool {
     let nb_defense_ships = defenders.iter().map(|(_, f)| f.nb_ships).sum();

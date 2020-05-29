@@ -10,7 +10,6 @@ use crate::{
     game::{
         faction::{FactionID},
         fleet::{
-            combat,
             fleet::{Fleet, FleetID, FLEET_TRAVEL_TIME},
         },
         lobby::Lobby,
@@ -41,24 +40,22 @@ impl Game {
     fn init(&mut self) {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
         (*data).systems = generate_systems();
-        drop(data);
+        drop(data); 
         self.assign_systems();
     }
 
     fn begin(&self) {
-        self.ws_broadcast(&protocol::Message::<GameData>{
-            action: protocol::Action::GameStarted,
-            data: self.data.lock().expect("Poisoned lock on game data").clone()
-        }, None);
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::GameStarted,
+            self.data.lock().expect("Poisoned lock on game data").clone()
+        ), None);
     }
 
-    fn ws_broadcast<T: 'static>(
+    fn ws_broadcast(
         &self,
-        message: &protocol::Message<T>,
+        message: protocol::Message,
         skip_id: Option<PlayerID>
-    ) where
-        T: Clone + Send + Serialize
-    {
+    ) {
         let players = self.players.lock().expect("Poisoned lock on game players");
         for (id, player) in players.iter() {
             if Some(*id) != skip_id {
@@ -130,10 +127,10 @@ impl Game {
             players.get_mut(&pid).map(|p| {
                 p.data.wallet += income;
                 p.websocket.as_ref().map(|ws| {
-                    ws.do_send(protocol::Message::<PlayerIncome>{
-                        action: protocol::Action::PlayerIncome,
-                        data: PlayerIncome{ income }
-                    });
+                    ws.do_send(protocol::Message::new(
+                        protocol::Action::PlayerIncome,
+                        PlayerIncome{ income }
+                    ));
                 });
             });
         }
@@ -141,72 +138,24 @@ impl Game {
 
     fn process_fleet_arrival(&self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
-        let mut fleet = {
+        let fleet = {
             let system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
             let f = system.fleets.get_mut(&fleet_id).ok_or(InternalError::FleetUnknown)?.clone();
             system.fleets.remove(&fleet_id.clone());
             f
         };
-        let mut destination_system = data.systems.get_mut(&fleet.destination_system.unwrap()).ok_or(InternalError::SystemUnknown)?;
+        let destination_system = data.systems.get_mut(&fleet.destination_system.unwrap()).ok_or(InternalError::SystemUnknown)?;
 
         let players = self.players.lock().expect("Poisoned lock on game players");
         let player = players.get(&fleet.player).ok_or(InternalError::PlayerUnknown)?;
 
-        match destination_system.player {
-            Some(system_owner_id) => {
-                let system_owner = players.get(&system_owner_id).ok_or(InternalError::PlayerUnknown)?;
-                if system_owner.data.faction != player.data.faction {
-                    if destination_system.fleets.len() > 0 {
-                        // Attacker victory
-                        if combat::engage(&mut fleet, &mut destination_system.fleets) == true {
-                            destination_system.fleets.clear(); // Clean defeated defenders fleets
-                            destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
-                            destination_system.player = Some(player.data.id.clone());
-                            self.ws_broadcast(&protocol::Message::<System>{
-                                action: protocol::Action::SystemConquerred,
-                                data: destination_system.clone()
-                            }, None);
-                        } else {
-                            let mut engaged_fleets = destination_system.fleets.clone();
-                            engaged_fleets.insert(fleet_id.clone(), fleet.clone());
-                            #[derive(Serialize, Clone)]
-                            struct CombatData {
-                                system: System,
-                                fleets: HashMap<FleetID, Fleet>,
-                            };
-                            self.ws_broadcast(&protocol::Message::<CombatData>{
-                                action: protocol::Action::CombatEnded,
-                                data: CombatData {
-                                    system: destination_system.clone(),
-                                    fleets: engaged_fleets,
-                                }
-                            }, None);
-                        }
-                        return Ok(());
-                    }
-                    destination_system.player = Some(player.data.id.clone());
-                    self.ws_broadcast(&protocol::Message::<System>{
-                        action: protocol::Action::SystemConquerred,
-                        data: destination_system.clone()
-                    }, None);
-                }
-            },
-            None => {
-                destination_system.player = Some(player.data.id.clone());
-                self.ws_broadcast(&protocol::Message::<System>{
-                    action: protocol::Action::SystemConquerred,
-                    data: destination_system.clone()
-                }, None);
+        let system_owner = {
+            match destination_system.player {
+                Some(owner_id) => Some(players.get(&owner_id).ok_or(InternalError::PlayerUnknown)?),
+                None => None,
             }
-        }
-        fleet.system = destination_system.id.clone();
-        fleet.destination_system = None;
-        destination_system.fleets.insert(fleet_id.clone(), fleet.clone());
-
-        self.ws_broadcast(&protocol::Message::<Fleet>{
-            action: protocol::Action::FleetArrived,
-            data: fleet.clone()
-        }, None);
+        };
+        self.ws_broadcast(destination_system.resolve_fleet_arrival(fleet, player, system_owner).into(), None);
         Ok(())
     }
 }
@@ -215,10 +164,10 @@ impl Actor for Game {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        self.ws_broadcast(&protocol::Message::<GameData>{
-            action: protocol::Action::LobbyLaunched,
-            data: self.data.lock().expect("Poisoned lock on game data").clone()
-        }, None);
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::LobbyLaunched,
+            self.data.lock().expect("Poisoned lock on game data").clone()
+        ), None);
         ctx.run_later(Duration::new(1, 0), |this, _| this.init());
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
         ctx.run_interval(Duration::new(5, 0), |this, _| this.produce_income());
@@ -236,9 +185,8 @@ pub struct GameDataMessage{}
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameBroadcastMessage<T: 'static>
-where T: Clone + Send + Serialize {
-    pub message: protocol::Message<T>,
+pub struct GameBroadcastMessage {
+    pub message: protocol::Message,
     pub skip_id: Option<PlayerID>
 }
 
@@ -272,12 +220,11 @@ impl Handler<GameDataMessage> for Game {
     }
 }
 
-impl<T> Handler<GameBroadcastMessage<T>> for Game
-where T: Clone + Send + Serialize {
+impl Handler<GameBroadcastMessage> for Game {
     type Result = ();
 
-    fn handle(&mut self, msg: GameBroadcastMessage<T>, ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(&msg.message, msg.skip_id);
+    fn handle(&mut self, msg: GameBroadcastMessage, _ctx: &mut Self::Context) -> Self::Result {
+        self.ws_broadcast(msg.message, msg.skip_id);
     }
 }
 
@@ -285,10 +232,10 @@ impl Handler<GameFleetTravelMessage> for Game {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(&protocol::Message::<Fleet>{
-            action: protocol::Action::FleetSailed,
-            data: msg.fleet.clone()
-        }, Some(msg.fleet.player));
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::FleetSailed,
+            msg.fleet.clone()
+        ), Some(msg.fleet.player));
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
             this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone());
         });

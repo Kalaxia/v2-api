@@ -1,9 +1,10 @@
-use serde::Serialize;
-
 /// Tokens representing the type of WS message sent to notify a player.
-#[derive(Serialize, Clone)]
+#[derive(serde::Serialize, Clone)]
 pub enum Action {
+    CombatEnded,
     FleetCreated,
+    FleetArrived,
+    FleetSailed,
     GameStarted,
     LobbyCreated,
     LobbyUpdated,
@@ -16,14 +17,21 @@ pub enum Action {
     PlayerLeft,
     PlayerDisconnected,
     PlayerIncome,
+    SystemConquerred,
 }
 
-/// This structure is generic over `T` to allow us to freely change the `T` sent for each message.
-/// As long as `T` is `Serialize`, we can send whatever we want. It is up to the client to handle
-/// the deserialization given the documented structure of the data sent.
-#[derive(actix::Message, Serialize, Clone)]
+#[derive(actix::Message, serde::Serialize, Clone)]
 #[rtype(result = "()")]
-pub struct Message<T> {
+pub struct Message {
     pub action: Action,
-    pub data: T
+    pub data: serde_json::Value
+}
+
+impl Message {
+  pub fn new<T : serde::Serialize>(action: Action, data: T) -> Self {
+    Self {
+      action,
+      data: serde_json::value::to_value(data).unwrap(),
+    }
+  }
 }

@@ -119,6 +119,9 @@ pub async fn travel(
     if fleet.player != player.data.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
+    if fleet.destination_system != None {
+        return Err(InternalError::FleetAlreadyTravelling)?;
+    }
     fleet.check_travel_destination(system_clone.coordinates, destination_system.coordinates)?;
     fleet.destination_system = Some(destination_system.id.clone());
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });

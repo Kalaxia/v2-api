@@ -95,10 +95,10 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     Ok(HttpResponse::Created().json(fleet))
 }
 
-#[post("/{fleet_id}/travel/")]
+#[post("/travel/")]
 pub async fn travel(
     state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID,FleetID)>,
+    info: web::Path<(GameID,SystemID,FleetID,)>,
     json_data: web::Json<FleetTravelData>,
     claims: Claims
 ) -> Result<HttpResponse> {

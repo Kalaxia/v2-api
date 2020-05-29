@@ -87,10 +87,13 @@ fn config(cfg: &mut web::ServiceConfig) {
                 .service(
                     web::scope("/{system_id}/fleets")
                     .service(fleet::create_fleet)
-                    .service(fleet::travel)
                     .service(
-                        web::scope("/{fleet_id}/ships")
-                        .service(ship::add_ship)
+                        web::scope("/{fleet_id}")
+                        .service(fleet::travel)
+                        .service(
+                            web::scope("/ships")
+                            .service(ship::add_ship)
+                        )
                     )
                 )
             )

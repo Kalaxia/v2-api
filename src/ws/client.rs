@@ -4,7 +4,7 @@ use actix::*;
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use crate::{
-    lib::{Result, error::InternalError, auth::Claims},
+    lib::{Result, error::{ServerError, InternalError}, auth::Claims},
     game::{player::{PlayerID, PlayerData}},
     ws::protocol,
     AppState,
@@ -96,8 +96,8 @@ impl Actor for ClientSession {
 impl Handler<protocol::Message> for ClientSession {
     type Result = ();
 
-    fn handle(&mut self, msg: protocol::Message, ctx: &mut Self::Context)  {
-        ctx.text(serde_json::to_string(&msg).unwrap())
+    fn handle(&mut self, msg: protocol::Message, ctx: &mut Self::Context) -> Self::Result {
+        ctx.text(serde_json::to_string(&msg).expect("Couldnt serialize WsMessage data"))
     }
 }
 

@@ -155,7 +155,9 @@ impl Game {
                 None => None,
             }
         };
-        self.ws_broadcast(destination_system.resolve_fleet_arrival(fleet, player, system_owner).into(), None);
+        let result = destination_system.resolve_fleet_arrival(fleet, player, system_owner);
+        drop(players);
+        self.ws_broadcast(result.into(), None);
         Ok(())
     }
 }
@@ -237,7 +239,10 @@ impl Handler<GameFleetTravelMessage> for Game {
             msg.fleet.clone()
         ), Some(msg.fleet.player));
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
-            this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone());
+            match this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone()) {
+                Ok(_) => {},
+                Err(err) => println!("{:?}", err)
+            }
         });
     }
 }

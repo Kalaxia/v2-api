@@ -62,8 +62,9 @@ impl Fleet {
 
 #[post("/")]
 pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
-    let mut games = state.games_mut();
-    let game = games.get_mut(&info.0).ok_or(InternalError::GameUnknown)?;
+    let games = state.games();
+    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    drop(games);
     
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
@@ -102,9 +103,10 @@ pub async fn travel(
     json_data: web::Json<FleetTravelData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let mut games = state.games_mut();
-    let game = games.get_mut(&info.0).ok_or(InternalError::GameUnknown)?;
-    
+    let games = state.games();
+    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    drop(games);
+
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
     let destination_system = data.systems.get(&json_data.destination_system_id).ok_or(InternalError::SystemUnknown)?.clone();

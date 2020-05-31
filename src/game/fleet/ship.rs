@@ -21,8 +21,9 @@ pub async fn add_ship(
     info: web::Path<(GameID, SystemID, FleetID)>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let mut games = state.games_mut();
-    let game = games.get_mut(&info.0).ok_or(InternalError::GameUnknown)?;
+    let games = state.games();
+    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    drop(games);
     
     let locked_data = game.send(GameDataMessage{}).await?;
     let mut data = locked_data.lock().expect("Poisoned lock on game data");

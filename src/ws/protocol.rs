@@ -18,6 +18,7 @@ pub enum Action {
     PlayerDisconnected,
     PlayerIncome,
     SystemConquerred,
+    Victory
 }
 
 #[derive(actix::Message, serde::Serialize, Clone)]

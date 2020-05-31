@@ -14,7 +14,7 @@ use crate::{
         },
         lobby::Lobby,
         player::{PlayerID, Player, PlayerData},
-        system::{SystemID, System, generate_systems}
+        system::{SystemID, System, FleetArrivalOutcome, generate_systems}
     },
     ws::protocol,
     AppState,
@@ -35,6 +35,7 @@ pub struct Game {
 }
 
 pub const MAP_SIZE: u8 = 10;
+pub const TERRITORIAL_DOMINION_RATE: u8 = 60;
 
 impl Game {
     fn init(&mut self) {
@@ -136,7 +137,7 @@ impl Game {
         }
     }
 
-    fn process_fleet_arrival(&self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
+    fn process_fleet_arrival(&mut self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
         let fleet = {
             let system = data.systems.get_mut(&system_id).ok_or(InternalError::SystemUnknown)?;
@@ -157,8 +158,46 @@ impl Game {
         };
         let result = destination_system.resolve_fleet_arrival(fleet, player, system_owner);
         drop(players);
-        self.ws_broadcast(result.into(), None);
+        drop(data);
+        self.ws_broadcast(result.clone().into(), None);
+        if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
+            self.check_victory();
+        }
         Ok(())
+    }
+
+    fn check_victory(&mut self) {
+        let data = self.data.lock().expect("Poisoned lock on game data");
+        let players = self.players.lock().expect("Poisoned lock on game players");
+        let mut territories = HashMap::new();
+        let total_territories = data.systems.len() as f64;
+        let nb_territories_to_win = (total_territories * (TERRITORIAL_DOMINION_RATE as f64) / 100.0).ceil() as u8;
+
+        data.systems
+            .values() // for each system
+            .flat_map(|system| system.player)
+            .map(|pid| players.get(&pid).expect("Player not found")) // with a player in it
+            .for_each(|player| *territories.entry(player.data.faction.unwrap().clone()).or_insert(0) += 1); // update the player's income
+        drop(players);
+        drop(data);
+
+        for (fid, nb_systems) in territories.iter() {
+            if *nb_systems >= nb_territories_to_win {
+                #[derive(Serialize, Clone)]
+                struct VictoryData {
+                    victorious_faction: FactionID,
+                    scores: HashMap<FactionID, u8>
+                }
+                self.ws_broadcast(protocol::Message::new(
+                    protocol::Action::Victory,
+                    VictoryData{
+                        victorious_faction: *fid,
+                        scores: territories,
+                    }
+                ), None);
+                return;
+            }
+        }
     }
 }
 

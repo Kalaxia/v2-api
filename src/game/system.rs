@@ -35,6 +35,7 @@ pub struct ConquestData {
     pub fleet: Fleet,
 }
 
+#[derive(Clone)]
 pub enum FleetArrivalOutcome {
     Conquerred{
         system: System,

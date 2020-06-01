@@ -37,5 +37,16 @@ pub fn generate_factions() -> HashMap<FactionID, Faction> {
 
 #[get("/")]
 pub async fn get_factions(state: web::Data<AppState>) -> Option<HttpResponse> {
-    Some(HttpResponse::Ok().json(&state.factions().iter().map(|(_, f)| f.clone()).collect::<Vec<Faction>>()))
+    let mut factions = state
+        .factions()
+        .iter()
+        .map(|(_, f)| f.clone())
+        .collect::<Vec<Faction>>()
+    ;
+    factions.sort_by(|f1, f2| {
+        let FactionID(fid1) = f1.id;
+        let FactionID(fid2) = f2.id;
+        fid1.cmp(&fid2)
+    });
+    Some(HttpResponse::Ok().json(factions))
 }

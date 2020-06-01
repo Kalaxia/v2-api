@@ -199,6 +199,28 @@ impl Game {
             }
         }
     }
+
+    pub fn remove_player(&self, pid: PlayerID) -> Result<()> {
+        let mut players = self.players.lock().expect("Poisoned lock on game players");
+        let mut player = players.get_mut(&pid).ok_or(InternalError::PlayerUnknown)?;
+        player.data.is_connected = false;
+        drop(players);
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::PlayerLeft,
+            pid.clone()
+        ), Some(pid));
+        Ok(())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        let mut players = self.players.lock().expect("Poisoned lock on game players");
+        for (_, p) in players.iter() {
+            if p.data.is_connected {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 impl Actor for Game {
@@ -223,6 +245,9 @@ impl Actor for Game {
 pub struct GamePlayersMessage{}
 #[derive(Serialize, Clone)]
 pub struct GameDataMessage{}
+#[derive(actix::Message, Serialize, Clone)]
+#[rtype(result="bool")]
+pub struct GameRemovePlayerMessage(pub PlayerID);
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
@@ -258,6 +283,20 @@ impl Handler<GameDataMessage> for Game {
 
     fn handle(&mut self, _msg: GameDataMessage, _ctx: &mut Self::Context) -> Self::Result {
         self.data.clone()
+    }
+}
+
+impl Handler<GameRemovePlayerMessage> for Game {
+    type Result = bool;
+
+    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
+        self.remove_player(pid);
+        if self.is_empty() {
+            ctx.stop();
+            ctx.terminate();
+            return true;
+        }
+        false
     }
 }
 

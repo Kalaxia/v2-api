@@ -1,11 +1,14 @@
 use std::time::{Duration, Instant};
-
 use actix::*;
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
+use futures::executor::block_on;
 use crate::{
     lib::{Result, error::{ServerError, InternalError}, auth::Claims},
-    game::{player::{PlayerID, PlayerData}},
+    game::{
+        game::{GameRemovePlayerMessage},
+        player::{PlayerID, PlayerData},
+    },
     ws::protocol,
     AppState,
 };
@@ -60,7 +63,7 @@ impl ClientSession {
 
         if data.lobby != None {
             let mut lobbies = self.state.lobbies_mut();
-            let lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).unwrap();
+            let lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).expect("Lobby not found");
             
             lobby.remove_player(&players, data.clone());
             drop(players);
@@ -69,6 +72,17 @@ impl ClientSession {
                 let lobby_to_remove = lobby.clone();
                 drop(lobbies);
                 self.state.clear_lobby(lobby_to_remove, data.id);
+            }
+        } else if data.game != None {
+            drop(players);
+            let mut games = self.state.games_mut();
+            let gid = data.clone().game.unwrap();
+            let game = games.get_mut(&gid).expect("Game not found");
+
+            let is_empty = block_on(game.send(GameRemovePlayerMessage(data.id.clone()))).unwrap();
+            if is_empty {
+                drop(games);
+                self.state.clear_game(gid);
             }
         } else {
             drop(players);

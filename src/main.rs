@@ -56,12 +56,16 @@ impl AppState {
         });
     }
 
-    pub fn clear_lobby(&self, lobby: lobby::Lobby, player_id: player::PlayerID) {
+    pub fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) {
         self.lobbies_mut().remove(&lobby.id);
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
-        ), Some(player_id), Some(true));
+        ), Some(pid), Some(true));
+    }
+
+    pub fn clear_game(&self, gid: g::GameID) {
+        self.games_mut().remove(&gid);
     }
 
     res_access!{ factions, factions_mut : HashMap<faction::FactionID, faction::Faction> }

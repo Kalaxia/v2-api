@@ -97,7 +97,7 @@ pub async fn get_nb_players(state:web::Data<AppState>)
         nb_players: usize
     }
     Some(HttpResponse::Ok().json(PlayersCount{
-        nb_players: state.players.read().map_or(0, |players| players.len())
+        nb_players: (*state.players()).len()
     }))
 }
 

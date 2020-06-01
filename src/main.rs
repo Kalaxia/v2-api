@@ -56,6 +56,14 @@ impl AppState {
         });
     }
 
+    pub fn clear_lobby(&self, lobby: lobby::Lobby, player_id: player::PlayerID) {
+        self.lobbies_mut().remove(&lobby.id);
+        self.ws_broadcast(ws::protocol::Message::new(
+            ws::protocol::Action::LobbyRemoved,
+            lobby,
+        ), Some(player_id), Some(true));
+    }
+
     res_access!{ factions, factions_mut : HashMap<faction::FactionID, faction::Faction> }
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, lobby::Lobby> }

@@ -39,6 +39,19 @@ impl Lobby {
             }
         }
     }
+
+    pub fn remove_player(
+        &mut self,
+        players: &HashMap<player::PlayerID, player::Player>,
+        player_data: player::PlayerData,
+    ) {
+        // Remove the player from the lobby's list and notify all remaining players
+        self.players.remove(&player_data.id.clone());
+        self.ws_broadcast(&players, protocol::Message::new(
+            protocol::Action::PlayerLeft,
+            player_data.clone()
+        ), Some(&player_data.id.clone()));
+    }
 }
 
 #[get("/")]
@@ -187,21 +200,13 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
             Ok(p.data.clone())
         })?;
 
-    // Remove the player from the lobby's list and notify all remaining players
-    lobby.players.remove(&claims.pid);
-    lobby.ws_broadcast(&players, protocol::Message::new(
-        protocol::Action::PlayerLeft,
-        data
-    ), Some(&claims.pid));
+    lobby.remove_player(&players, data.clone());
     drop(players);
-
-    // If it was the last player, remove the lobby and notify all players a lobby was closed
+    
     if lobby.players.is_empty() {
-        state.ws_broadcast(protocol::Message::new(
-            protocol::Action::LobbyRemoved,
-            lobby.clone(),
-        ), Some(claims.pid), Some(true));
-        lobbies.remove(&info.0);
+        let lobby_to_remove = lobby.clone();
+        drop(lobbies);
+        state.clear_lobby(lobby_to_remove, data.id);
     }
 
     Ok(HttpResponse::NoContent().finish())

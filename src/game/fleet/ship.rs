@@ -39,6 +39,9 @@ pub async fn add_ship(
     if owner_id != Some(player.data.id.clone()) || fleet.player != player.data.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
+    if fleet.destination_system != None {
+        return Err(InternalError::FleetAlreadyTravelling)?;
+    }
     player.spend(SHIP_COST)?;
     fleet.nb_ships += 1;
 

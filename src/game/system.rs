@@ -51,8 +51,16 @@ pub enum FleetArrivalOutcome {
 }
 
 impl System {
-    pub fn has_fleets(&self) -> bool {
-        self.fleets.len() > 0
+    /// Retrieve the present fleets by filtering the travelling ones
+    pub fn get_fleets(&self) -> HashMap<FleetID, Fleet> {
+        let mut fleets = HashMap::new();
+        self.fleets
+            .iter()
+            .filter(|(_, f)| !f.is_travelling())
+            .for_each(|(fid, f)| {
+                fleets.insert(fid.clone(), f.clone());
+            }); 
+        fleets
     }
 
     pub fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<&Player>) -> FleetArrivalOutcome {
@@ -64,10 +72,10 @@ impl System {
                     return FleetArrivalOutcome::Arrived{ fleet };
                 }
                 // Conquest of the system by the arrived fleet
-                if !self.has_fleets() || combat::engage(&mut fleet, &mut self.fleets) == true {
+                let mut fleets = self.get_fleets();
+                if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets) == true {
                     return self.conquer(fleet);
                 }
-                let mut fleets = self.fleets.clone();
                 fleets.insert(fleet.id.clone(), fleet.clone());
                 FleetArrivalOutcome::Defended{ fleets, system: self.clone() }
             },
@@ -76,7 +84,8 @@ impl System {
     }
 
     pub fn conquer(&mut self, mut fleet: Fleet) -> FleetArrivalOutcome {
-        self.fleets.clear(); // Clean defeated defenders fleets
+        // Clean defeated defenders fleets
+        self.fleets.retain(|_, f| f.is_travelling()); 
         fleet.change_system(self);
         self.player = Some(fleet.player.clone());
         FleetArrivalOutcome::Conquerred{

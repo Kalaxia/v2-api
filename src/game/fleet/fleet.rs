@@ -58,6 +58,10 @@ impl Fleet {
         self.destination_system = None;
         system.fleets.insert(self.id.clone(), self.clone());
     }
+
+    pub fn is_travelling(&self) -> bool {
+        self.destination_system != None
+    }
 }
 
 #[post("/")]

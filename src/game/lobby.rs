@@ -20,7 +20,7 @@ pub struct LobbyID(Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
     pub id: LobbyID,
-    pub creator: Option<player::PlayerID>,
+    pub owner: Option<player::PlayerID>,
     pub players: HashSet<player::PlayerID>,
 }
 
@@ -52,6 +52,14 @@ impl Lobby {
             player_data.clone()
         ), Some(&player_data.id.clone()));
     }
+
+    pub fn update_owner(&mut self, players: &HashMap<player::PlayerID, player::Player>) {
+        self.owner = Some(self.players.iter().next().unwrap().clone());
+        self.ws_broadcast(&players, protocol::Message::new(
+            protocol::Action::LobbyOwnerUpdated,
+            self.owner.clone()
+        ), None);
+    }
 }
 
 #[get("/")]
@@ -59,7 +67,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
-        creator: Option<player::PlayerData>,
+        owner: Option<player::PlayerData>,
         nb_players: usize
     }
 
@@ -69,11 +77,11 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
         .json(state.lobbies()
             .iter()
             .map(|(_, lobby)| {
-                let creator = lobby.creator.and_then(|pid| players.get(&pid));
+                let owner = lobby.owner.and_then(|pid| players.get(&pid));
 
                 LobbyData {
                     id: lobby.id,
-                    creator: creator.map(|p| p.data.clone()),
+                    owner: owner.map(|p| p.data.clone()),
                     nb_players: lobby.players.len()
                 }
             })
@@ -88,18 +96,18 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
     let players = state.players();
 
     let lobby = lobbies.get(&info.0)?;
-    let creator = lobby.creator.and_then(|creator| players.get(&creator)).map(|p| p.data.clone());
+    let owner = lobby.owner.and_then(|owner| players.get(&owner)).map(|p| p.data.clone());
 
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
-        creator: Option<player::PlayerData>,
+        owner: Option<player::PlayerData>,
         players: HashSet<player::PlayerData>,
     }
 
     let data = LobbyData{
         id: lobby.id,
-        creator,
+        owner,
         players: lobby.players.iter().filter_map(|pid| Some(players.get(pid)?.data.clone())).collect(),
     };
 
@@ -122,7 +130,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     let id = LobbyID(Uuid::new_v4());
     let new_lobby = Lobby {
         id,
-        creator: Some(pid),
+        owner: Some(pid),
         players: [pid].iter().copied().collect(),
     };
 
@@ -155,7 +163,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     let lobby = lobbies.get(&info.0).ok_or(InternalError::LobbyUnknown)?;
     let lobby_id = lobby.id.clone();
 
-    if lobby.creator != Some(claims.pid.clone()) {
+    if lobby.owner != Some(claims.pid.clone()) {
         Err(InternalError::AccessDenied)?
     }
     let (game_id, game) = create_game(lobby, &mut players);
@@ -201,14 +209,15 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
         })?;
 
     lobby.remove_player(&players, data.clone());
-    drop(players);
-    
+
     if lobby.players.is_empty() {
         let lobby_to_remove = lobby.clone();
+        drop(players);
         drop(lobbies);
         state.clear_lobby(lobby_to_remove, data.id);
+    } else if Some(data.id) == lobby.owner {
+        lobby.update_owner(&players);
     }
-
     Ok(HttpResponse::NoContent().finish())
 }
 

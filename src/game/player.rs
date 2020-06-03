@@ -127,7 +127,7 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
     Player::notify_update(data.clone(), &players, lobby);
     drop(players);
 
-    if lobby.creator == Some(data.id) {
+    if lobby.owner == Some(data.id) {
         #[derive(Serialize, Clone)]
         struct LobbyName{
             id: LobbyID,

@@ -66,12 +66,17 @@ impl ClientSession {
             let lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).expect("Lobby not found");
             
             lobby.remove_player(&players, data.clone());
-            drop(players);
             
             if lobby.players.is_empty() {
                 let lobby_to_remove = lobby.clone();
+                drop(players);
                 drop(lobbies);
                 self.state.clear_lobby(lobby_to_remove, data.id);
+            } else if Some(data.id) == lobby.owner {
+                lobby.update_owner(&players);
+                drop(players);
+            } else {
+                drop(players);
             }
         } else if data.game != None {
             drop(players);

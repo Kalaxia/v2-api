@@ -8,6 +8,7 @@ pub enum Action {
     GameStarted,
     LobbyCreated,
     LobbyUpdated,
+    LobbyOwnerUpdated,
     LobbyNameUpdated,
     LobbyRemoved,
     LobbyLaunched,

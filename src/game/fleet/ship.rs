@@ -15,10 +15,16 @@ use crate::{
 
 const SHIP_COST: usize = 10;
 
+#[derive(serde::Deserialize)]
+pub struct ShipQuantityData {
+    pub quantity: usize
+}
+
 #[post("/")]
 pub async fn add_ship(
     state: web::Data<AppState>,
     info: web::Path<(GameID, SystemID, FleetID)>,
+    json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
     let games = state.games();
@@ -42,8 +48,8 @@ pub async fn add_ship(
     if fleet.destination_system != None {
         return Err(InternalError::FleetAlreadyTravelling)?;
     }
-    player.spend(SHIP_COST)?;
-    fleet.nb_ships += 1;
+    player.spend(SHIP_COST * json_data.quantity)?;
+    fleet.nb_ships += json_data.quantity;
 
     Ok(HttpResponse::Created().finish())
 }

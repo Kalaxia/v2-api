@@ -14,7 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v1
 
-      - uses: mr-smithers-excellent/docker-build-push@v3
+      - id: image_build
+        uses: mr-smithers-excellent/docker-build-push@v3
         name: Build & push Docker image
         with:
           image: kalaxia/v2-api
@@ -22,3 +23,6 @@ jobs:
           buildArgs: FEATURES=ssl-secure
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Tag & push Latest tag
+        run: docker tag kalaxia/v2-api:${{ steps.image_build.outputs.tag }} kalaxia/v2-api:latest && docker push kalaxia/v2-api:latest

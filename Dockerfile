@@ -22,17 +22,11 @@ RUN echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main
 
 RUN RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=x86_64-unknown-linux-musl --features=$FEATURES
 
-RUN ls -la target/x86_64-unknown-linux-musl/release/build
-
 RUN rm -f target/x86_64-unknown-linux-musl/release/deps/kalaxia_api*
 
-COPY . .
-
-RUN ls -la target/x86_64-unknown-linux-musl/release/build
+COPY src src/
 
 RUN RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=x86_64-unknown-linux-musl --features=$FEATURES
-
-RUN ls -la target/x86_64-unknown-linux-musl/release/deps
 
 # ------------------------------------------------------------------------------
 # Final Stage

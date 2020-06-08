@@ -7,7 +7,7 @@ edition = "2018"
 
 [features]
 default = []
-ssl-secure = ["openssl-sys", "openssl", "actix-web/openssl"]
+ssl-secure = ["rustls", "actix-web/rustls"]
 
 [dependencies]
 actix = "0.9.0"
@@ -23,6 +23,5 @@ jsonwebtoken = "7.1.0"
 futures = "0.3.5"
 actix-service = "1.0.5"
 serde_json = "1.0.53"
-openssl-sys = { version = "0.9", optional = true }
-openssl = { version = "0.10", optional = true }
+rustls = { version = "0.16", optional = true }
 env_logger = "0.7.1"

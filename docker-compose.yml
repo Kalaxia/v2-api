@@ -1,5 +1,9 @@
 version: '3.5'
 
+networks:
+    api:
+        driver: bridge
+
 services:
     api:
         container_name: kalaxia_v2_api
@@ -11,6 +15,18 @@ services:
             - kalaxia.env
         volumes:
             - "./var/ssl:/var/ssl"
+        networks:
+            - api
         ports:
             - "80:80"
             - "443:443"
+
+    mysql:
+        container_name: kalaxia_v2_mysql
+        image: mysql:8
+        env_file:
+            - kalaxia.env
+        volumes:
+            - "./var/mysql:/var/lib/mysql"
+        networks:
+            - api

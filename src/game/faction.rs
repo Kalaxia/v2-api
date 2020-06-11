@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use crate::{
     AppState
 };
+use sqlx::PgPool;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Faction{
@@ -36,7 +37,7 @@ pub fn generate_factions() -> HashMap<FactionID, Faction> {
 }
 
 #[get("/")]
-pub async fn get_factions(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_factions(state: web::Data<AppState>, db: web::Data<PgPool>) -> Option<HttpResponse> {
     let mut factions = state
         .factions()
         .iter()

@@ -7,8 +7,11 @@ use std::sync::RwLock;
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
-use rustls::internal::pemfile::{certs, rsa_private_keys};
-use rustls::{NoClientAuth, ServerConfig};
+use rustls::{
+    {NoClientAuth, ServerConfig},
+    internal::pemfile::{certs, rsa_private_keys}
+};
+use sqlx::PgPool;
 
 mod ws;
 mod game;
@@ -22,6 +25,7 @@ use game::{
     player,
     lobby,
 };
+use lib::Result;
 
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
@@ -142,6 +146,16 @@ fn get_env(key: &str, default: &str) -> String {
     }
 }
 
+async fn create_pool() -> Result<PgPool> {
+    Ok(PgPool::new(&format!(
+        "postgres://{}:{}@{}/{}",
+        &get_env("POSTGRES_USER", "kalaxia"),
+        &get_env("POSTGRES_PASSWORD", "kalaxia"),
+        &get_env("POSTGRES_HOST", "localhost"),
+        &get_env("POSTGRES_DB", "kalaxia_api")
+    )).await?)
+}
+
 #[actix_rt::main]
 #[cfg(feature="ssl-secure")]
 async fn main() -> std::io::Result<()> {
@@ -156,10 +170,13 @@ async fn main() -> std::io::Result<()> {
     let mut keys = rsa_private_keys(key_file).unwrap();
     ssl_config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
 
+    let pool = create_pool().await.unwrap();
+
     let state = web::Data::new(generate_state());
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
+        .data(pool.clone())
         .app_data(state.clone()).configure(config))
         .bind_rustls(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?
         .run()
@@ -172,10 +189,12 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
     
+    let pool = create_pool().await.unwrap();
     let state = web::Data::new(generate_state());
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
+        .data(pool.clone())
         .app_data(state.clone()).configure(config))
         .bind(get_env("LISTENING_URL", "127.0.0.1:80"))?
         .run()

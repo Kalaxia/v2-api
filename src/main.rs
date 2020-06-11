@@ -30,7 +30,6 @@ use lib::Result;
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
-    factions: RwLock<HashMap<faction::FactionID, faction::Faction>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<g::Game>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, lobby::Lobby>>,
     players: RwLock<HashMap<player::PlayerID, player::Player>>,
@@ -75,7 +74,6 @@ impl AppState {
         self.games_mut().remove(&gid);
     }
 
-    res_access!{ factions, factions_mut : HashMap<faction::FactionID, faction::Faction> }
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, lobby::Lobby> }
     res_access!{ players, players_mut : HashMap<player::PlayerID, player::Player> }
@@ -83,7 +81,6 @@ impl AppState {
 
 fn generate_state() -> AppState {
     AppState {
-        factions: RwLock::new(faction::generate_factions()),
         games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
         players: RwLock::new(HashMap::new()),
@@ -149,8 +146,8 @@ fn get_env(key: &str, default: &str) -> String {
 async fn create_pool() -> Result<PgPool> {
     Ok(PgPool::new(&format!(
         "postgres://{}:{}@{}/{}",
-        &get_env("POSTGRES_USER", "kalaxia"),
-        &get_env("POSTGRES_PASSWORD", "kalaxia"),
+        &get_env("POSTGRES_USER", "postgres"),
+        &get_env("POSTGRES_PASSWORD", "root"),
         &get_env("POSTGRES_HOST", "localhost"),
         &get_env("POSTGRES_DB", "kalaxia_api")
     )).await?)

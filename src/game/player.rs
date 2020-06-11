@@ -3,11 +3,12 @@ use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::collections::HashMap;
+use sqlx::{PgPool, postgres::PgRow};
 use crate::{
     AppState,
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
-    game::faction::FactionID,
+    game::faction::{Faction, FactionID},
     lib::{Result, error::InternalError, auth},
     ws::protocol,
     ws::client::ClientSession
@@ -143,16 +144,16 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
 }
 
 #[patch("/me/faction")]
-pub async fn update_faction(state: web::Data<AppState>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
+pub async fn update_faction(state: web::Data<AppState>, db_pool: web::Data<PgPool>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let factions = state.factions();
+    let faction = Faction::find(json_data.faction_id, db_pool.get_ref()).await;
+    if faction.is_none() {
+        panic!("faction not found");
+    }
     let lobbies = state.lobbies();
     let mut players = state.players_mut();
     let data = players.get_mut(&claims.pid).map(|p| {
-        if !factions.contains_key(&json_data.faction_id) {
-            panic!("faction not found");
-        }
         p.data.faction = Some(json_data.faction_id);
         p.data.clone()
     })?;

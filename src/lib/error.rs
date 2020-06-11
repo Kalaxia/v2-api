@@ -3,6 +3,7 @@ use actix_web::{http::StatusCode, Error as ActixWebError, ResponseError};
 use actix_web_actors::ws::ProtocolError;
 use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
+use sqlx_core::{Error as SqlxError};
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -16,7 +17,8 @@ pub enum ServerError {
     ActixWSError(ProtocolError),
     JwtError(JwtError),
     InternalError(InternalError),
-    MailboxError(MailboxError)
+    MailboxError(MailboxError),
+    SqlxError(SqlxError),
 }
 
 impl From<ActixWebError> for ServerError {
@@ -37,6 +39,10 @@ impl From<ProtocolError> for ServerError {
 
 impl From<MailboxError> for ServerError {
     fn from(error:MailboxError) -> Self { Self::MailboxError(error) }
+}
+
+impl From<SqlxError> for ServerError {
+    fn from(error:SqlxError) -> Self { Self::SqlxError(error) }
 }
 
 impl Display for ServerError {
@@ -64,7 +70,8 @@ impl ResponseError for ServerError {
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
-            ServerError::MailboxError(_) => StatusCode::INTERNAL_SERVER_ERROR
+            ServerError::MailboxError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ServerError::SqlxError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 }

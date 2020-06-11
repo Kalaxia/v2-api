@@ -22,11 +22,11 @@ services:
             - "443:443"
 
     mysql:
-        container_name: kalaxia_v2_mysql
-        image: mysql:8
+        container_name: kalaxia_v2_postgres
+        image: postgres:12
         env_file:
             - kalaxia.env
         volumes:
-            - "./var/mysql:/var/lib/mysql"
+            - "./var/data:/var/lib/postgresql/data"
         networks:
             - api

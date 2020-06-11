@@ -40,6 +40,10 @@ RUN adduser -D -s /bin/sh -u 1000 -G kalaxia kalaxia
 
 WORKDIR /home/kalaxia/bin/
 
+RUN apk add --no-cache ca-certificates
+
+COPY --from=builder /out/diesel /bin/
+
 COPY --from=cargo-build /usr/src/kalaxia-api/target/x86_64-unknown-linux-musl/release/kalaxia-api .
 
 RUN chown kalaxia:kalaxia kalaxia-api

@@ -18,22 +18,36 @@ pub struct Faction{
 impl<'a> FromRow<'a, PgRow<'a>> for Faction {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         let id : i32 = row.try_get("id")?;
+        let color = row.try_get("color").map(i32::into)?;
+
         Ok(Faction {
             id: FactionID(id as u8),
             name: row.try_get("name")?,
-            color: row.try_get("color")?,
+            color,
         })
     }
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct FactionID(pub u8);
-#[derive(Serialize, Deserialize, Copy, Clone, sqlx::Type)]
-#[sqlx(rename = "JSONB")]
-pub struct FactionColor{
-    pub r: i32,
-    pub g: i32,
-    pub b: i32,
+#[derive(Serialize, Deserialize, Copy, Clone)]
+pub struct FactionColor(pub u8, pub u8, pub u8, pub u8);
+
+impl sqlx::Type<sqlx::Postgres> for FactionColor {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        sqlx::postgres::PgTypeInfo::with_name("integer")
+    }
+}
+
+impl From<i32> for FactionColor {
+    fn from(n:i32) -> Self {
+        Self(
+            ((n >> 24) & 0xff) as u8,
+            ((n >> 16) & 0xff) as u8,
+            ((n >> 8) & 0xff) as u8,
+            ((n >> 0) & 0xff) as u8,
+        )
+    }
 }
 
 impl From<FactionID> for i32 {
@@ -48,7 +62,7 @@ impl Faction {
     }
 
     pub async fn find(fid: FactionID, db_pool: &PgPool) -> Option<Self> {
-        sqlx::query_as("SELECT * FROM faction__factions WHERE id = ?")
+        sqlx::query_as("SELECT * FROM faction__factions WHERE id = $1")
             .bind(i32::from(fid))
             .fetch_one(db_pool).await.ok()
     }

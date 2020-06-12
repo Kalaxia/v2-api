@@ -66,7 +66,7 @@ impl ResponseError for ServerError {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
                 AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling => StatusCode::CONFLICT,
-                PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
+                FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -81,6 +81,8 @@ impl ResponseError for ServerError {
 pub enum InternalError {
     /// A player tried to perform a restricted operation
     AccessDenied,
+    /// We couldn't map a FactionID to an existing faction
+    FactionUnknown,
     /// We couldn't map a PlayerID to an existing player
     PlayerUnknown,
     /// We couldn't map a FleetID to an existing fleet

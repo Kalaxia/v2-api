@@ -149,7 +149,7 @@ pub async fn update_faction(state: web::Data<AppState>, db_pool: web::Data<PgPoo
 {
     let faction = Faction::find(json_data.faction_id, db_pool.get_ref()).await;
     if faction.is_none() {
-        panic!("faction not found");
+        return Some(HttpResponse::NotFound().finish());
     }
     let lobbies = state.lobbies();
     let mut players = state.players_mut();

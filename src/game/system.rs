@@ -63,11 +63,11 @@ impl System {
         fleets
     }
 
-    pub fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<&Player>) -> FleetArrivalOutcome {
+    pub fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>) -> FleetArrivalOutcome {
         match system_owner {
             Some(system_owner) => {
                 // Both players have the same faction, the arrived fleet just parks here
-                if system_owner.data.faction == player.data.faction {
+                if system_owner.faction == player.faction {
                     fleet.change_system(self);
                     return FleetArrivalOutcome::Arrived{ fleet };
                 }

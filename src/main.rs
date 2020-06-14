@@ -30,9 +30,10 @@ use lib::Result;
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
+    db_pool: PgPool,
+    clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
+    lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<g::Game>>>,
-    lobbies: RwLock<HashMap<lobby::LobbyID, lobby::Lobby>>,
-    players: RwLock<HashMap<player::PlayerID, player::Player>>,
 }
 
 macro_rules! res_access {
@@ -53,17 +54,18 @@ impl AppState {
         skip_id: Option<player::PlayerID>,
         only_free_players: Option<bool>
     ) {
-        let players = self.players.read().unwrap();
         let ofp = only_free_players.unwrap_or(false);
-        players.iter().for_each(|(_, p)| {
-            if (!ofp || (ofp && p.data.lobby == None && p.data.game == None)) && Some(p.data.id) != skip_id {
-                p.websocket.as_ref().map(|ws| ws.do_send(message.clone()));
-            }
+        let clients = self.clients();
+        clients.iter().for_each(|(_, c)| {
+            c.do_send(message.clone());
+            // if (!ofp || (ofp && p.data.lobby == None && p.data.game == None)) && Some(p.data.id) != skip_id {
+            //     p.websocket.as_ref().map(|ws| ws.do_send(message.clone()));
+            // }
         });
     }
 
     pub fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) {
-        self.lobbies_mut().remove(&lobby.id);
+        lobby::Lobby::remove(lobby.id, &self.db_pool);
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
@@ -75,15 +77,16 @@ impl AppState {
     }
 
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }
-    res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, lobby::Lobby> }
-    res_access!{ players, players_mut : HashMap<player::PlayerID, player::Player> }
+    res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
+    res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
 }
 
-fn generate_state() -> AppState {
+async fn generate_state() -> AppState {
     AppState {
+        db_pool: create_pool().await.unwrap(),
         games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
-        players: RwLock::new(HashMap::new()),
+        clients: RwLock::new(HashMap::new()),
     }
 }
 
@@ -127,9 +130,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             web::scope("/players")
             .service(player::get_nb_players)
             .service(player::get_current_player)
-            .service(player::update_username)
-            .service(player::update_faction)
-            .service(player::update_ready)
+            .service(player::update_current_player)
         )
     )
     .service(player::login)
@@ -167,13 +168,10 @@ async fn main() -> std::io::Result<()> {
     let mut keys = rsa_private_keys(key_file).unwrap();
     ssl_config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
 
-    let pool = create_pool().await.unwrap();
-
-    let state = web::Data::new(generate_state());
+    let state = web::Data::new(generate_state().await);
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .data(pool.clone())
         .app_data(state.clone()).configure(config))
         .bind_rustls(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?
         .run()
@@ -186,12 +184,10 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
     
-    let pool = create_pool().await.unwrap();
-    let state = web::Data::new(generate_state());
+    let state = web::Data::new(generate_state().await);
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .data(pool.clone())
         .app_data(state.clone()).configure(config))
         .bind(get_env("LISTENING_URL", "127.0.0.1:80"))?
         .run()

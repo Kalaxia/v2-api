@@ -2,12 +2,13 @@ use actix_web::{web, get, patch, post, HttpResponse};
 use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use std::collections::HashMap;
-use sqlx::{PgPool, postgres::PgRow};
+use std::collections::{HashSet, HashMap};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx_core::row::Row;
 use crate::{
     AppState,
     game::game::{GameID},
-    game::lobby::{LobbyID, Lobby},
+    game::lobby::{LobbyID, Lobby, LobbyBroadcastMessage},
     game::faction::{Faction, FactionID},
     lib::{Result, error::InternalError, auth},
     ws::protocol,
@@ -15,7 +16,7 @@ use crate::{
 };
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
-pub struct PlayerData {
+pub struct Player {
     pub id: PlayerID,
     pub username: String,
     pub game: Option<GameID>,
@@ -26,69 +27,132 @@ pub struct PlayerData {
     pub is_connected: bool,
 }
 
-#[derive(Clone)]
-pub struct Player {
-    pub data: PlayerData,
-    pub websocket: Option<Addr<ClientSession>>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct PlayerID(Uuid);
+pub struct PlayerID(pub Uuid);
 
 #[derive(Deserialize)]
-pub struct PlayerUsername{
-    pub username: String
+pub struct PlayerUpdateData{
+    pub username: String,
+    pub faction_id: FactionID,
+    pub is_ready: bool,
 }
 
-#[derive(Deserialize)]
-pub struct PlayerFaction{
-    pub faction_id: FactionID
+impl From<PlayerID> for Uuid {
+    fn from(pid: PlayerID) -> Self { pid.0 }
 }
 
-#[derive(Deserialize)]
-pub struct PlayerReady{
-    pub ready: bool
+impl<'a> FromRow<'a, PgRow<'a>> for Player {
+    fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
+        let id : Uuid = row.try_get("id")?;
+        let faction_id = match row.try_get::<i32, _>("faction_id") {
+            Ok(fid) => Some(FactionID(fid as u8)),
+            Err(_) => None,
+        };
+        let game_id = match row.try_get("game_id") {
+            Ok(gid) => Some(GameID(gid)),
+            Err(_) => None,
+        };
+        let lobby_id = match row.try_get("lobby_id") {
+            Ok(lid) => Some(LobbyID(lid)),
+            Err(_) => None,
+        };
+
+        Ok(Player {
+            id: PlayerID(id),
+            username: row.try_get("username")?,
+            faction: faction_id,
+            game: game_id,
+            lobby: lobby_id,
+            wallet: row.try_get::<i32, _>("wallet").map(|w| w as usize)?,
+            ready: row.try_get("is_ready")?,
+            is_connected: row.try_get("is_connected")?,
+        })
+    }
 }
 
 impl Player {
-    pub fn notify_update(data: PlayerData, players: &HashMap<PlayerID, Player>, lobby: &Lobby) {
-        let id = data.id;
-        lobby.ws_broadcast(&players, protocol::Message::new(
-            protocol::Action::PlayerUpdate,
-            data
-        ), Some(&id))
-    }
-
     pub fn spend(&mut self, amount: usize) -> Result<()> {
-        if amount > self.data.wallet {
+        if amount > self.wallet {
             return Err(InternalError::NotEnoughMoney)?;
         }
-        self.data.wallet -= amount;
+        self.wallet -= amount;
         Ok(())
+    }
+
+    pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Option<Self> {
+        sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
+            .bind(Uuid::from(pid))
+            .fetch_one(db_pool).await.ok()
+    }
+    
+    pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Vec<Self> {
+        let players: Vec<Self> = sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
+            .bind(Uuid::from(gid))
+            .fetch_all(db_pool).await.expect("Could not retrieve game players");
+        players
+    }
+    
+    pub async fn find_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Vec<Self> {
+        let players: Vec<Self> = sqlx::query_as("SELECT * FROM player__players WHERE lobby_id = $1")
+            .bind(Uuid::from(lid))
+            .fetch_all(db_pool).await.expect("Could not retrieve lobby players");
+        players
+    }
+
+    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> i32 {
+        let count: (i32,) = sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
+            .bind(Uuid::from(lid))
+            .fetch_one(db_pool).await.expect("Could not count lobby players");
+        count.0
+    }
+
+    pub async fn create(p: Player, db_pool: &PgPool) {
+        sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
+            .bind(Uuid::from(p.id))
+            .bind(p.wallet as i32)
+            .bind(p.ready)
+            .bind(p.is_connected)
+            .execute(db_pool).await.expect("Could not create player");
+    }
+
+    pub async fn update(p: Player, db_pool: &PgPool) {
+        sqlx::query("UPDATE player__players SET username = $1,
+            game_id = $2,
+            lobby_id = $3,
+            faction_id = $4,
+            wallet = $5,
+            is_ready = $6,
+            is_connected = $7
+            WHERE id = $8)")
+            .bind(p.username)
+            .bind(p.game.map(Uuid::from))
+            .bind(p.lobby.map(Uuid::from))
+            .bind(p.faction.map(i32::from))
+            .bind(p.wallet as i32)
+            .bind(p.ready)
+            .bind(p.is_connected)
+            .bind(Uuid::from(p.id))
+            .execute(db_pool).await.expect("Could not update player");
     }
 }
 
 #[post("/login")]
-pub async fn login(state:web::Data<AppState>) -> Result<auth::Claims> {
-    let pid = PlayerID(Uuid::new_v4());
+pub async fn login(state:web::Data<AppState>)
+    -> Result<auth::Claims>
+{
     let player = Player {
-        data: PlayerData {
-            id: pid.clone(),
-            username: String::from(""),
-            lobby: None,
-            game: None,
-            faction: None,
-            ready: false,
-            wallet: 0,
-            is_connected: true,
-        },
-        websocket: None,
+        id: PlayerID(Uuid::new_v4()),
+        username: String::from(""),
+        lobby: None,
+        game: None,
+        faction: None,
+        ready: false,
+        wallet: 0,
+        is_connected: true,
     };
-
-    let mut players = state.players_mut();
-    players.insert(pid, player);
+    Player::create(player.clone(), &state.db_pool).await;
     
-    Ok(auth::Claims { pid })
+    Ok(auth::Claims { pid: player.id })
 }
 
 #[get("/count/")]
@@ -100,7 +164,7 @@ pub async fn get_nb_players(state:web::Data<AppState>)
         nb_players: usize
     }
     Some(HttpResponse::Ok().json(PlayersCount{
-        nb_players: (*state.players()).len()
+        nb_players: (*state.clients()).len()
     }))
 }
 
@@ -108,27 +172,32 @@ pub async fn get_nb_players(state:web::Data<AppState>)
 pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
     -> Option<HttpResponse>
 {
-    let players = state.players();
-    players
-        .get(&claims.pid)
-        .map(|p| HttpResponse::Ok().json(p.data.clone()))
+    Some(HttpResponse::Ok().json(Player::find(claims.pid, &state.db_pool).await))
 }
 
-#[patch("/me/username")]
-pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<PlayerUsername>, claims: auth::Claims)
-    -> Option<HttpResponse>
+#[patch("/me/")]
+pub async fn update_current_player(state: web::Data<AppState>, json_data: web::Json<PlayerUpdateData>, claims: auth::Claims)
+    -> Result<HttpResponse>
 {
-    let mut players = state.players_mut();
-    let data = players.get_mut(&claims.pid).map(|p| {
-        p.data.username = json_data.username.clone();
-        p.data.clone()
-    })?;
-    let lobbies = state.lobbies();
-    let lobby = lobbies.get(&data.clone().lobby.unwrap()).unwrap();
-    Player::notify_update(data.clone(), &players, lobby);
-    drop(players);
+    let mut player = Player::find(claims.pid, &state.db_pool).await.expect("Player not found");
+    let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await.unwrap();
 
-    if lobby.owner == Some(data.id) {
+    player.username = json_data.username.clone();
+    player.faction = Some(json_data.faction_id);
+    player.ready = json_data.is_ready;
+    Player::update(player.clone(), &state.db_pool).await;
+
+    let lobbies = state.lobbies();
+    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    lobby_server.do_send(LobbyBroadcastMessage{
+        message: protocol::Message::new(
+            protocol::Action::PlayerUpdate,
+            player.clone()
+        ),
+        skip_id: Some(player.id.clone()),
+    });
+
+    if lobby.owner == player.id {
         #[derive(Serialize, Clone)]
         struct LobbyName{
             id: LobbyID,
@@ -136,41 +205,9 @@ pub async fn update_username(state: web::Data<AppState>, json_data: web::Json<Pl
         };
         state.ws_broadcast(protocol::Message::new(
             protocol::Action::LobbyNameUpdated,
-            LobbyName{ id: lobby.id.clone(), name: data.username.clone() }
-        ), Some(data.id), Some(true));
+            LobbyName{ id: lobby.id.clone(), name: player.username.clone() }
+        ), Some(player.id), Some(true));
     }
 
-    Some(HttpResponse::NoContent().finish())
-}
-
-#[patch("/me/faction")]
-pub async fn update_faction(state: web::Data<AppState>, db_pool: web::Data<PgPool>, json_data: web::Json<PlayerFaction>, claims: auth::Claims)
-    -> Option<HttpResponse>
-{
-    let faction = Faction::find(json_data.faction_id, db_pool.get_ref()).await;
-    if faction.is_none() {
-        return Some(HttpResponse::NotFound().finish());
-    }
-    let lobbies = state.lobbies();
-    let mut players = state.players_mut();
-    let data = players.get_mut(&claims.pid).map(|p| {
-        p.data.faction = Some(json_data.faction_id);
-        p.data.clone()
-    })?;
-    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
-    Some(HttpResponse::NoContent().finish())
-}
-
-#[patch("/me/ready")]
-pub async fn update_ready(state: web::Data<AppState>, claims: auth::Claims)
-    -> Option<HttpResponse>
-{
-    let lobbies = state.lobbies();
-    let mut players = state.players_mut();
-    let data = players.get_mut(&claims.pid).map(|p| {
-        p.data.ready = !p.data.ready;
-        p.data.clone()
-    })?;
-    Player::notify_update(data.clone(), &players, lobbies.get(&data.lobby.unwrap()).unwrap());
-    Some(HttpResponse::NoContent().finish())
+    Ok(HttpResponse::NoContent().finish())
 }

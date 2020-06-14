@@ -1949,6 +1949,7 @@ dependencies = [
  "sqlformat",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]

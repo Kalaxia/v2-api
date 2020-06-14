@@ -69,6 +69,6 @@ impl Faction {
 }
 
 #[get("/")]
-pub async fn get_factions(state: web::Data<AppState>, db_pool: web::Data<PgPool>) -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(Faction::find_all(db_pool.get_ref()).await))
+pub async fn get_factions(state: web::Data<AppState>) -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(Faction::find_all(&state.db_pool).await))
 }

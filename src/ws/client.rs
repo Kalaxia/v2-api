@@ -6,8 +6,9 @@ use futures::executor::block_on;
 use crate::{
     lib::{Result, error::{ServerError, InternalError}, auth::Claims},
     game::{
+        lobby::{ Lobby, LobbyRemovePlayerMessage, LobbyBroadcastMessage },
         game::{GameRemovePlayerMessage},
-        player::{PlayerID, PlayerData},
+        player::{Player, PlayerID},
     },
     ws::protocol,
     AppState,
@@ -24,26 +25,20 @@ pub async fn entrypoint(
     state: web::Data<AppState>,
     claims: Claims,
 ) -> Result<HttpResponse> {
-    let mut players = state.players_mut();
-    let p = players.get_mut(&claims.pid);
-
-    if p.is_none() {
-        return Err(InternalError::PlayerUnknown.into());
-    }
-    let player = p.unwrap();
+    let player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    // Creates the websocket client for the current player
     let (addr, resp) = ws::start_with_addr(ClientSession{
         hb: Instant::now(),
         state: state.clone(),
-        pid: player.data.id.clone()
+        pid: player.id.clone()
     }, &req, stream)?;
-    player.websocket = Some(addr);
-    let data = player.data.clone();
-    drop(players);
+
+    state.clients_mut().insert(player.id.clone(), addr);
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::PlayerConnected,
-        data.clone()
-    ), Some(data.id.clone()), Some(true));
+        player.clone()
+    ), Some(player.id.clone()), Some(true));
 
     Ok(resp)
 }
@@ -56,45 +51,42 @@ pub struct ClientSession {
 }
 
 impl ClientSession {
-    fn logout(&self) {
-        let mut players = self.state.players_mut();
-        let data = players.get(&self.pid).unwrap().data.clone();
-        players.remove(&self.pid);
+    async fn logout(&self) {
+        let mut clients = self.state.clients_mut();
+        let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
+        clients.remove(&self.pid);
 
-        if data.lobby != None {
-            let mut lobbies = self.state.lobbies_mut();
-            let lobby = lobbies.get_mut(&data.clone().lobby.unwrap()).expect("Lobby not found");
-            
-            lobby.remove_player(&players, data.clone());
-            
-            if lobby.players.is_empty() {
-                let lobby_to_remove = lobby.clone();
-                drop(players);
-                drop(lobbies);
-                self.state.clear_lobby(lobby_to_remove, data.id);
-            } else if Some(data.id) == lobby.owner {
-                lobby.update_owner(&players);
-                drop(players);
-            } else {
-                drop(players);
+        if player.lobby != None {
+            let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
+            let lobbies = self.state.lobbies();
+            let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
+            let is_empty = lobby_server.send(LobbyRemovePlayerMessage(player.id.clone())).await.unwrap();
+            if is_empty {
+                self.state.clear_lobby(lobby, player.id);
+            } else if player.id == lobby.owner {
+                lobby.update_owner(&self.state.db_pool).await;
+                lobby_server.do_send(LobbyBroadcastMessage{
+                    message: protocol::Message::new(
+                        protocol::Action::LobbyOwnerUpdated,
+                        lobby.owner.clone()
+                    ),
+                    skip_id: None,
+                });
             }
-        } else if data.game != None {
-            drop(players);
+        } else if player.game != None {
             let mut games = self.state.games_mut();
-            let gid = data.clone().game.unwrap();
+            let gid = player.clone().game.unwrap();
             let game = games.get_mut(&gid).expect("Game not found");
 
-            let is_empty = block_on(game.send(GameRemovePlayerMessage(data.id.clone()))).unwrap();
+            let is_empty = block_on(game.send(GameRemovePlayerMessage(player.id.clone()))).unwrap();
             if is_empty {
                 drop(games);
                 self.state.clear_game(gid);
             }
-        } else {
-            drop(players);
         }
         self.state.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerDisconnected,
-            data.clone()
+            player.clone()
         ), Some(self.pid), Some(true));
     }
 }
@@ -110,7 +102,7 @@ impl Actor for ClientSession {
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        self.logout();
+        block_on(self.logout());
         Running::Stop
     }
 }

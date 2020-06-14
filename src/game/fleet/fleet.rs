@@ -11,11 +11,10 @@ use crate::{
         game::{
             GameID,
             GameDataMessage,
-            GamePlayersMessage,
             GameBroadcastMessage,
             GameFleetTravelMessage
         },
-        player::PlayerID,
+        player::{Player, PlayerID},
         system::{System, SystemID, Coordinates}
     },
     ws::protocol,
@@ -74,17 +73,15 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     let mut data = locked_data.lock().expect("Poisoned lock on game data");
     let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
 
-    let players_data = game.send(GamePlayersMessage{}).await?;
-    let mut players = players_data.lock().expect("Poisoned lock on game players");
-    let player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
     
-    if system.player != Some(player.data.id) {
+    if system.player != Some(player.id) {
         return Err(InternalError::AccessDenied)?;
     }
     player.spend(FLEET_COST)?;
     let fleet = Fleet{
         id: FleetID(Uuid::new_v4()),
-        player: player.data.id.clone(),
+        player: player.id.clone(),
         system: system.id.clone(),
         destination_system: None,
         nb_ships: 1
@@ -95,7 +92,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
             protocol::Action::FleetCreated,
             fleet.clone()
         ),
-        skip_id: Some(player.data.id.clone())
+        skip_id: Some(player.id.clone())
     });
     Ok(HttpResponse::Created().json(fleet))
 }
@@ -118,11 +115,9 @@ pub async fn travel(
     let system_clone = system.clone();
     let mut fleet = system.fleets.get_mut(&info.2).ok_or(InternalError::FleetUnknown)?;
 
-    let players_data = game.send(GamePlayersMessage{}).await?;
-    let players = players_data.lock().expect("Poisoned lock on game players");
-    let player = players.get(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
+    let player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
 
-    if fleet.player != player.data.id.clone() {
+    if fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
     if fleet.destination_system != None {

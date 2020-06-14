@@ -6,7 +6,8 @@ use crate::{
         error::{InternalError}
     },
     game::{
-        game::{GameID, GameDataMessage, GamePlayersMessage},
+        player::{Player},
+        game::{GameID, GameDataMessage},
         fleet::fleet::FleetID,
         system::SystemID
     },
@@ -36,13 +37,11 @@ pub async fn add_ship(
     let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
     let owner_id = system.player.clone();
 
-    let players_data = game.send(GamePlayersMessage{}).await?;
-    let mut players = players_data.lock().expect("Poisoned lock on game players");
-    let player = players.get_mut(&claims.pid).ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
 
     let mut fleet = system.fleets.get_mut(&info.2).ok_or(InternalError::FleetUnknown)?;
 
-    if owner_id != Some(player.data.id.clone()) || fleet.player != player.data.id.clone() {
+    if owner_id != Some(player.id.clone()) || fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
     if fleet.destination_system != None {

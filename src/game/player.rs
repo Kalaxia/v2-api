@@ -99,11 +99,11 @@ impl Player {
         players
     }
 
-    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> i32 {
-        let count: (i32,) = sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
+    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> i16 {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
             .bind(Uuid::from(lid))
             .fetch_one(db_pool).await.expect("Could not count lobby players");
-        count.0
+        count.0 as i16
     }
 
     pub async fn create(p: Player, db_pool: &PgPool) {
@@ -123,7 +123,7 @@ impl Player {
             wallet = $5,
             is_ready = $6,
             is_connected = $7
-            WHERE id = $8)")
+            WHERE id = $8")
             .bind(p.username)
             .bind(p.game.map(Uuid::from))
             .bind(p.lobby.map(Uuid::from))

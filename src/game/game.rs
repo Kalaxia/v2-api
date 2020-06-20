@@ -6,6 +6,7 @@ use std::sync::RwLock;
 use std::collections::{HashMap};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use futures::executor::block_on;
 use crate::{
     lib::{Result, error::InternalError},
     game::{
@@ -48,7 +49,7 @@ impl Game {
         let mut data = self.data.lock().expect("Poisoned lock on game data");
         (*data).systems = generate_systems();
         drop(data); 
-        self.assign_systems();
+        block_on(self.assign_systems());
     }
 
     fn begin(&self) {
@@ -163,7 +164,7 @@ impl Game {
         drop(data);
         self.ws_broadcast(result.clone().into(), None);
         if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
-            self.check_victory();
+            self.check_victory().await;
         }
         Ok(())
     }
@@ -233,7 +234,7 @@ impl Actor for Game {
         ctx.run_later(Duration::new(1, 0), |this, _| this.init());
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
         ctx.run_interval(Duration::new(5, 0), move |this, _| {
-            this.produce_income();
+            block_on(this.produce_income());
         });
     }
  
@@ -277,7 +278,7 @@ impl Handler<GameRemovePlayerMessage> for Game {
     type Result = bool;
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
-        self.remove_player(pid);
+        block_on(self.remove_player(pid));
         if self.is_empty() {
             ctx.stop();
             ctx.terminate();
@@ -304,7 +305,7 @@ impl Handler<GameFleetTravelMessage> for Game {
             msg.fleet.clone()
         ), Some(msg.fleet.player));
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
-            this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone());
+            block_on(this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone()));
         });
         ()
     }

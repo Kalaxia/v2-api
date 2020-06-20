@@ -64,8 +64,8 @@ impl AppState {
         });
     }
 
-    pub fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) {
-        lobby::Lobby::remove(lobby.id, &self.db_pool);
+    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) {
+        lobby::Lobby::remove(lobby.id, &self.db_pool).await;
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
@@ -74,6 +74,21 @@ impl AppState {
 
     pub fn clear_game(&self, gid: g::GameID) {
         self.games_mut().remove(&gid);
+    }
+
+    pub fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {
+        self.clients_mut().insert(pid.clone(), client);
+    }
+
+    pub fn retrieve_client(&self, pid: &player::PlayerID) -> actix::Addr<ws::client::ClientSession> {
+        let mut clients = self.clients_mut();
+        let client = clients.get(&pid).expect("Client not found").clone();
+        clients.remove(&pid);
+        client
+    }
+
+    pub fn remove_client(&self, pid: &player::PlayerID) {
+        self.clients_mut().remove(pid);
     }
 
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }

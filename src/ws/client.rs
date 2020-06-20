@@ -6,7 +6,7 @@ use futures::executor::block_on;
 use crate::{
     lib::{Result, error::{ServerError, InternalError}, auth::Claims},
     game::{
-        lobby::{ Lobby, LobbyRemovePlayerMessage, LobbyBroadcastMessage },
+        lobby::{ Lobby, LobbyRemoveClientMessage, LobbyBroadcastMessage },
         game::{GameRemovePlayerMessage},
         player::{Player, PlayerID},
     },
@@ -33,7 +33,7 @@ pub async fn entrypoint(
         pid: player.id.clone()
     }, &req, stream)?;
 
-    state.clients_mut().insert(player.id.clone(), addr);
+    state.add_client(&player.id, addr);
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::PlayerConnected,
@@ -54,15 +54,16 @@ impl ClientSession {
     async fn logout(&self) {
         let mut clients = self.state.clients_mut();
         let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
-        clients.remove(&self.pid);
-
+        if clients.contains_key(&self.pid) {
+            clients.remove(&self.pid);
+        }
         if player.lobby != None {
             let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
             let lobbies = self.state.lobbies();
             let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
-            let is_empty = lobby_server.send(LobbyRemovePlayerMessage(player.id.clone())).await.unwrap();
+            let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await.unwrap()).ok().unwrap();
             if is_empty {
-                self.state.clear_lobby(lobby, player.id);
+                self.state.clear_lobby(lobby, player.id).await;
             } else if player.id == lobby.owner {
                 lobby.update_owner(&self.state.db_pool).await;
                 lobby_server.do_send(LobbyBroadcastMessage{

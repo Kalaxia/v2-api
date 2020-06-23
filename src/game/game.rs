@@ -5,7 +5,6 @@ use serde::{Serialize, Deserialize};
 use std::sync::RwLock;
 use std::collections::{HashMap};
 use std::time::Duration;
-use std::sync::{Arc, Mutex};
 use futures::executor::block_on;
 use crate::{
     lib::{Result, error::InternalError},
@@ -16,12 +15,12 @@ use crate::{
         },
         lobby::Lobby,
         player::{PlayerID, Player},
-        system::{SystemID, System, SystemDominion, FleetArrivalOutcome, assign_systems, generate_systems}
+        system::{System, SystemDominion, FleetArrivalOutcome, assign_systems, generate_systems}
     },
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -56,16 +55,16 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
 }
 
 impl Game {
-    pub async fn create(game: Game, db_pool: &PgPool) {
+    pub async fn create(game: Game, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO game__games(id) VALUES($1)")
             .bind(Uuid::from(game.id))
-            .execute(db_pool).await.expect("Could not create game");
+            .execute(db_pool).await
     }
 
-    pub async fn remove(gid: GameID, db_pool: &PgPool) {
+    pub async fn remove(gid: GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
             .bind(Uuid::from(gid))
-            .execute(db_pool).await.expect("Could not remove game");
+            .execute(db_pool).await
     }
 }
 
@@ -92,7 +91,7 @@ impl GameServer {
         }
     }
 
-    async fn produce_income(&mut self) {
+    async fn produce_income(&mut self) -> Result<()> {
         let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await
             .into_iter()
             .map(|p| (p.id.clone(), p))
@@ -123,11 +122,12 @@ impl GameServer {
             });
         }
         for (_, p) in players {
-            Player::update(p, &self.state.db_pool).await;
+            Player::update(p, &self.state.db_pool).await?;
         }
+        Ok(())
     }
 
-    async fn process_fleet_arrival(&mut self, fleet_id: FleetID, system_id: SystemID) -> Result<()> {
+    async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
         let fleet = Fleet::find(&fleet_id, &self.state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
         let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
         let player = Player::find(fleet.player, &self.state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
@@ -138,7 +138,7 @@ impl GameServer {
                 None => None,
             }
         };
-        let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await;
+        let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
         self.ws_broadcast(result.clone().into(), None);
         if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
             self.check_victory().await;
@@ -255,13 +255,13 @@ impl Handler<GameFleetTravelMessage> for GameServer {
             msg.fleet.clone()
         ), Some(msg.fleet.player));
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
-            block_on(this.process_fleet_arrival(msg.fleet.id.clone(), msg.fleet.system.clone()));
+            block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
         });
         ()
     }
 }
 
-pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> (GameID, Addr<GameServer>) {
+pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
     let id = GameID(Uuid::new_v4());
     
     let game_server = GameServer{
@@ -271,11 +271,11 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
     };
     let game = Game{ id: id.clone() };
 
-    Game::create(game, &state.db_pool).await;
+    Game::create(game, &state.db_pool).await?;
 
-    Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await;
+    Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await?;
 
-    (id, game_server.start())
+    Ok((id, game_server.start()))
 }
 
 #[get("/{id}/players/")]

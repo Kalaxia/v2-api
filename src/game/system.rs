@@ -3,7 +3,7 @@ use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap};
 use crate::{
-    lib::{error::InternalError },
+    lib::Result,
     game::{
         faction::{FactionID},
         fleet::combat,
@@ -13,7 +13,7 @@ use crate::{
     },
     ws::protocol
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -111,13 +111,13 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 }
 
 impl System {
-    pub async fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, db_pool: &PgPool) -> FleetArrivalOutcome {
+    pub async fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
         match system_owner {
             Some(system_owner) => {
                 // Both players have the same faction, the arrived fleet just parks here
                 if system_owner.faction == player.faction {
                     fleet.change_system(self);
-                    return FleetArrivalOutcome::Arrived{ fleet };
+                    return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
                 // Conquest of the system by the arrived fleet
                 let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await
@@ -128,20 +128,20 @@ impl System {
                     return self.conquer(fleet, db_pool).await;
                 }
                 fleets.insert(fleet.id.clone(), fleet.clone());
-                FleetArrivalOutcome::Defended{ fleets, system: self.clone() }
+                Ok(FleetArrivalOutcome::Defended{ fleets, system: self.clone() })
             },
             None => self.conquer(fleet, db_pool).await
         }
     }
 
-    pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> FleetArrivalOutcome {
-        Fleet::remove_defenders(&self.id, db_pool).await;
+    pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
+        Fleet::remove_defenders(&self.id, db_pool).await?;
         fleet.change_system(self);
         self.player = Some(fleet.player.clone());
-        FleetArrivalOutcome::Conquerred{
+        Ok(FleetArrivalOutcome::Conquerred{
             system: self.clone(),
             fleet: fleet,
-        }
+        })
     }
 
     pub async fn find(sid: SystemID, db_pool: &PgPool) -> Option<System> {
@@ -180,7 +180,7 @@ impl System {
         count.0 as u32
     }
 
-    pub async fn create(s: System, db_pool: &PgPool) -> Result<u64, Error> {
+    pub async fn create(s: System, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coordinates, is_unreachable) VALUES($1,$2, $3, $4, $5)")
             .bind(Uuid::from(s.id))
             .bind(Uuid::from(s.game))
@@ -190,12 +190,12 @@ impl System {
             .execute(db_pool).await
     }
 
-    pub async fn update(s: System, db_pool: &PgPool) {
+    pub async fn update(s: System, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE map__systems SET player_id = $1, is_unreachable = $2 WHERE id = $3")
             .bind(s.player.map(Uuid::from))
             .bind(s.unreachable)
             .bind(Uuid::from(s.id))
-            .execute(db_pool).await.expect("Could not update system");
+            .execute(db_pool).await
     }
 }
 

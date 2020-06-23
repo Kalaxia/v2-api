@@ -1,11 +1,10 @@
 use actix_web::{get, web, HttpResponse};
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 use crate::{
     AppState,
     lib::Result,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Clone)]

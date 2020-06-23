@@ -1,18 +1,15 @@
 use actix_web::{web, get, patch, post, HttpResponse};
-use actix::Addr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use std::collections::{HashSet, HashMap};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby, LobbyBroadcastMessage},
-    game::faction::{Faction, FactionID},
+    game::faction::FactionID,
     lib::{Result, error::InternalError, auth},
     ws::protocol,
-    ws::client::ClientSession
 };
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
@@ -43,26 +40,12 @@ impl From<PlayerID> for Uuid {
 
 impl<'a> FromRow<'a, PgRow<'a>> for Player {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-        let faction_id = match row.try_get::<i32, _>("faction_id") {
-            Ok(fid) => Some(FactionID(fid as u8)),
-            Err(_) => None,
-        };
-        let game_id = match row.try_get("game_id") {
-            Ok(gid) => Some(GameID(gid)),
-            Err(_) => None,
-        };
-        let lobby_id = match row.try_get("lobby_id") {
-            Ok(lid) => Some(LobbyID(lid)),
-            Err(_) => None,
-        };
-
         Ok(Player {
-            id: PlayerID(id),
+            id: row.try_get::<Uuid, _>("id").ok().map(PlayerID).unwrap(),
             username: row.try_get("username")?,
-            faction: faction_id,
-            game: game_id,
-            lobby: lobby_id,
+            faction: row.try_get::<i32, _>("faction_id").ok().map(|id| FactionID(id as u8)),
+            game: row.try_get::<Uuid, _>("game_id").ok().map(GameID),
+            lobby: row.try_get::<Uuid, _>("lobby_id").ok().map(LobbyID),
             wallet: row.try_get::<i32, _>("wallet").map(|w| w as usize)?,
             ready: row.try_get("is_ready")?,
             is_connected: row.try_get("is_connected")?,
@@ -106,23 +89,23 @@ impl Player {
         count.0 as i16
     }
 
-    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) {
+    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE player__players SET lobby_id = NULL, game_id = $1 WHERE lobby_id = $2")
             .bind(Uuid::from(gid.clone()))
             .bind(Uuid::from(lid.clone()))
-            .execute(db_pool).await.expect("Could not update players");
+            .execute(db_pool).await
     }
 
-    pub async fn create(p: Player, db_pool: &PgPool) {
+    pub async fn create(p: Player, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(p.id))
             .bind(p.wallet as i32)
             .bind(p.ready)
             .bind(p.is_connected)
-            .execute(db_pool).await.expect("Could not create player");
+            .execute(db_pool).await
     }
 
-    pub async fn update(p: Player, db_pool: &PgPool) {
+    pub async fn update(p: Player, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE player__players SET username = $1,
             game_id = $2,
             lobby_id = $3,
@@ -139,7 +122,7 @@ impl Player {
             .bind(p.ready)
             .bind(p.is_connected)
             .bind(Uuid::from(p.id))
-            .execute(db_pool).await.expect("Could not update player");
+            .execute(db_pool).await
     }
 }
 
@@ -157,7 +140,7 @@ pub async fn login(state:web::Data<AppState>)
         wallet: 0,
         is_connected: true,
     };
-    Player::create(player.clone(), &state.db_pool).await;
+    Player::create(player.clone(), &state.db_pool).await?;
     
     Ok(auth::Claims { pid: player.id })
 }
@@ -186,13 +169,13 @@ pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
 pub async fn update_current_player(state: web::Data<AppState>, json_data: web::Json<PlayerUpdateData>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
-    let mut player = Player::find(claims.pid, &state.db_pool).await.expect("Player not found");
-    let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await.unwrap();
+    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
 
     player.username = json_data.username.clone();
     player.faction = Some(json_data.faction_id);
     player.ready = json_data.is_ready;
-    Player::update(player.clone(), &state.db_pool).await;
+    Player::update(player.clone(), &state.db_pool).await?;
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;

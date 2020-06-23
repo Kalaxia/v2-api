@@ -106,6 +106,13 @@ impl Player {
         count.0 as i16
     }
 
+    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) {
+        sqlx::query("UPDATE player__players SET lobby_id = NULL, game_id = $1 WHERE lobby_id = $2")
+            .bind(Uuid::from(gid.clone()))
+            .bind(Uuid::from(lid.clone()))
+            .execute(db_pool).await.expect("Could not update players");
+    }
+
     pub async fn create(p: Player, db_pool: &PgPool) {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(p.id))

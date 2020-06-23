@@ -33,7 +33,7 @@ pub struct AppState {
     db_pool: PgPool,
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
-    games: RwLock<HashMap<g::GameID, actix::Addr<g::Game>>>,
+    games: RwLock<HashMap<g::GameID, actix::Addr<g::GameServer>>>,
 }
 
 macro_rules! res_access {
@@ -72,7 +72,8 @@ impl AppState {
         ), Some(pid), Some(true));
     }
 
-    pub fn clear_game(&self, gid: g::GameID) {
+    pub async fn clear_game(&self, gid: g::GameID) {
+        g::Game::remove(gid.clone(), &self.db_pool).await;
         self.games_mut().remove(&gid);
     }
 
@@ -91,7 +92,7 @@ impl AppState {
         self.clients_mut().remove(pid);
     }
 
-    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::Game>> }
+    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::GameServer>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
     res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
 }

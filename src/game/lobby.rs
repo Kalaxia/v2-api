@@ -14,8 +14,8 @@ use crate::{
     AppState,
 };
 use std::sync::{Arc, RwLock};
-use std::collections::{HashMap, HashSet};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use std::collections::{HashMap};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -85,10 +85,10 @@ impl LobbyServer {
 }
 
 impl Lobby {
-    pub async fn update_owner(&mut self, db_pool: &PgPool) {
+    pub async fn update_owner(&mut self, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         let players = Player::find_by_lobby(self.id, db_pool).await;
         self.owner = players.iter().next().unwrap().id.clone();
-        Self::update(self.clone(), db_pool).await;
+        Self::update(self.clone(), db_pool).await
     }
 
     pub async fn find_all(db_pool: &PgPool) -> Vec<Self> {
@@ -103,21 +103,21 @@ impl Lobby {
             .fetch_one(db_pool).await.ok()
     }
 
-    pub async fn create(l: Lobby, db_pool: &PgPool) -> core::result::Result<u64, Error> {
+    pub async fn create(l: Lobby, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id) VALUES($1, $2)")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
             .execute(db_pool).await
     }
 
-    pub async fn update(l: Lobby, db_pool: &PgPool) -> core::result::Result<u64, Error> {
+    pub async fn update(l: Lobby, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $1 WHERE id = $2")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
             .execute(db_pool).await
     }
 
-    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> core::result::Result<u64, Error> {
+    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
             .execute(db_pool).await
@@ -262,10 +262,10 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
-    Lobby::create(new_lobby.clone(), &state.db_pool).await;
+    Lobby::create(new_lobby.clone(), &state.db_pool).await?;
     // Put the player in the lobby
     player.lobby = Some(new_lobby.id.clone());
-    Player::update(player.clone(), &state.db_pool).await;
+    Player::update(player.clone(), &state.db_pool).await?;
     // Notify players for lobby creation
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyCreated,
@@ -291,7 +291,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
         let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
         lobby_server.send(LobbyGetClientsMessage{})
     }.await?).ok().unwrap();
-    let (game_id, game) = create_game(&lobby, state.clone(), clients).await;
+    let (game_id, game) = create_game(&lobby, state.clone(), clients).await?;
     games.insert(game_id, game);
 
     state.ws_broadcast(protocol::Message::new(
@@ -299,7 +299,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
         lobby.clone(),
     ), None, Some(true));
 
-    Lobby::remove(lobby.id, &state.db_pool).await;
+    Lobby::remove(lobby.id, &state.db_pool).await?;
 
     Ok(HttpResponse::NoContent().finish())
 }
@@ -318,7 +318,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     player.faction = None;
     player.ready = false;
     player.lobby = None;
-    Player::update(player.clone(), &state.db_pool).await;
+    Player::update(player.clone(), &state.db_pool).await?;
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
@@ -327,7 +327,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     if is_empty {
         state.clear_lobby(lobby, player.id).await;
     } else if player.id == lobby.owner {
-        lobby.update_owner(&state.db_pool).await;
+        lobby.update_owner(&state.db_pool).await?;
         lobby_server.do_send(LobbyBroadcastMessage{
             message: protocol::Message::new(
                 protocol::Action::LobbyOwnerUpdated,
@@ -349,7 +349,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
         Err(InternalError::AlreadyInLobby)?
     }
     player.lobby = Some(lobby.id);
-    Player::update(player.clone(), &state.db_pool).await;
+    Player::update(player.clone(), &state.db_pool).await?;
 
     let message = protocol::Message::new(
         protocol::Action::PlayerJoined,

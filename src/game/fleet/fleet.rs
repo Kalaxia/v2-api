@@ -19,7 +19,7 @@ use crate::{
     ws::protocol,
     AppState
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, QueryAs, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 pub const FLEET_TRAVEL_TIME: u8 = 10;
@@ -98,28 +98,28 @@ impl Fleet {
             .fetch_all(db_pool).await.expect("Could not retrieve system stationed fleets")
     }
 
-    pub async fn create(f: Fleet, db_pool: &PgPool) {
+    pub async fn create(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id, nb_ships) VALUES($1, $32, $3, $4)")
             .bind(Uuid::from(f.id))
             .bind(Uuid::from(f.system))
             .bind(Uuid::from(f.player))
             .bind(f.nb_ships as i64)
-            .execute(db_pool).await.expect("Could not create fleet");
+            .execute(db_pool).await
     }
 
-    pub async fn update(f: Fleet, db_pool: &PgPool) {
+    pub async fn update(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE fleet__fleets SET system_id = $1, destination_id = $2, nb_ships = $3 WHERE id = $4")
             .bind(Uuid::from(f.system))
             .bind(f.destination_system.map(|sid| Uuid::from(sid)))
             .bind(f.nb_ships as i64)
             .bind(Uuid::from(f.id))
-            .execute(db_pool).await.expect("Could not update fleet");
+            .execute(db_pool).await
     }
 
-    pub async fn remove_defenders(sid: &SystemID, db_pool: &PgPool) {
+    pub async fn remove_defenders(sid: &SystemID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("REMOVE FROM fleet__fleets WHERE system_id = $1 AND WHERE destination_id IS NULL")
             .bind(Uuid::from(sid.clone()))
-            .execute(db_pool).await.expect("Could not remove defender fleets");
+            .execute(db_pool).await
     }
 }
 
@@ -139,7 +139,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         destination_system: None,
         nb_ships: 1
     };
-    Fleet::create(fleet.clone(), &state.db_pool).await;
+    Fleet::create(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
@@ -160,10 +160,17 @@ pub async fn travel(
     json_data: web::Json<FleetTravelData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let destination_system = System::find(json_data.destination_system_id, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
-    let system = System::find(info.1, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
-    let mut fleet = Fleet::find(&info.2, &state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
-    let player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let (ds, s, f, p) = futures::join!(
+        System::find(json_data.destination_system_id, &state.db_pool),
+        System::find(info.1, &state.db_pool),
+        Fleet::find(&info.2, &state.db_pool),
+        Player::find(claims.pid, &state.db_pool)
+    );
+    
+    let destination_system = ds.ok_or(InternalError::SystemUnknown)?;
+    let system = s.ok_or(InternalError::SystemUnknown)?;
+    let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
+    let player = p.ok_or(InternalError::PlayerUnknown)?;
 
     if fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;
@@ -173,7 +180,7 @@ pub async fn travel(
     }
     fleet.check_travel_destination(system.coordinates, destination_system.coordinates)?;
     fleet.destination_system = Some(destination_system.id.clone());
-    Fleet::update(fleet.clone(), &state.db_pool).await;
+    Fleet::update(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;

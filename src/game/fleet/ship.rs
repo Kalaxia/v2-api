@@ -28,9 +28,14 @@ pub async fn add_ship(
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let system = System::find(info.1, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
-    let mut fleet = Fleet::find(&info.2, &state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
+    let (s, p, f) = futures::join!(
+        System::find(info.1, &state.db_pool),
+        Player::find(claims.pid, &state.db_pool),
+        Fleet::find(&info.2, &state.db_pool)
+    );
+    let system = s.ok_or(InternalError::SystemUnknown)?;
+    let mut player = p.ok_or(InternalError::PlayerUnknown)?;
+    let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
 
     if system.player.clone() != Some(player.id.clone()) || fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;
@@ -41,8 +46,8 @@ pub async fn add_ship(
     player.spend(SHIP_COST * json_data.quantity)?;
     fleet.nb_ships += json_data.quantity;
 
-    Player::update(player, &state.db_pool).await;
-    Fleet::update(fleet, &state.db_pool).await;
+    Player::update(player, &state.db_pool).await?;
+    Fleet::update(fleet, &state.db_pool).await?;
 
     Ok(HttpResponse::Created().finish())
 }

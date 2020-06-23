@@ -7,11 +7,11 @@ use crate::{
     },
     game::{
         player::{Player},
-        game::{GameID, GameDataMessage},
-        fleet::fleet::FleetID,
-        system::SystemID
+        game::GameID,
+        fleet::fleet::{FleetID, Fleet},
+        system::{SystemID, System},
     },
-    AppState
+    AppState,
 };
 
 const SHIP_COST: usize = 10;
@@ -28,20 +28,11 @@ pub async fn add_ship(
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
-    drop(games);
-    
-    let locked_data = game.send(GameDataMessage{}).await?;
-    let mut data = locked_data.lock().expect("Poisoned lock on game data");
-    let system = data.systems.get_mut(&info.1).ok_or(InternalError::SystemUnknown)?;
-    let owner_id = system.player.clone();
-
+    let system = System::find(info.1, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
     let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut fleet = Fleet::find(&info.2, &state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
 
-    let mut fleet = system.fleets.get_mut(&info.2).ok_or(InternalError::FleetUnknown)?;
-
-    if owner_id != Some(player.id.clone()) || fleet.player != player.id.clone() {
+    if system.player.clone() != Some(player.id.clone()) || fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;
     }
     if fleet.destination_system != None {
@@ -49,6 +40,9 @@ pub async fn add_ship(
     }
     player.spend(SHIP_COST * json_data.quantity)?;
     fleet.nb_ships += json_data.quantity;
+
+    Player::update(player, &state.db_pool).await;
+    Fleet::update(fleet, &state.db_pool).await;
 
     Ok(HttpResponse::Created().finish())
 }

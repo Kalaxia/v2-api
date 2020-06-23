@@ -103,24 +103,24 @@ impl Lobby {
             .fetch_one(db_pool).await.ok()
     }
 
-    pub async fn create(l: Lobby, db_pool: &PgPool) {
+    pub async fn create(l: Lobby, db_pool: &PgPool) -> core::result::Result<u64, Error> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id) VALUES($1, $2)")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await.expect("Could not create lobby");
+            .execute(db_pool).await
     }
 
-    pub async fn update(l: Lobby, db_pool: &PgPool) {
+    pub async fn update(l: Lobby, db_pool: &PgPool) -> core::result::Result<u64, Error> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $1 WHERE id = $2")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await.expect("Could not update lobby");
+            .execute(db_pool).await
     }
 
-    pub async fn remove(lid: LobbyID, db_pool: &PgPool) {
+    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> core::result::Result<u64, Error> {
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
-            .execute(db_pool).await.expect("Could not delete lobby");
+            .execute(db_pool).await
     }
 }
 
@@ -135,6 +135,10 @@ pub struct LobbyAddClientMessage(pub PlayerID, pub actix::Addr<ClientSession>);
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
 pub struct LobbyRemoveClientMessage(pub PlayerID);
+
+#[derive(actix::Message, Clone)]
+#[rtype(result="Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>")]
+pub struct LobbyGetClientsMessage();
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
@@ -162,6 +166,16 @@ impl Handler<LobbyRemoveClientMessage> for LobbyServer {
             return Arc::new((client, true));
         }
         Arc::new((client, false))
+    }
+}
+
+impl Handler<LobbyGetClientsMessage> for LobbyServer {
+    type Result = Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>;
+
+    fn handle(&mut self, _msg: LobbyGetClientsMessage, _ctx: &mut Self::Context) -> Self::Result {
+        let clients = self.clients.read().expect("Poisoned lock on lobby players");
+
+        Arc::new(clients.clone())
     }
 }
 
@@ -272,8 +286,13 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     if lobby.owner != claims.pid.clone() {
         Err(InternalError::AccessDenied)?
     }
-    let (game_id, game) = create_game(&lobby, state.clone()).await;
-    games.insert(game_id.clone(), game.clone());
+    let clients = Arc::try_unwrap({
+        let lobbies = state.lobbies();
+        let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+        lobby_server.send(LobbyGetClientsMessage{})
+    }.await?).ok().unwrap();
+    let (game_id, game) = create_game(&lobby, state.clone(), clients).await;
+    games.insert(game_id, game);
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyLaunched,

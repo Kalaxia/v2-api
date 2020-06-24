@@ -8,11 +8,7 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{
-            GameID,
-            GameBroadcastMessage,
-            GameFleetTravelMessage
-        },
+        game::{GameID, GameFleetTravelMessage},
         player::{Player, PlayerID},
         system::{System, SystemID, Coordinates}
     },
@@ -143,13 +139,11 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
-    game.do_send(GameBroadcastMessage {
-        message: protocol::Message::new(
-            protocol::Action::FleetCreated,
-            fleet.clone()
-        ),
-        skip_id: Some(player.id.clone())
-    });
+    game.do_send(protocol::Message::new(
+        protocol::Action::FleetCreated,
+        fleet.clone(),
+        Some(player.id.clone()),
+    ));
     Ok(HttpResponse::Created().json(fleet))
 }
 

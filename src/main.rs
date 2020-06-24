@@ -1,5 +1,3 @@
-use std::fs::File;
-use std::io::BufReader;
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
@@ -48,33 +46,24 @@ macro_rules! res_access {
 }
 
 impl AppState {
-    pub fn ws_broadcast(
-        &self,
-        message: ws::protocol::Message,
-        skip_id: Option<player::PlayerID>,
-        only_free_players: Option<bool>
-    ) {
-        let ofp = only_free_players.unwrap_or(false);
-        let clients = self.clients();
-        clients.iter().for_each(|(_, c)| {
-            c.do_send(message.clone());
-            // if (!ofp || (ofp && p.data.lobby == None && p.data.game == None)) && Some(p.data.id) != skip_id {
-            //     p.websocket.as_ref().map(|ws| ws.do_send(message.clone()));
-            // }
-        });
+    pub fn ws_broadcast(&self, message: ws::protocol::Message) {
+        self.clients().iter().for_each(|(_, c)| c.do_send(message.clone()));
     }
 
-    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) {
-        lobby::Lobby::remove(lobby.id, &self.db_pool).await;
+    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
+        lobby::Lobby::remove(lobby.id, &self.db_pool).await?;
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
-        ), Some(pid), Some(true));
+            Some(pid),
+        ));
+        Ok(())
     }
 
-    pub async fn clear_game(&self, gid: g::GameID) {
-        g::Game::remove(gid.clone(), &self.db_pool).await;
+    pub async fn clear_game(&self, gid: g::GameID) -> lib::Result<()> {
+        g::Game::remove(gid.clone(), &self.db_pool).await?;
         self.games_mut().remove(&gid);
+        Ok(())
     }
 
     pub fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {

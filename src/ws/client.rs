@@ -4,9 +4,9 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, error::{ServerError, InternalError}, auth::Claims},
+    lib::{Result, error::InternalError, auth::Claims},
     game::{
-        lobby::{ Lobby, LobbyRemoveClientMessage, LobbyBroadcastMessage },
+        lobby::{ Lobby, LobbyRemoveClientMessage },
         game::{GameRemovePlayerMessage},
         player::{Player, PlayerID},
     },
@@ -37,8 +37,9 @@ pub async fn entrypoint(
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::PlayerConnected,
-        player.clone()
-    ), Some(player.id.clone()), Some(true));
+        player.clone(),
+        Some(player.id.clone()),
+    ));
 
     Ok(resp)
 }
@@ -51,7 +52,7 @@ pub struct ClientSession {
 }
 
 impl ClientSession {
-    async fn logout(&self) {
+    async fn logout(&self) -> Result<()> {
         let mut clients = self.state.clients_mut();
         let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
         if clients.contains_key(&self.pid) {
@@ -63,16 +64,14 @@ impl ClientSession {
             let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
             let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await.unwrap()).ok().unwrap();
             if is_empty {
-                self.state.clear_lobby(lobby, player.id).await;
+                self.state.clear_lobby(lobby, player.id).await?;
             } else if player.id == lobby.owner {
-                lobby.update_owner(&self.state.db_pool).await;
-                lobby_server.do_send(LobbyBroadcastMessage{
-                    message: protocol::Message::new(
-                        protocol::Action::LobbyOwnerUpdated,
-                        lobby.owner.clone()
-                    ),
-                    skip_id: None,
-                });
+                lobby.update_owner(&self.state.db_pool).await?;
+                lobby_server.do_send(protocol::Message::new(
+                    protocol::Action::LobbyOwnerUpdated,
+                    lobby.owner.clone(),
+                    None,
+                ));
             }
         } else if player.game != None {
             let mut games = self.state.games_mut();
@@ -82,13 +81,15 @@ impl ClientSession {
             let is_empty = block_on(game.send(GameRemovePlayerMessage(player.id.clone()))).unwrap();
             if is_empty {
                 drop(games);
-                self.state.clear_game(gid);
+                self.state.clear_game(gid).await?;
             }
         }
         self.state.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerDisconnected,
-            player.clone()
-        ), Some(self.pid), Some(true));
+            player.clone(),
+            Some(self.pid),
+        ));
+        Ok(())
     }
 }
 
@@ -113,6 +114,9 @@ impl Handler<protocol::Message> for ClientSession {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, ctx: &mut Self::Context) -> Self::Result {
+        if msg.skip_id == Some(self.pid) {
+            return;
+        }
         ctx.text(serde_json::to_string(&msg).expect("Couldnt serialize WsMessage data"))
     }
 }

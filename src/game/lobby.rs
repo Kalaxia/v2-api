@@ -49,12 +49,10 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
 }
 
 impl LobbyServer {
-    pub fn ws_broadcast(&self, message: protocol::Message, skip_id: Option<PlayerID>) {
+    pub fn ws_broadcast(&self, message: protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on lobby clients");
-        for (id, client) in clients.iter() {
-            if Some(*id) != skip_id && clients.contains_key(id) {
-                client.do_send(message.clone());
-            }
+        for (_, c) in clients.iter() {
+            c.do_send(message.clone());
         }
     }
     
@@ -78,8 +76,9 @@ impl LobbyServer {
         drop(clients);
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerLeft,
-            pid.clone()
-        ), Some(pid.clone()));
+            pid.clone(),
+            Some(pid.clone()),
+        ));
         client
     }
 }
@@ -140,13 +139,6 @@ pub struct LobbyRemoveClientMessage(pub PlayerID);
 #[rtype(result="Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>")]
 pub struct LobbyGetClientsMessage();
 
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct LobbyBroadcastMessage {
-    pub message: protocol::Message,
-    pub skip_id: Option<PlayerID>
-}
-
 impl Handler<LobbyAddClientMessage> for LobbyServer {
     type Result = ();
 
@@ -179,11 +171,11 @@ impl Handler<LobbyGetClientsMessage> for LobbyServer {
     }
 }
 
-impl Handler<LobbyBroadcastMessage> for LobbyServer {
+impl Handler<protocol::Message> for LobbyServer {
     type Result = ();
 
-    fn handle(&mut self, msg: LobbyBroadcastMessage, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(msg.message, msg.skip_id);
+    fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
+        self.ws_broadcast(msg);
     }
 }
 
@@ -270,7 +262,8 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyCreated,
         new_lobby.clone(),
-    ), Some(player.id), Some(true));
+        Some(player.id),
+    ));
 
     Ok(HttpResponse::Created().json(new_lobby))
 }
@@ -297,7 +290,8 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyLaunched,
         lobby.clone(),
-    ), None, Some(true));
+        None,
+    ));
 
     Lobby::remove(lobby.id, &state.db_pool).await?;
 
@@ -325,16 +319,14 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     let (client, is_empty) = Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
     state.add_client(&player.id, client.clone());
     if is_empty {
-        state.clear_lobby(lobby, player.id).await;
+        state.clear_lobby(lobby, player.id).await?;
     } else if player.id == lobby.owner {
         lobby.update_owner(&state.db_pool).await?;
-        lobby_server.do_send(LobbyBroadcastMessage{
-            message: protocol::Message::new(
-                protocol::Action::LobbyOwnerUpdated,
-                lobby.owner.clone()
-            ),
-            skip_id: None,
-        });
+        lobby_server.do_send(protocol::Message::new(
+            protocol::Action::LobbyOwnerUpdated,
+            lobby.owner.clone(),
+            None,
+        ));
     }
     Ok(HttpResponse::NoContent().finish())
 }
@@ -353,18 +345,16 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
 
     let message = protocol::Message::new(
         protocol::Action::PlayerJoined,
-        player
+        player,
+        Some(claims.pid),
     );
     let client = state.retrieve_client(&claims.pid);
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
     lobby_server.do_send(LobbyAddClientMessage(claims.pid.clone(), client));
-    lobby_server.do_send(LobbyBroadcastMessage{
-        message: message.clone(),
-        skip_id: Some(claims.pid)
-    });
+    lobby_server.do_send(message.clone());
 
-    state.ws_broadcast(message, Some(claims.pid), Some(true));
+    state.ws_broadcast(message);
 
     Ok(HttpResponse::NoContent().finish())
 }

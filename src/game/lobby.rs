@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     lib::{
         Result,
-        error::{InternalError},
+        error::{ServerError, InternalError},
         auth::Claims
     },
     game::game::{create_game},
@@ -84,7 +84,7 @@ impl LobbyServer {
 }
 
 impl Lobby {
-    pub async fn update_owner(&mut self, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<u64> {
         let players = Player::find_by_lobby(self.id, db_pool).await;
         self.owner = players.iter().next().unwrap().id.clone();
         Self::update(self.clone(), db_pool).await
@@ -96,30 +96,30 @@ impl Lobby {
         lobbies
     }
 
-    pub async fn find(lid: LobbyID, db_pool: &PgPool) -> Option<Self> {
+    pub async fn find(lid: LobbyID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
-            .fetch_one(db_pool).await.ok()
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
     }
 
-    pub async fn create(l: Lobby, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn create(l: Lobby, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id) VALUES($1, $2)")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn update(l: Lobby, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn update(l: Lobby, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $1 WHERE id = $2")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 }
 
@@ -214,7 +214,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
 
 #[get("/{id}")]
 pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
-    let lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
+    let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     #[derive(Serialize)]
     struct LobbyData{
@@ -274,7 +274,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
 {
     let mut games = state.games_mut();
 
-    let lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
+    let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
         Err(InternalError::AccessDenied)?
@@ -302,7 +302,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
 pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
     -> Result<HttpResponse>
 {
-    let mut lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
+    let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.lobby != Some(lobby.id) {
@@ -335,7 +335,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
     -> Result<HttpResponse>
 {
-    let lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
+    let lobby = Lobby::find(info.0, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     if player.lobby.is_some() {
         Err(InternalError::AlreadyInLobby)?

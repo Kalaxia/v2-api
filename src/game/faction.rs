@@ -2,7 +2,7 @@ use actix_web::{get, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use crate::{
     AppState,
-    lib::Result,
+    lib::{Result, error::{ServerError, InternalError}},
 };
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
@@ -60,10 +60,10 @@ impl Faction {
         factions
     }
 
-    pub async fn find(fid: FactionID, db_pool: &PgPool) -> Option<Self> {
+    pub async fn find(fid: FactionID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM faction__factions WHERE id = $1")
             .bind(i32::from(fid))
-            .fetch_one(db_pool).await.ok()
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
     }
 }
 

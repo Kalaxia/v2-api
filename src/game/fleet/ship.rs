@@ -33,9 +33,9 @@ pub async fn add_ship(
         Player::find(claims.pid, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool)
     );
-    let system = s.ok_or(InternalError::SystemUnknown)?;
+    let system = s?;
     let mut player = p?;
-    let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
+    let mut fleet = f?;
 
     if system.player.clone() != Some(player.id.clone()) || fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;

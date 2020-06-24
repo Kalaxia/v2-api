@@ -3,7 +3,7 @@ use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap};
 use crate::{
-    lib::Result,
+    lib::{Result, error::{ServerError, InternalError}},
     game::{
         faction::{FactionID},
         fleet::combat,
@@ -144,10 +144,10 @@ impl System {
         })
     }
 
-    pub async fn find(sid: SystemID, db_pool: &PgPool) -> Option<System> {
+    pub async fn find(sid: SystemID, db_pool: &PgPool) -> Result<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE id = $1")
             .bind(Uuid::from(sid))
-            .fetch_one(db_pool).await.ok()
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 
     pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Vec<System> {
@@ -180,22 +180,22 @@ impl System {
         count.0 as u32
     }
 
-    pub async fn create(s: System, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn create(s: System, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coordinates, is_unreachable) VALUES($1,$2, $3, $4, $5)")
             .bind(Uuid::from(s.id))
             .bind(Uuid::from(s.game))
             .bind(s.player.map(Uuid::from))
             .bind(i32::from(s.coordinates))
             .bind(s.unreachable)
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn update(s: System, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn update(s: System, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("UPDATE map__systems SET player_id = $1, is_unreachable = $2 WHERE id = $3")
             .bind(s.player.map(Uuid::from))
             .bind(s.unreachable)
             .bind(Uuid::from(s.id))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 }
 

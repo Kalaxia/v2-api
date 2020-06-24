@@ -7,7 +7,7 @@ use std::collections::{HashMap};
 use std::time::Duration;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, error::{InternalError, ServerError}},
+    lib::{Result, error::ServerError},
     game::{
         faction::{FactionID},
         fleet::{
@@ -136,8 +136,8 @@ impl GameServer {
     }
 
     async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
-        let fleet = Fleet::find(&fleet_id, &self.state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
-        let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
+        let fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
+        let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
         let player = Player::find(fleet.player, &self.state.db_pool).await?;
 
         let system_owner = {

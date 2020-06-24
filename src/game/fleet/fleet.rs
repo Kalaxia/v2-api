@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     lib::{
         Result,
-        error::{InternalError},
+        error::{ServerError, InternalError},
         auth::Claims
     },
     game::{
@@ -82,10 +82,10 @@ impl Fleet {
         self.destination_system != None
     }
 
-    pub async fn find(fid: &FleetID, db_pool: &PgPool) -> Option<Fleet> {
+    pub async fn find(fid: &FleetID, db_pool: &PgPool) -> Result<Fleet> {
         sqlx::query_as("SELECT * FROM fleet__fleets WHERE id = $id")
             .bind(Uuid::from(fid.clone()))
-            .fetch_one(db_pool).await.ok()
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FleetUnknown))
     }
 
     pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Vec<Fleet> {
@@ -121,7 +121,7 @@ impl Fleet {
 
 #[post("/")]
 pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
-    let system = System::find(info.1, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
+    let system = System::find(info.1, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     
     if system.player != Some(player.id) {
@@ -161,9 +161,9 @@ pub async fn travel(
         Player::find(claims.pid, &state.db_pool)
     );
     
-    let destination_system = ds.ok_or(InternalError::SystemUnknown)?;
-    let system = s.ok_or(InternalError::SystemUnknown)?;
-    let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
+    let destination_system = ds?;
+    let system = s?;
+    let mut fleet = f?;
     let player = p?;
 
     if fleet.player != player.id.clone() {

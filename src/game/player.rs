@@ -8,7 +8,7 @@ use crate::{
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
-    lib::{Result, error::InternalError, auth},
+    lib::{Result, error::{InternalError, ServerError}, auth},
     ws::protocol,
 };
 
@@ -62,10 +62,10 @@ impl Player {
         Ok(())
     }
 
-    pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Option<Self> {
+    pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
             .bind(Uuid::from(pid))
-            .fetch_one(db_pool).await.ok()
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
     }
     
     pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Vec<Self> {
@@ -96,16 +96,16 @@ impl Player {
             .execute(db_pool).await
     }
 
-    pub async fn create(p: Player, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn create(p: Player, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(p.id))
             .bind(p.wallet as i32)
             .bind(p.ready)
             .bind(p.is_connected)
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn update(p: Player, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn update(p: Player, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("UPDATE player__players SET username = $1,
             game_id = $2,
             lobby_id = $3,
@@ -122,7 +122,7 @@ impl Player {
             .bind(p.ready)
             .bind(p.is_connected)
             .bind(Uuid::from(p.id))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 }
 
@@ -160,16 +160,16 @@ pub async fn get_nb_players(state:web::Data<AppState>)
 
 #[get("/me/")]
 pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
-    -> Option<HttpResponse>
+    -> Result<HttpResponse>
 {
-    Some(HttpResponse::Ok().json(Player::find(claims.pid, &state.db_pool).await))
+    Ok(HttpResponse::Ok().json(Player::find(claims.pid, &state.db_pool).await?))
 }
 
 #[patch("/me/")]
 pub async fn update_current_player(state: web::Data<AppState>, json_data: web::Json<PlayerUpdateData>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
     let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
 
     player.username = json_data.username.clone();
@@ -178,7 +178,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     Player::update(player.clone(), &state.db_pool).await?;
 
     let lobbies = state.lobbies();
-    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");
     lobby_server.do_send(protocol::Message::new(
         protocol::Action::PlayerUpdate,
         player.clone(),

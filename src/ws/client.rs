@@ -4,7 +4,7 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, error::InternalError, auth::Claims},
+    lib::{Result, auth::Claims},
     game::{
         lobby::{ Lobby, LobbyRemoveClientMessage },
         game::{GameRemovePlayerMessage},
@@ -25,7 +25,7 @@ pub async fn entrypoint(
     state: web::Data<AppState>,
     claims: Claims,
 ) -> Result<HttpResponse> {
-    let player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let player = Player::find(claims.pid, &state.db_pool).await?;
     // Creates the websocket client for the current player
     let (addr, resp) = ws::start_with_addr(ClientSession{
         hb: Instant::now(),

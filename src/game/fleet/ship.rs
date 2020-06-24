@@ -34,7 +34,7 @@ pub async fn add_ship(
         Fleet::find(&info.2, &state.db_pool)
     );
     let system = s.ok_or(InternalError::SystemUnknown)?;
-    let mut player = p.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = p?;
     let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
 
     if system.player.clone() != Some(player.id.clone()) || fleet.player != player.id.clone() {

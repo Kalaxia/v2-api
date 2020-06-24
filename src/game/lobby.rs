@@ -195,7 +195,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
             Player::find(lobby.owner, &state.db_pool),
             Player::count_by_lobby(lobby.id, &state.db_pool)
         );
-        futures.push((lobby, player, count));
+        futures.push((lobby, player.ok(), count));
     }
 
     //let joined : Vec<(&Lobby, Option<Player>, i32)> = futures::future::join_all(futures).await;
@@ -225,7 +225,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 
     Ok(HttpResponse::Ok().json(LobbyData{
         id: lobby.id,
-        owner: Player::find(lobby.owner, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?,
+        owner: Player::find(lobby.owner, &state.db_pool).await?,
         players: Player::find_by_lobby(lobby.id, &state.db_pool).await,
     }))
 }
@@ -233,7 +233,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 #[post("/")]
 pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<HttpResponse> {
     // Get the requesting player identity
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
     let mut lobby_servers = state.lobbies_mut();
 
     // If already in lobby, then error
@@ -303,7 +303,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     -> Result<HttpResponse>
 {
     let mut lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.lobby != Some(lobby.id) {
         Err(InternalError::NotInLobby)?
@@ -315,7 +315,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     Player::update(player.clone(), &state.db_pool).await?;
 
     let lobbies = state.lobbies();
-    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");
     let (client, is_empty) = Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
     state.add_client(&player.id, client.clone());
     if is_empty {
@@ -336,7 +336,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     -> Result<HttpResponse>
 {
     let lobby = Lobby::find(info.0, &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
     if player.lobby.is_some() {
         Err(InternalError::AlreadyInLobby)?
     }

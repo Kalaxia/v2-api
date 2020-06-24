@@ -7,7 +7,7 @@ use std::collections::{HashMap};
 use std::time::Duration;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, error::InternalError},
+    lib::{Result, error::{InternalError, ServerError}},
     game::{
         faction::{FactionID},
         fleet::{
@@ -20,7 +20,7 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, postgres::{PgRow}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -63,16 +63,16 @@ impl Handler<protocol::Message> for GameServer {
 }
 
 impl Game {
-    pub async fn create(game: Game, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn create(game: Game, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("INSERT INTO game__games(id) VALUES($1)")
             .bind(Uuid::from(game.id))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(gid: GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn remove(gid: GameID, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
             .bind(Uuid::from(gid))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 }
 
@@ -138,14 +138,15 @@ impl GameServer {
     async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
         let fleet = Fleet::find(&fleet_id, &self.state.db_pool).await.ok_or(InternalError::FleetUnknown)?;
         let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
-        let player = Player::find(fleet.player, &self.state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+        let player = Player::find(fleet.player, &self.state.db_pool).await?;
 
         let system_owner = {
             match destination_system.player {
-                Some(owner_id) => Some(Player::find(owner_id, &self.state.db_pool).await.ok_or(InternalError::PlayerUnknown)?),
+                Some(owner_id) => Some(Player::find(owner_id, &self.state.db_pool).await?),
                 None => None,
             }
         };
+
         let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
         self.ws_broadcast(result.clone().into());
         if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
@@ -180,7 +181,7 @@ impl GameServer {
     }
 
     pub async fn remove_player(&self, pid: PlayerID) -> Result<()> {
-        let mut player = Player::find(pid, &self.state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+        let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerLeft,

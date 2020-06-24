@@ -122,7 +122,7 @@ impl Fleet {
 #[post("/")]
 pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
     let system = System::find(info.1, &state.db_pool).await.ok_or(InternalError::SystemUnknown)?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await.ok_or(InternalError::PlayerUnknown)?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
     
     if system.player != Some(player.id) {
         return Err(InternalError::AccessDenied)?;
@@ -164,7 +164,7 @@ pub async fn travel(
     let destination_system = ds.ok_or(InternalError::SystemUnknown)?;
     let system = s.ok_or(InternalError::SystemUnknown)?;
     let mut fleet = f.ok_or(InternalError::FleetUnknown)?;
-    let player = p.ok_or(InternalError::PlayerUnknown)?;
+    let player = p?;
 
     if fleet.player != player.id.clone() {
         return Err(InternalError::AccessDenied)?;

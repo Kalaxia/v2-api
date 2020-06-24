@@ -6,7 +6,7 @@ use sqlx_core::row::Row;
 use crate::{
     AppState,
     game::game::{GameID},
-    game::lobby::{LobbyID, Lobby, LobbyBroadcastMessage},
+    game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     lib::{Result, error::InternalError, auth},
     ws::protocol,
@@ -179,13 +179,11 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
-    lobby_server.do_send(LobbyBroadcastMessage{
-        message: protocol::Message::new(
-            protocol::Action::PlayerUpdate,
-            player.clone()
-        ),
-        skip_id: Some(player.id.clone()),
-    });
+    lobby_server.do_send(protocol::Message::new(
+        protocol::Action::PlayerUpdate,
+        player.clone(),
+        Some(player.id.clone()),
+    ));
 
     if lobby.owner == player.id {
         #[derive(Serialize, Clone)]
@@ -195,8 +193,9 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
         };
         state.ws_broadcast(protocol::Message::new(
             protocol::Action::LobbyNameUpdated,
-            LobbyName{ id: lobby.id.clone(), name: player.username.clone() }
-        ), Some(player.id), Some(true));
+            LobbyName{ id: lobby.id.clone(), name: player.username.clone() },
+            Some(player.id),
+        ));
     }
 
     Ok(HttpResponse::NoContent().finish())

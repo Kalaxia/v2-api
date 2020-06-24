@@ -54,6 +54,14 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
     }
 }
 
+impl Handler<protocol::Message> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
+        self.ws_broadcast(msg);
+    }
+}
+
 impl Game {
     pub async fn create(game: Game, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("INSERT INTO game__games(id) VALUES($1)")
@@ -78,16 +86,15 @@ impl GameServer {
         let systems = block_on(System::find_all(&self.id, &self.state.db_pool));
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::GameStarted,
-            systems
-        ), None);
+            systems,
+            None
+        ));
     }
 
-    fn ws_broadcast(&self, message: protocol::Message, skip_id: Option<PlayerID>) {
+    fn ws_broadcast(&self, message: protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for (id, client) in clients.iter() {
-            if Some(*id) != skip_id {
-                client.do_send(message.clone());
-            }
+        for (_, c) in clients.iter() {
+            c.do_send(message.clone());
         }
     }
 
@@ -117,7 +124,8 @@ impl GameServer {
                 p.wallet += income;
                 clients.get(&pid.unwrap()).unwrap().do_send(protocol::Message::new(
                     protocol::Action::PlayerIncome,
-                    PlayerIncome{ income }
+                    PlayerIncome{ income },
+                    None,
                 ));
             });
         }
@@ -139,7 +147,7 @@ impl GameServer {
             }
         };
         let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
-        self.ws_broadcast(result.clone().into(), None);
+        self.ws_broadcast(result.clone().into());
         if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
             self.check_victory().await;
         }
@@ -163,8 +171,9 @@ impl GameServer {
                     VictoryData{
                         victorious_faction: system_dominion.faction_id,
                         scores: faction_systems_count,
-                    }
-                ), None);
+                    },
+                    None,
+                ));
                 return;
             }
         }
@@ -175,8 +184,9 @@ impl GameServer {
         player.is_connected = false;
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerLeft,
-            pid.clone()
-        ), Some(pid));
+            pid.clone(),
+            Some(pid),
+        ));
         Ok(())
     }
 
@@ -213,13 +223,6 @@ pub struct GameRemovePlayerMessage(pub PlayerID);
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameBroadcastMessage {
-    pub message: protocol::Message,
-    pub skip_id: Option<PlayerID>
-}
-
-#[derive(actix::Message)]
-#[rtype(result="()")]
 pub struct GameFleetTravelMessage{
     pub fleet: Fleet
 }
@@ -238,26 +241,18 @@ impl Handler<GameRemovePlayerMessage> for GameServer {
     }
 }
 
-impl Handler<GameBroadcastMessage> for GameServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: GameBroadcastMessage, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(msg.message, msg.skip_id);
-    }
-}
-
 impl Handler<GameFleetTravelMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::FleetSailed,
-            msg.fleet.clone()
-        ), Some(msg.fleet.player));
+            msg.fleet.clone(),
+            Some(msg.fleet.player),
+        ));
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
             block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
         });
-        ()
     }
 }
 

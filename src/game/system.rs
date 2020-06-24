@@ -208,6 +208,7 @@ impl From<FleetArrivalOutcome> for protocol::Message {
                     system: system.clone(),
                     fleet: fleet.clone(),
                 },
+                None,
             ),
             FleetArrivalOutcome::Defended { system, fleets } => protocol::Message::new(
                 protocol::Action::CombatEnded,
@@ -215,10 +216,12 @@ impl From<FleetArrivalOutcome> for protocol::Message {
                     system: system.clone(),
                     fleets: fleets.clone(),
                 },
+                None,
             ),
             FleetArrivalOutcome::Arrived { fleet } => protocol::Message::new(
                 protocol::Action::FleetArrived,
                 fleet.clone(),
+                None,
             )
         }
     }
@@ -250,7 +253,7 @@ fn generate_system(gid: &GameID, x: u16, y: u16) -> System {
     }
 }
 
-pub async fn assign_systems(gid: GameID, db_pool: &PgPool) {
+pub async fn assign_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
     let mut placed_per_faction: HashMap<FactionID, u16> = HashMap::new();
     let players = Player::find_by_game(gid, db_pool).await;
     let mut systems : HashMap<SystemID, System> = System::find_all(&gid, db_pool).await
@@ -269,13 +272,14 @@ pub async fn assign_systems(gid: GameID, db_pool: &PgPool) {
             // if it is Some()
             let mut s = systems.get_mut(&place).unwrap();
             s.player = Some(player.id);
-            System::update(s.clone(), db_pool).await;
+            System::update(s.clone(), db_pool).await?;
         } else {
             // else do something to handle the non-placed player
             // here we put unreachable!() because it is normaly the case.
             unreachable!()
         }
     }
+    Ok(())
 }
 
 fn find_place(fid: FactionID, i: u16, systems: &HashMap<SystemID, System>) -> Option<SystemID> {

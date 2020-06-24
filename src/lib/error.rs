@@ -22,7 +22,9 @@ pub enum ServerError {
 }
 
 impl ServerError {
-    pub fn if_row_not_found(internal_error:InternalError) -> impl FnOnce(SqlxError) -> Self {
+    pub fn if_row_not_found<E>(internal_error:E) -> impl FnOnce(SqlxError) -> Self
+        where E : Into<Self>,
+    {
         |e| {
             match e {
                 SqlxError::RowNotFound => internal_error.into(),

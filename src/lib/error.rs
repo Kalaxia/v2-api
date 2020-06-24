@@ -21,6 +21,17 @@ pub enum ServerError {
     SqlxError(SqlxError),
 }
 
+impl ServerError {
+    pub fn if_row_not_found(internal_error:InternalError) -> impl FnOnce(SqlxError) -> Self {
+        |e| {
+            match e {
+                SqlxError::RowNotFound => internal_error.into(),
+                _ => e.into()
+            }
+        }
+    }
+}
+
 impl From<ActixWebError> for ServerError {
     fn from(error:ActixWebError) -> Self { Self::ActixWebError(error) }
 }
@@ -71,7 +82,10 @@ impl ResponseError for ServerError {
             },
             ServerError::ActixWSError(e) => e.status_code(),
             ServerError::MailboxError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            ServerError::SqlxError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ServerError::SqlxError(e) => match e {
+                SqlxError::RowNotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            },
         }
     }
 }

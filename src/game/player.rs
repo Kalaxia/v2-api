@@ -170,7 +170,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     -> Result<HttpResponse>
 {
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
-    let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await.ok_or(InternalError::LobbyUnknown)?;
+    let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await?;
 
     player.username = json_data.username.clone();
     player.faction = Some(json_data.faction_id);

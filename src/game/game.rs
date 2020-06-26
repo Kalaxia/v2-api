@@ -77,9 +77,11 @@ impl Game {
 }
 
 impl GameServer {
-    fn init(&mut self) {
-        block_on(generate_systems(self.id.clone(), &self.state.db_pool));
-        block_on(assign_systems(self.id.clone(), &self.state.db_pool));
+    async fn init(&mut self) -> Result<()> {
+        generate_systems(self.id.clone(), &self.state.db_pool).await?;
+        assign_systems(self.id.clone(), &self.state.db_pool).await?;
+
+        Ok(())
     }
 
     fn begin(&self) {
@@ -202,14 +204,23 @@ impl Actor for GameServer {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        // self.ws_broadcast(protocol::Message::new(
-        //     protocol::Action::LobbyLaunched,
-        //     self.data.lock().expect("Poisoned lock on game data").clone()
-        // ), None);
-        ctx.run_later(Duration::new(1, 0), |this, _| this.init());
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::LobbyLaunched,
+            self.id.clone(),
+            None,
+        ));
+        ctx.run_later(Duration::new(1, 0), |this, _| {
+            let result = block_on(this.init()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
         ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
-        ctx.run_interval(Duration::new(5, 0), move |this, _| {
-            block_on(this.produce_income());
+        ctx.run_interval(Duration::new(6, 0), move |this, _| {
+            let result = block_on(this.produce_income()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
         });
     }
  

@@ -2,6 +2,7 @@ use uuid::Uuid;
 use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap};
+use futures::executor::block_on;
 use crate::{
     lib::{Result, error::{ServerError, InternalError}},
     game::{
@@ -13,13 +14,13 @@ use crate::{
     },
     ws::protocol
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct SystemID(pub Uuid);
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct System {
     pub id: SystemID,
     pub game: GameID,
@@ -34,7 +35,7 @@ pub struct SystemDominion {
     pub nb_systems: u32,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Coordinates {
     pub x: u16,
     pub y: u16
@@ -105,7 +106,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 
         Ok(SystemDominion {
             faction_id: FactionID(id as u8),
-            nb_systems: row.try_get("nb_systems").map(u32::into)?,
+            nb_systems: row.try_get::<i64, _>("nb_systems")? as u32,
         })
     }
 }
@@ -137,7 +138,9 @@ impl System {
     pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
         Fleet::remove_defenders(&self.id, db_pool).await?;
         fleet.change_system(self);
+        Fleet::update(fleet.clone(), db_pool).await?;
         self.player = Some(fleet.player.clone());
+        System::update(self.clone(), db_pool).await?;
         Ok(FleetArrivalOutcome::Conquerred{
             system: self.clone(),
             fleet: fleet,
@@ -180,14 +183,14 @@ impl System {
         count.0 as u32
     }
 
-    pub async fn create(s: System, db_pool: &PgPool) -> Result<u64> {
+    pub async fn create(s: System,  tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coordinates, is_unreachable) VALUES($1,$2, $3, $4, $5)")
             .bind(Uuid::from(s.id))
             .bind(Uuid::from(s.game))
             .bind(s.player.map(Uuid::from))
             .bind(i32::from(s.coordinates))
             .bind(s.unreachable)
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 
     pub async fn update(s: System, db_pool: &PgPool) -> Result<u64> {
@@ -227,20 +230,22 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> HashMap<SystemID, System> {
+pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> Result<HashMap<SystemID, System>> {
     let mut systems = HashMap::new();
+    let mut tx = db_pool.begin().await?;
     for y in 0..MAP_SIZE {
-        let mut queries = vec![];
         for x in 0..MAP_SIZE {
             let system = generate_system(&gid, x, y);
-            queries.push(System::create(system.clone(), db_pool));
+            let res = System::create(system.clone(), &mut tx).await;
+            if res.is_err() {
+                tx.rollback().await?;
+                return Err(InternalError::SystemUnknown)?;
+            }
             systems.insert(system.id.clone(), system);
         }
-        println!("{:?}", queries.len());
-        join_all(queries).await.into_iter().for_each(|r| { println!("{:?}", r); });
-        println!("ok");
     }
-    systems
+    tx.commit().await?;
+    Ok(systems)
 }
 
 fn generate_system(gid: &GameID, x: u16, y: u16) -> System {
@@ -266,7 +271,6 @@ pub async fn assign_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
         let i = placed_per_faction.entry(fid).or_insert(0);
         let place = find_place(fid, *i, &systems);
         *i += 1;
-
         if let Some(place) = place {
             // legitimate use of unwrap, because we KNOW `place` IS an existing system id
             // if it is Some()

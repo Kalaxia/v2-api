@@ -1,7 +1,7 @@
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
@@ -147,13 +147,17 @@ fn get_env(key: &str, default: &str) -> String {
 }
 
 async fn create_pool() -> Result<PgPool> {
-    Ok(PgPool::new(&format!(
+    let result = PgPool::new(&format!(
         "postgres://{}:{}@{}/{}",
-        &get_env("POSTGRES_USER", "postgres"),
-        &get_env("POSTGRES_PASSWORD", "root"),
+        &get_env("POSTGRES_USER", "kalaxia"),
+        &get_env("POSTGRES_PASSWORD", "kalaxia"),
         &get_env("POSTGRES_HOST", "localhost"),
         &get_env("POSTGRES_DB", "kalaxia_api")
-    )).await?)
+    )).await;
+    if result.is_err() {
+        panic!("Could not connect to database");
+    }
+    Ok(result?)
 }
 
 #[actix_rt::main]

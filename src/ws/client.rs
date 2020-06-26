@@ -78,7 +78,7 @@ impl ClientSession {
             let gid = player.clone().game.unwrap();
             let game = games.get_mut(&gid).expect("Game not found");
 
-            let is_empty = block_on(game.send(GameRemovePlayerMessage(player.id.clone()))).unwrap();
+            let is_empty = game.send(GameRemovePlayerMessage(player.id.clone())).await?;
             if is_empty {
                 drop(games);
                 self.state.clear_game(gid).await?;

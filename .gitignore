@@ -4,5 +4,5 @@
 kalaxia.env
 
 /var/ssl/*
-/var/mysql
+/var/data
 !/**/.gitkeep

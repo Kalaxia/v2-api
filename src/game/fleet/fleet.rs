@@ -57,7 +57,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             system: SystemID(sid),
             destination_system: destination_id,
             player: PlayerID(pid),
-            nb_ships: row.try_get::<i64, _>("nb_ships")? as usize,
+            nb_ships: row.try_get::<i32, _>("nb_ships")? as usize,
         })
     }
 }
@@ -83,7 +83,7 @@ impl Fleet {
     }
 
     pub async fn find(fid: &FleetID, db_pool: &PgPool) -> Result<Fleet> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE id = $id")
+        sqlx::query_as("SELECT * FROM fleet__fleets WHERE id = $1")
             .bind(Uuid::from(fid.clone()))
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FleetUnknown))
     }
@@ -95,25 +95,25 @@ impl Fleet {
     }
 
     pub async fn create(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id, nb_ships) VALUES($1, $32, $3, $4)")
+        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id, nb_ships) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(f.id))
             .bind(Uuid::from(f.system))
             .bind(Uuid::from(f.player))
-            .bind(f.nb_ships as i64)
+            .bind(f.nb_ships as i32)
             .execute(db_pool).await
     }
 
     pub async fn update(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("UPDATE fleet__fleets SET system_id = $1, destination_id = $2, nb_ships = $3 WHERE id = $4")
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, nb_ships=$3 WHERE id=$4")
             .bind(Uuid::from(f.system))
             .bind(f.destination_system.map(|sid| Uuid::from(sid)))
-            .bind(f.nb_ships as i64)
+            .bind(f.nb_ships as i32)
             .bind(Uuid::from(f.id))
             .execute(db_pool).await
     }
 
     pub async fn remove_defenders(sid: &SystemID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("REMOVE FROM fleet__fleets WHERE system_id = $1 AND WHERE destination_id IS NULL")
+        sqlx::query("DELETE FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
             .bind(Uuid::from(sid.clone()))
             .execute(db_pool).await
     }
@@ -135,6 +135,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         destination_system: None,
         nb_ships: 1
     };
+    Player::update(player.clone(), &state.db_pool).await?;
     Fleet::create(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
@@ -180,5 +181,5 @@ pub async fn travel(
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
-    Ok(HttpResponse::NoContent().json(fleet))
+    Ok(HttpResponse::NoContent().finish())
 }

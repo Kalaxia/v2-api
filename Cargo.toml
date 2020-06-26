@@ -7,7 +7,7 @@ edition = "2018"
 
 [features]
 default = []
-ssl-secure = ["rustls", "actix-web/rustls"]
+ssl-secure = ["actix-web/openssl"]
 
 [dependencies]
 actix = "0.9.0"
@@ -23,8 +23,8 @@ jsonwebtoken = "7.1.1"
 futures = "0.3.5"
 actix-service = "1.0.5"
 serde_json = "1.0.55"
-rustls = { version = "0.16", optional = true }
+openssl = { version = "0.10.30", features = ["vendored"] }
 env_logger = "0.7.1"
-sqlx = { version = "0.3", default-features = false, features = [ "runtime-tokio", "macros", "postgres", "json", "uuid" ] }
+sqlx = { version = "0.3", default-features = false, features = ["runtime-async-std", "macros", "postgres", "json", "uuid" ] }
 refinery = "0.3.0"
-sqlx-core = { version = "0.3.5", default-features = false, features = [ "runtime-tokio", "postgres", "json" ] }
+sqlx-core = { version = "0.3.5", default-features = false, features = ["runtime-async-std", "postgres", "json"] }

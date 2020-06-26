@@ -5,10 +5,7 @@ use std::sync::RwLock;
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
-use rustls::{
-    {NoClientAuth, ServerConfig},
-    internal::pemfile::{certs, rsa_private_keys}
-};
+use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use sqlx::PgPool;
 
 mod ws;
@@ -165,20 +162,19 @@ async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    // load ssl keys
-    let mut ssl_config = ServerConfig::new(NoClientAuth::new());
-    let cert_file = &mut BufReader::new(File::open(get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem")).unwrap());
-    let key_file = &mut BufReader::new(File::open(get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem")).unwrap());
-    let cert_chain = certs(cert_file).unwrap();
-    let mut keys = rsa_private_keys(key_file).unwrap();
-    ssl_config.set_single_cert(cert_chain, keys.remove(0)).unwrap();
+    let key = get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem");
+    let cert = get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem");
+
+    let mut ssl_config = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+    ssl_config.set_private_key_file(key, SslFiletype::PEM).unwrap();
+    ssl_config.set_certificate_chain_file(cert).unwrap();
 
     let state = web::Data::new(generate_state().await);
 
     HttpServer::new(move || App::new()
         .wrap(Logger::default())
         .app_data(state.clone()).configure(config))
-        .bind_rustls(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?
+        .bind_openssl(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?
         .run()
         .await
 }

@@ -152,34 +152,41 @@ impl GameServer {
         let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
         self.ws_broadcast(result.clone().into());
         if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
-            self.check_victory().await;
+            self.check_victory().await?;
         }
         Ok(())
     }
 
-    async fn check_victory(&mut self) {
+    async fn check_victory(&mut self) -> Result<()> {
         let total_territories = System::count(self.id.clone(), &self.state.db_pool).await as f64;
         let nb_territories_to_win = (total_territories * (TERRITORIAL_DOMINION_RATE as f64) / 100.0).ceil() as u32;
         let faction_systems_count = System::count_by_faction(self.id.clone(), &self.state.db_pool).await;
 
         for system_dominion in faction_systems_count.iter() {
             if system_dominion.nb_systems >= nb_territories_to_win {
-                #[derive(Serialize, Clone)]
-                struct VictoryData {
-                    victorious_faction: FactionID,
-                    scores: Vec<SystemDominion>
-                }
-                self.ws_broadcast(protocol::Message::new(
-                    protocol::Action::Victory,
-                    VictoryData{
-                        victorious_faction: system_dominion.faction_id,
-                        scores: faction_systems_count,
-                    },
-                    None,
-                ));
-                return;
+                self.process_victory(system_dominion, faction_systems_count.clone()).await?;
+                break;
             }
         }
+        Ok(())
+    }
+
+    async fn process_victory(&mut self, system_dominion: &SystemDominion, faction_systems_count: Vec<SystemDominion>) -> Result<()> {
+        #[derive(Serialize, Clone)]
+        struct VictoryData {
+            victorious_faction: FactionID,
+            scores: Vec<SystemDominion>
+        }
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::Victory,
+            VictoryData{
+                victorious_faction: system_dominion.faction_id,
+                scores: faction_systems_count,
+            },
+            None,
+        ));
+        self.state.clear_game(self.id).await?;
+        Ok(())
     }
 
     pub async fn remove_player(&self, pid: PlayerID) -> Result<()> {
@@ -190,6 +197,8 @@ impl GameServer {
             pid.clone(),
             Some(pid),
         ));
+        let mut clients = self.clients.write().expect("Poisoned lock on game players");
+        clients.remove(&pid);
         Ok(())
     }
 
@@ -225,7 +234,10 @@ impl Actor for GameServer {
     }
  
     fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        println!("Game is stopped");
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        for (pid, c) in clients.iter() {
+            self.state.add_client(&pid, c.clone());
+        }
     }
 }
 
@@ -239,17 +251,16 @@ pub struct GameFleetTravelMessage{
     pub fleet: Fleet
 }
 
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameEndMessage{}
+
 impl Handler<GameRemovePlayerMessage> for GameServer {
     type Result = bool;
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
         block_on(self.remove_player(pid));
-        if self.is_empty() {
-            ctx.stop();
-            ctx.terminate();
-            return true;
-        }
-        false
+        self.is_empty()
     }
 }
 
@@ -265,6 +276,15 @@ impl Handler<GameFleetTravelMessage> for GameServer {
         ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
             block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
         });
+    }
+}
+
+impl Handler<GameEndMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, _msg: GameEndMessage, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop();
+        ctx.terminate();
     }
 }
 

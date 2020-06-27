@@ -117,6 +117,12 @@ impl Fleet {
             .bind(Uuid::from(sid.clone()))
             .execute(db_pool).await
     }
+
+    pub async fn remove(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+        sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
+            .bind(Uuid::from(f.id))
+            .execute(db_pool).await
+    }
 }
 
 #[post("/")]

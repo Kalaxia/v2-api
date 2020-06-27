@@ -1,8 +1,6 @@
 use uuid::Uuid;
-use futures::future::join_all;
 use serde::{Serialize, Deserialize};
 use std::collections::{HashMap};
-use futures::executor::block_on;
 use crate::{
     lib::{Result, error::{ServerError, InternalError}},
     game::{
@@ -118,6 +116,7 @@ impl System {
                 // Both players have the same faction, the arrived fleet just parks here
                 if system_owner.faction == player.faction {
                     fleet.change_system(self);
+                    Fleet::update(fleet.clone(), db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
                 // Conquest of the system by the arrived fleet
@@ -125,7 +124,7 @@ impl System {
                     .into_iter()
                     .map(|f| (f.id.clone(), f))
                     .collect();
-                if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets) == true {
+                if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets, db_pool).await? == true {
                     return self.conquer(fleet, db_pool).await;
                 }
                 fleets.insert(fleet.id.clone(), fleet.clone());

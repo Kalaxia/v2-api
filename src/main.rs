@@ -1,7 +1,7 @@
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
@@ -58,8 +58,10 @@ impl AppState {
     }
 
     pub async fn clear_game(&self, gid: g::GameID) -> lib::Result<()> {
+        let mut games = self.games_mut();
+        games.get(&gid).unwrap().do_send(g::GameEndMessage{});
         g::Game::remove(gid.clone(), &self.db_pool).await?;
-        self.games_mut().remove(&gid);
+        games.remove(&gid);
         Ok(())
     }
 

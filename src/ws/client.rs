@@ -58,6 +58,7 @@ impl ClientSession {
         if clients.contains_key(&self.pid) {
             clients.remove(&self.pid);
         }
+        drop(clients);
         if player.lobby != None {
             let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
             let lobbies = self.state.lobbies();
@@ -104,7 +105,10 @@ impl Actor for ClientSession {
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        block_on(self.logout());
+        let res = block_on(self.logout());
+        if res.is_err() {
+            println!("Logout error : {:?}", res);
+        }
         Running::Stop
     }
 }

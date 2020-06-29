@@ -64,10 +64,10 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        if  dest_coords.x > origin_coords.x + 1 ||
-            (dest_coords.x as i8) < (origin_coords.x as i8) - 1 ||
-            dest_coords.y > origin_coords.y + 1 ||
-            (dest_coords.y as i8) < (origin_coords.y as i8) - 1 {
+        if  dest_coords.x > origin_coords.x + 1.0 ||
+            dest_coords.x < origin_coords.x - 1.0 ||
+            dest_coords.y > origin_coords.y + 1.0 ||
+            dest_coords.y < origin_coords.y - 1.0 {
                 return Err(InternalError::FleetInvalidDestination)?;
         }
         Ok(())

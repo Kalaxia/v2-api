@@ -12,6 +12,8 @@ use crate::{
     },
     ws::protocol
 };
+use petgraph::Graph;
+use galaxy_rs::{GalaxyBuilder, Point};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
@@ -35,8 +37,8 @@ pub struct SystemDominion {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Coordinates {
-    pub x: u16,
-    pub y: u16
+    pub x: f64,
+    pub y: f64
 }
 
 #[derive(Serialize, Clone)]
@@ -64,18 +66,12 @@ impl From<SystemID> for Uuid {
     fn from(sid: SystemID) -> Self { sid.0 }
 }
 
-impl From<i32> for Coordinates {
-    fn from(c: i32) -> Self {
-        Self{
-            x: ((c >> 16) & 0xff) as u16,
-            y: ((c >> 0) & 0xff) as u16,
-        }
-    }
-}
-
-impl From<Coordinates> for i32 {
-    fn from(Coordinates{ x, y }: Coordinates) -> Self {
-        ((x as i32) << 16) | ((y as i32) & 0xffff)
+impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
+    fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
+        Ok(Coordinates{
+            x: row.try_get::<f64, _>("coord_x")?,
+            y: row.try_get::<f64, _>("coord_y")?,
+        })
     }
 }
 
@@ -92,7 +88,10 @@ impl<'a> FromRow<'a, PgRow<'a>> for System {
             id: SystemID(id),
             game: GameID(game_id),
             player: player_id,
-            coordinates: Coordinates::from(row.try_get::<i32, _>("coordinates")?),
+            coordinates: Coordinates{
+                x: row.try_get::<f64, _>("coord_x")?,
+                y: row.try_get::<f64, _>("coord_y")?,
+            },
             unreachable: row.try_get("is_unreachable")?,
         })
     }
@@ -106,6 +105,14 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
             faction_id: FactionID(id as u8),
             nb_systems: row.try_get::<i64, _>("nb_systems")? as u32,
         })
+    }
+}
+
+impl Coordinates {
+    pub async fn get_max(gid: &GameID, db_pool: &PgPool) -> Result<Coordinates> {
+        sqlx::query_as("SELECT MAX(coord_x), MAX(coord_y) FROM map__systems WHERE game_id = $1")
+            .bind(Uuid::from(gid.clone()))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 }
 
@@ -152,6 +159,14 @@ impl System {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 
+    pub async fn find_unoccupied(gid: GameID, x: f64, y: f64, db_pool: &PgPool) -> Result<System> {
+        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND x > $2 AND y > $3 ORDER BY x, y")
+            .bind(Uuid::from(gid))
+            .bind(x)
+            .bind(y)
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
+    }
+
     pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Vec<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NOT NULL")
             .bind(Uuid::from(gid))
@@ -183,11 +198,12 @@ impl System {
     }
 
     pub async fn create(s: System,  tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coordinates, is_unreachable) VALUES($1,$2, $3, $4, $5)")
+        sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(s.id))
             .bind(Uuid::from(s.game))
             .bind(s.player.map(Uuid::from))
-            .bind(i32::from(s.coordinates))
+            .bind(s.coordinates.x)
+            .bind(s.coordinates.y)
             .bind(s.unreachable)
             .execute(tx).await.map_err(ServerError::from)
     }
@@ -229,25 +245,32 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> Result<HashMap<SystemID, System>> {
-    let mut systems = HashMap::new();
+pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
     let mut tx = db_pool.begin().await?;
-    for y in 0..MAP_SIZE {
-        for x in 0..MAP_SIZE {
-            let system = generate_system(&gid, x, y);
-            let res = System::create(system.clone(), &mut tx).await;
-            if res.is_err() {
-                tx.rollback().await?;
-                return Err(InternalError::SystemUnknown)?;
-            }
-            systems.insert(system.id.clone(), system);
+    let mut graph = Graph::new();
+    GalaxyBuilder::default()
+        .cloud_population(2)
+        .nb_arms(5)
+        .nb_arm_bones(32)
+        .slope_factor(0.4)
+        .arm_slope(std::f64::consts::PI / 4.0)
+        .arm_width_factor(1.0 / 24.0)
+        .populate(Point { x:0f64, y:0f64 }, &mut graph);
+
+    for p in graph.node_indices().map(|id| graph[id]) {
+        let Point{ x, y } = p.point;
+        let system = generate_system(&gid, x, y);
+        let res = System::create(system, &mut tx).await;
+        if res.is_err() {
+            tx.rollback().await?;
+            return Err(InternalError::SystemUnknown)?;
         }
     }
     tx.commit().await?;
-    Ok(systems)
+    Ok(())
 }
 
-fn generate_system(gid: &GameID, x: u16, y: u16) -> System {
+fn generate_system(gid: &GameID, x: f64, y: f64) -> System {
     System{
         id: SystemID(Uuid::new_v4()),
         game: gid.clone(),
@@ -258,47 +281,17 @@ fn generate_system(gid: &GameID, x: u16, y: u16) -> System {
 }
 
 pub async fn assign_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
-    let mut placed_per_faction: HashMap<FactionID, u16> = HashMap::new();
     let players = Player::find_by_game(gid, db_pool).await;
-    let mut systems : HashMap<SystemID, System> = System::find_all(&gid, db_pool).await
-        .into_iter()
-        .map(|s| (s.id.clone(), s))
-        .collect();
+    let max_coordinates = Coordinates::get_max(&gid, db_pool).await?;
 
     for player in players {
-        let fid = player.faction.unwrap().clone();
-        let i = placed_per_faction.entry(fid).or_insert(0);
-        let place = find_place(fid, *i, &systems);
-        *i += 1;
-        if let Some(place) = place {
-            // legitimate use of unwrap, because we KNOW `place` IS an existing system id
-            // if it is Some()
-            let mut s = systems.get_mut(&place).unwrap();
-            s.player = Some(player.id);
-            System::update(s.clone(), db_pool).await?;
-        } else {
-            // else do something to handle the non-placed player
-            // here we put unreachable!() because it is normaly the case.
-            unreachable!()
-        }
+        let mut place = find_place(gid.clone(), &max_coordinates, db_pool).await?;
+        place.player = Some(player.id);
+        System::update(place, db_pool).await?;
     }
     Ok(())
 }
 
-fn find_place(fid: FactionID, i: u16, systems: &HashMap<SystemID, System>) -> Option<SystemID> {
-    // Each faction is associated to a side of the grid
-    let coordinates_check: & dyn Fn(u16, u16, u16) -> bool = match fid {
-        FactionID(1) => &|i, x, y| x > 0 || y < i,
-        FactionID(2) => &|i, x, y| x < MAP_SIZE - 1 || y < i,
-        FactionID(3) => &|i, x, y| y > 0 || x < i,
-        FactionID(4) => &|i, x, y| y < MAP_SIZE - 1 || x < i,
-        _ => unimplemented!() // better than "None" because normaly this function is total
-    };
-    for (sid, system) in systems {
-        if coordinates_check(i, system.coordinates.x, system.coordinates.y) || system.player != None {
-            continue;
-        }
-        return Some(sid.clone());
-    }
-    None
+async fn find_place(gid: GameID, Coordinates{ x, y }: &Coordinates, db_pool: &PgPool) -> Result<System> {
+    System::find_unoccupied(gid, x.clone(), y.clone(), db_pool).await
 }

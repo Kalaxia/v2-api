@@ -16,6 +16,7 @@ use petgraph::Graph;
 use galaxy_rs::{GalaxyBuilder, Point};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
+use rand::prelude::*;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct SystemID(pub Uuid);
@@ -69,8 +70,8 @@ impl From<SystemID> for Uuid {
 impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Coordinates{
-            x: row.try_get::<f64, _>("coord_x")?,
-            y: row.try_get::<f64, _>("coord_y")?,
+            x: row.try_get("coord_x")?,
+            y: row.try_get("coord_y")?,
         })
     }
 }
@@ -89,8 +90,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for System {
             game: GameID(game_id),
             player: player_id,
             coordinates: Coordinates{
-                x: row.try_get::<f64, _>("coord_x")?,
-                y: row.try_get::<f64, _>("coord_y")?,
+                x: row.try_get("coord_x")?,
+                y: row.try_get("coord_y")?,
             },
             unreachable: row.try_get("is_unreachable")?,
         })
@@ -110,7 +111,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 
 impl Coordinates {
     pub async fn get_max(gid: &GameID, db_pool: &PgPool) -> Result<Coordinates> {
-        sqlx::query_as("SELECT MAX(coord_x), MAX(coord_y) FROM map__systems WHERE game_id = $1")
+        sqlx::query_as("SELECT MAX(coord_x) as coord_x, MAX(coord_y) as coord_y FROM map__systems WHERE game_id = $1")
             .bind(Uuid::from(gid.clone()))
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
@@ -160,7 +161,11 @@ impl System {
     }
 
     pub async fn find_unoccupied(gid: GameID, x: f64, y: f64, db_pool: &PgPool) -> Result<System> {
-        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND x > $2 AND y > $3 ORDER BY x, y")
+        sqlx::query_as("SELECT * FROM (
+                (SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND coord_x >= $2 AND coord_y >= $3 ORDER BY coord_x, coord_y LIMIT 1)
+                    UNION ALL
+                (SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND coord_x < $2 AND coord_y < $3 ORDER BY coord_x DESC, coord_y DESC LIMIT 1)
+            ) as system ORDER BY abs($2 - coord_x), abs($3 - coord_y) LIMIT 1")
             .bind(Uuid::from(gid))
             .bind(x)
             .bind(y)
@@ -286,12 +291,19 @@ pub async fn assign_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
 
     for player in players {
         let mut place = find_place(gid.clone(), &max_coordinates, db_pool).await?;
+        println!("Place found : {:?}", place.clone());
         place.player = Some(player.id);
         System::update(place, db_pool).await?;
+        println!("Place updated for player {:?}", player.id.clone());
     }
+    println!("Places assigned");
     Ok(())
 }
 
 async fn find_place(gid: GameID, Coordinates{ x, y }: &Coordinates, db_pool: &PgPool) -> Result<System> {
-    System::find_unoccupied(gid, x.clone(), y.clone(), db_pool).await
+    let mut rng = thread_rng();
+    let final_x: f64 = rng.gen_range(0.0, x);
+    let final_y: f64 = rng.gen_range(0.0, y);
+    println!("Game: {:?}; x: {:?}; y: {:?}", gid, final_x, final_y);
+    System::find_unoccupied(gid, final_x.clone(), final_y.clone(), db_pool).await
 }

@@ -83,8 +83,8 @@ impl GameServer {
         assign_systems(players, &mut g).await?;
 
         let (nodes, _) = g.into_nodes_edges();
-        let systems = nodes.into_iter().map(|n| n.weight).collect();
-        System::insert_all(&systems, &self.state.db_pool).await?;
+        let systems = nodes.into_iter().map(|n| n.weight);
+        System::insert_all(systems, &self.state.db_pool).await?;
 
         Ok(())
     }

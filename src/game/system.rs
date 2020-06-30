@@ -234,15 +234,18 @@ impl System {
             .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn insert_all(systems:&Vec<System>, pool:&PgPool) -> Result<u64> {
+    pub async fn insert_all<I>(systems:I, pool:&PgPool) -> Result<u64>
+        where I : IntoIterator<Item=System>
+    {
         let mut tx = pool.begin().await?;
-
+        let mut nb_inserted = 0;
         for sys in systems {
+            nb_inserted += 1;
             System::create(sys.clone(), &mut tx).await?;
         }
 
         tx.commit().await?;
-        Ok(systems.len() as u64)
+        Ok(nb_inserted)
     }
 }
 

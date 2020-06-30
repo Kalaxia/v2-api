@@ -64,12 +64,13 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        if  dest_coords.x > origin_coords.x + 1.0 ||
-            dest_coords.x < origin_coords.x - 1.0 ||
-            dest_coords.y > origin_coords.y + 1.0 ||
-            dest_coords.y < origin_coords.y - 1.0 {
-                return Err(InternalError::FleetInvalidDestination)?;
+        let distance = (dest_coords.x - origin_coords.x).powi(2) + (dest_coords.y - origin_coords.y).powi(2);
+        let range = 20f64.powi(2); // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
+
+        if distance > range {
+            return Err(InternalError::FleetInvalidDestination.into());
         }
+
         Ok(())
     }
 

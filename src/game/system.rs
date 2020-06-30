@@ -1,8 +1,15 @@
+use actix_web::{get, web, HttpResponse};
+use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::{ops::IndexMut, collections::HashMap};
 use crate::{
-    lib::{Result, error::{ServerError, InternalError}},
+    AppState,
+    lib::{
+        Result,
+        pagination::{Paginator, PaginatedResponse},
+        error::{ServerError, InternalError}
+    },
     game::{
         faction::{FactionID},
         fleet::combat,
@@ -173,27 +180,17 @@ impl System {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 
-    pub async fn find_unoccupied(gid: GameID, x: f64, y: f64, db_pool: &PgPool) -> Result<System> {
-        sqlx::query_as("SELECT * FROM (
-                (SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND coord_x >= $2 AND coord_y >= $3 ORDER BY coord_x, coord_y LIMIT 1)
-                    UNION ALL
-                (SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NULL AND coord_x < $2 AND coord_y < $3 ORDER BY coord_x DESC, coord_y DESC LIMIT 1)
-            ) as system ORDER BY abs($2 - coord_x), abs($3 - coord_y) LIMIT 1")
-            .bind(Uuid::from(gid))
-            .bind(x)
-            .bind(y)
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
-    }
-
     pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Vec<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NOT NULL")
             .bind(Uuid::from(gid))
             .fetch_all(db_pool).await.expect("Could not retrieve possessed systems")
     }
 
-    pub async fn find_all(gid: &GameID, db_pool: &PgPool) -> Vec<System> {
-        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1")
+    pub async fn find_all(gid: &GameID, limit: i64, offset: i64, db_pool: &PgPool) -> Vec<System> {
+        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 LIMIT $2 OFFSET $3")
             .bind(Uuid::from(gid.clone()))
+            .bind(limit)
+            .bind(offset)
             .fetch_all(db_pool).await.expect("Could not retrieve systems")
     }
 
@@ -282,7 +279,7 @@ pub async fn generate_systems(gid: GameID) -> Result<Graph<System, ()>> {
     GalaxyBuilder::default()
         .cloud_population(2)
         .nb_arms(5)
-        .nb_arm_bones(32)
+        .nb_arm_bones(15)
         .slope_factor(0.4)
         .arm_slope(std::f64::consts::PI / 4.0)
         .arm_width_factor(1.0 / 24.0)
@@ -353,4 +350,16 @@ async fn find_place<'a>(
     }
 
     Some(&mut galaxy[idx?])
+}
+
+#[get("/")]
+pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
+    -> Result<HttpResponse>
+{
+    Ok(PaginatedResponse::new(
+        pagination.limit,
+        pagination.page,
+        System::count(info.0.clone(), &state.db_pool).await.into(),
+        System::find_all(&info.0, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await,
+    ))
 }

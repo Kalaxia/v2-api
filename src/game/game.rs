@@ -85,20 +85,22 @@ impl GameServer {
         let (nodes, _) = g.into_nodes_edges();
         let systems = nodes.into_iter().map(|n| n.weight);
         System::insert_all(systems, &self.state.db_pool).await?;
+        
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::SystemsCreated,
+            (),
+            None
+        ));
 
         Ok(())
     }
 
     fn begin(&self) {
-        println!("Retrieving systems");
-        let systems = block_on(System::find_all(&self.id, &self.state.db_pool));
-        println!("Nb systems : {:?}", systems.len());
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::GameStarted,
-            systems,
+            (),
             None
         ));
-        println!("Broadcasted");
     }
 
     fn ws_broadcast(&self, message: protocol::Message) {

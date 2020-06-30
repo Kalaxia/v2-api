@@ -19,6 +19,7 @@ use game::{
     faction,
     player,
     lobby,
+    system,
 };
 use lib::Result;
 
@@ -107,6 +108,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(g::get_players)
             .service(
                 web::scope("/{game_id}/systems")
+                .service(system::get_systems)
                 .service(
                     web::scope("/{system_id}/fleets")
                     .service(fleet::create_fleet)

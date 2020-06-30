@@ -1,6 +1,6 @@
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::collections::{HashMap};
+use std::{ops::IndexMut, collections::HashMap};
 use crate::{
     lib::{Result, error::{ServerError, InternalError}},
     game::{
@@ -13,7 +13,7 @@ use crate::{
     ws::protocol
 };
 use petgraph::Graph;
-use galaxy_rs::{GalaxyBuilder, Point};
+use galaxy_rs::{GalaxyBuilder, Point, DataPoint};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use rand::prelude::*;
@@ -60,6 +60,19 @@ pub enum FleetArrivalOutcome {
     },
     Arrived{
         fleet: Fleet,
+    }
+}
+
+impl Coordinates {
+    pub fn polar(r:f64, theta:f64) -> Coordinates {
+        Coordinates {
+            x: r * theta.cos(),
+            y: r * theta.sin(),
+        }
+    }
+
+    pub fn dot(&self, rhs:&Coordinates) -> f64 {
+        self.x * rhs.x + self.y * rhs.y
     }
 }
 
@@ -220,6 +233,17 @@ impl System {
             .bind(Uuid::from(s.id))
             .execute(db_pool).await.map_err(ServerError::from)
     }
+
+    pub async fn insert_all(systems:&Vec<System>, pool:&PgPool) -> Result<u64> {
+        let mut tx = pool.begin().await?;
+
+        for sys in systems {
+            System::create(sys.clone(), &mut tx).await?;
+        }
+
+        tx.commit().await?;
+        Ok(systems.len() as u64)
+    }
 }
 
 impl From<FleetArrivalOutcome> for protocol::Message {
@@ -250,8 +274,7 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
-    let mut tx = db_pool.begin().await?;
+pub async fn generate_systems(gid: GameID) -> Result<Graph<System, ()>> {
     let mut graph = Graph::new();
     GalaxyBuilder::default()
         .cloud_population(2)
@@ -262,17 +285,15 @@ pub async fn generate_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
         .arm_width_factor(1.0 / 24.0)
         .populate(Point { x:0f64, y:0f64 }, &mut graph);
 
-    for p in graph.node_indices().map(|id| graph[id]) {
-        let Point{ x, y } = p.point;
-        let system = generate_system(&gid, x, y);
-        let res = System::create(system, &mut tx).await;
-        if res.is_err() {
-            tx.rollback().await?;
-            return Err(InternalError::SystemUnknown)?;
-        }
-    }
-    tx.commit().await?;
-    Ok(())
+    let node_transform = |_idx, &DataPoint { point:Point { x, y }, .. }| {
+        // tout le code qui cre un systeme a partir d'un DataPoint<NodeType>
+        generate_system(&gid, x, y)
+    };
+
+    // tout le code qui modifie une edge (si jamais un jour on a besoin de l'info
+    let edge_transform = |_, _| ();
+
+    Ok(graph.map(node_transform, edge_transform))
 }
 
 fn generate_system(gid: &GameID, x: f64, y: f64) -> System {
@@ -285,25 +306,48 @@ fn generate_system(gid: &GameID, x: f64, y: f64) -> System {
     }
 }
 
-pub async fn assign_systems(gid: GameID, db_pool: &PgPool) -> Result<()> {
-    let players = Player::find_by_game(gid, db_pool).await;
-    let max_coordinates = Coordinates::get_max(&gid, db_pool).await?;
+pub async fn assign_systems(players:Vec<PlayerID>, galaxy:&mut Graph<System, ()>) -> Result<()> {
+    let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
+    let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
+
+    for sys in galaxy.node_indices().map(|idx| &galaxy[idx]) {
+        min.x = min.x.min(sys.coordinates.x);
+        min.y = min.y.min(sys.coordinates.y);
+        max.x = max.x.max(sys.coordinates.x);
+        max.y = max.y.max(sys.coordinates.y);
+    }
 
     for player in players {
-        let mut place = find_place(gid.clone(), &max_coordinates, db_pool).await?;
-        println!("Place found : {:?}", place.clone());
-        place.player = Some(player.id);
-        System::update(place, db_pool).await?;
-        println!("Place updated for player {:?}", player.id.clone());
+        let place = find_place(&min, &max, galaxy).await.ok_or(InternalError::SystemUnknown)?;
+        place.player = Some(player);
     }
-    println!("Places assigned");
+
     Ok(())
 }
 
-async fn find_place(gid: GameID, Coordinates{ x, y }: &Coordinates, db_pool: &PgPool) -> Result<System> {
+async fn find_place<'a>(
+    Coordinates { x:xmin, y:ymin }: &Coordinates,
+    Coordinates { x:xmax, y:ymax }: &Coordinates,
+    galaxy:& 'a mut Graph<System, ()>
+)
+    -> Option<& 'a mut System>
+{
+
     let mut rng = thread_rng();
-    let final_x: f64 = rng.gen_range(0.0, x);
-    let final_y: f64 = rng.gen_range(0.0, y);
-    println!("Game: {:?}; x: {:?}; y: {:?}", gid, final_x, final_y);
-    System::find_unoccupied(gid, final_x.clone(), final_y.clone(), db_pool).await
+    let final_x: f64 = rng.gen_range(xmin, xmax);
+    let final_y: f64 = rng.gen_range(ymin, ymax);
+    let final_coord = Coordinates { x:final_x, y:final_y };
+
+    let mut min_dist = f64::MAX;
+    let mut idx = None;
+    for sid in galaxy.node_indices() {
+        let sys = &galaxy[sid];
+        let dist = final_coord.dot(&sys.coordinates);
+        if sys.player.is_none() && dist < min_dist {
+            min_dist = dist;
+            idx = Some(sid);
+        }
+    }
+
+    Some(&mut galaxy[idx?])
 }

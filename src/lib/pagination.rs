@@ -9,11 +9,11 @@ pub struct Paginator{
 pub struct PaginatedResponse{}
 
 impl PaginatedResponse {
-    pub fn new<T: serde::Serialize>(limit: i64, page: i64, count: i64, content: T) -> HttpResponse {
+    pub fn new<T: serde::Serialize>(limit: i64, page: i64, count: i64, content: Vec<T>) -> HttpResponse {
+        let first = page - 1 * limit;
+        let last = first + content.len() as i64;
         HttpResponse::build(StatusCode::PARTIAL_CONTENT)
-            .header("pagination-count", count.to_string())
-            .header("pagination-page", page.to_string())
-            .header("pagination-limit", limit.to_string())
+            .header("content-range", format!("{}-{}/{}", first, last, count))
             .json(content)
     }
 }

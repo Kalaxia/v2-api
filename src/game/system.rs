@@ -109,10 +109,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for System {
             id: SystemID(id),
             game: GameID(game_id),
             player: player_id,
-            coordinates: Coordinates{
-                x: row.try_get("coord_x")?,
-                y: row.try_get("coord_y")?,
-            },
+            coordinates: Coordinates::from_row(row)?,
             unreachable: row.try_get("is_unreachable")?,
         })
     }

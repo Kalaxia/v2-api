@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod error;
+pub mod pagination;
 
 /// Helper type used as a return type for HTTP handler.
 /// This type helps agregating multiple error types from this crate as well as different external

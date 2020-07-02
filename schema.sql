@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS map__systems(
 	id UUID PRIMARY KEY,
 	game_id UUID NOT NULL,
 	player_id UUID,
-	coordinates INT NOT NULL,
+	coord_x DOUBLE PRECISION NOT NULL,
+    coord_y DOUBLE PRECISION NOT NULL,
 	is_unreachable BOOLEAN NOT NULL
 );
 CREATE TABLE IF NOT EXISTS fleet__fleets(

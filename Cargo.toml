@@ -29,3 +29,5 @@ env_logger = "0.7.1"
 sqlx = { version = "0.3", default-features = false, features = [ "runtime-async-std", "macros", "postgres", "json", "uuid" ] }
 refinery = "0.3.0"
 sqlx-core = { version = "0.3.5", default-features = false, features = [ "runtime-async-std", "postgres", "json" ] }
+galaxy-rs = { git = "https://github.com/ablanleuil/galaxy-rs", version = "0.1.0" }
+petgraph = "0.5.1"

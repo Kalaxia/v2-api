@@ -78,17 +78,27 @@ impl Game {
 
 impl GameServer {
     async fn init(&mut self) -> Result<()> {
-        generate_systems(self.id.clone(), &self.state.db_pool).await?;
-        assign_systems(self.id.clone(), &self.state.db_pool).await?;
+        let mut g = generate_systems(self.id.clone()).await?;
+        let players = self.clients.read().unwrap().keys().cloned().collect();
+        assign_systems(players, &mut g).await?;
+
+        let (nodes, _) = g.into_nodes_edges();
+        let systems = nodes.into_iter().map(|n| n.weight);
+        System::insert_all(systems, &self.state.db_pool).await?;
+        
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::SystemsCreated,
+            (),
+            None
+        ));
 
         Ok(())
     }
 
     fn begin(&self) {
-        let systems = block_on(System::find_all(&self.id, &self.state.db_pool));
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::GameStarted,
-            systems,
+            (),
             None
         ));
     }

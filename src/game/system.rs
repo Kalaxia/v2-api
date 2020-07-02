@@ -7,7 +7,7 @@ use crate::{
     AppState,
     lib::{
         Result,
-        pagination::{Paginator, PaginatedResponse},
+        pagination::{Paginator, new_paginated_response},
         error::{ServerError, InternalError}
     },
     game::{
@@ -177,21 +177,21 @@ impl System {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 
-    pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Vec<System> {
+    pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NOT NULL")
             .bind(Uuid::from(gid))
-            .fetch_all(db_pool).await.expect("Could not retrieve possessed systems")
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_all(gid: &GameID, limit: i64, offset: i64, db_pool: &PgPool) -> Vec<System> {
+    pub async fn find_all(gid: &GameID, limit: i64, offset: i64, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 LIMIT $2 OFFSET $3")
             .bind(Uuid::from(gid.clone()))
             .bind(limit)
             .bind(offset)
-            .fetch_all(db_pool).await.expect("Could not retrieve systems")
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count_by_faction(gid: GameID, db_pool: &PgPool) -> Vec<SystemDominion> {
+    pub async fn count_by_faction(gid: GameID, db_pool: &PgPool) -> Result<Vec<SystemDominion>> {
         sqlx::query_as(
             "SELECT f.id as faction_id, COUNT(s.*) as nb_systems FROM map__systems s
             INNER JOIN player__players p ON s.player_id = p.id
@@ -199,7 +199,7 @@ impl System {
             WHERE s.game_id = $1
             GROUP BY f.id")
         .bind(Uuid::from(gid))
-        .fetch_all(db_pool).await.expect("Could not retrieve systems per faction")
+        .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn count(gid: GameID, db_pool: &PgPool) -> u32 {
@@ -353,10 +353,10 @@ async fn find_place<'a>(
 pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>
 {
-    Ok(PaginatedResponse::new(
+    Ok(new_paginated_response(
         pagination.limit,
         pagination.page,
         System::count(info.0.clone(), &state.db_pool).await.into(),
-        System::find_all(&info.0, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await,
+        System::find_all(&info.0, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await?,
     ))
 }

@@ -119,7 +119,7 @@ impl GameServer {
 
         // Add money to each player based on the number of
         // currently, the income is `some_player.income = some_player.number_of_systems_owned * 15`
-        System::find_possessed(self.id.clone(), &self.state.db_pool).await
+        System::find_possessed(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .for_each(|system| {
                 *players_income.entry(system.player).or_insert(0) += 15
@@ -170,7 +170,7 @@ impl GameServer {
     async fn check_victory(&mut self) -> Result<()> {
         let total_territories = System::count(self.id.clone(), &self.state.db_pool).await as f64;
         let nb_territories_to_win = (total_territories * (TERRITORIAL_DOMINION_RATE as f64) / 100.0).ceil() as u32;
-        let faction_systems_count = System::count_by_faction(self.id.clone(), &self.state.db_pool).await;
+        let faction_systems_count = System::count_by_faction(self.id.clone(), &self.state.db_pool).await?;
 
         for system_dominion in faction_systems_count.iter() {
             if system_dominion.nb_systems >= nb_territories_to_win {

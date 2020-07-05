@@ -303,7 +303,10 @@ fn generate_system(gid: &GameID, x: f64, y: f64) -> System {
     }
 }
 
-pub async fn assign_systems(players:Vec<PlayerID>, galaxy:&mut Graph<System, ()>) -> Result<()> {
+pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Graph<System, ()>) -> Result<()> {
+    let mut rng = thread_rng();
+    let mut faction_zone = HashMap::new();
+    let mut taken : [bool;256] = [false;256];
     let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
     let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
 
@@ -314,9 +317,31 @@ pub async fn assign_systems(players:Vec<PlayerID>, galaxy:&mut Graph<System, ()>
         max.y = max.y.max(sys.coordinates.y);
     }
 
+    let dx = max.x - min.x;
+    let dy = max.y - min.y;
+
     for player in players {
-        let place = find_place(&min, &max, galaxy).await.ok_or(InternalError::SystemUnknown)?;
-        place.player = Some(player);
+        // Take the zone assigned to the player's faction
+        // Assigning a new zone when encountering a new faction
+        let (zmin, zmax) = faction_zone
+            .entry(player.faction.unwrap())
+            .or_insert_with(|| {
+                let mut zone = rng.gen_range(0, 255);
+                while taken[zone] {
+                    zone = rng.gen_range(0, 255);
+                }
+
+                taken[zone] = true;
+
+                let x = (zone / 16) as f64 * dx / 16.0;
+                let y = (zone % 16) as f64 * dy / 16.0;
+
+                (Coordinates { x, y }, Coordinates { x:x+dx, y:y+dy })
+            });
+
+        // find a place for the player in its faction zone
+        let place = find_place(zmin, zmax, galaxy).await.ok_or(InternalError::SystemUnknown)?;
+        place.player = Some(player.id);
     }
 
     Ok(())

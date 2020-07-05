@@ -79,7 +79,7 @@ impl Game {
 impl GameServer {
     async fn init(&mut self) -> Result<()> {
         let mut g = generate_systems(self.id.clone()).await?;
-        let players = self.clients.read().unwrap().keys().cloned().collect();
+        let players = Player::find_by_game(self.id, &self.state.db_pool).await;
         assign_systems(players, &mut g).await?;
 
         let (nodes, _) = g.into_nodes_edges();

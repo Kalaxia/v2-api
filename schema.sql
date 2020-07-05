@@ -53,4 +53,4 @@ ALTER TABLE fleet__fleets ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REF
 ALTER TABLE fleet__fleets ADD CONSTRAINT destination_fkey FOREIGN KEY (destination_id) REFERENCES map__systems (id) ON DELETE SET NULL;
 ALTER TABLE fleet__fleets ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
 
-INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469888),(2,'Valkar',4227280),(3,'Adranite',2139095040);
+INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469888),(2,'Valkar',4227280),(3,'Adranite',-803201024);

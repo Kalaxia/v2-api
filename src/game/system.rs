@@ -2,7 +2,7 @@ use actix_web::{get, web, HttpResponse};
 use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::{ops::IndexMut, collections::HashMap};
+use std::collections::HashMap;
 use crate::{
     AppState,
     lib::{
@@ -14,7 +14,7 @@ use crate::{
         faction::{FactionID},
         fleet::combat,
         fleet::fleet::{FleetID, Fleet},
-        game::{GameID, MAP_SIZE},
+        game::{GameID},
         player::{PlayerID, Player}
     },
     ws::protocol
@@ -199,6 +199,13 @@ impl System {
     pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NOT NULL")
             .bind(Uuid::from(gid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn find_possessed_victory_systems(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
+        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND kind = $2 AND player_id IS NOT NULL")
+            .bind(Uuid::from(gid))
+            .bind(i16::from(SystemKind::VictorySystem))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 

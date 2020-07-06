@@ -85,7 +85,7 @@ impl LobbyServer {
 
 impl Lobby {
     pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<u64> {
-        let players = Player::find_by_lobby(self.id, db_pool).await;
+        let players = Player::find_by_lobby(self.id, db_pool).await?;
         self.owner = players.iter().next().unwrap().id.clone();
         Self::update(self.clone(), db_pool).await
     }
@@ -226,7 +226,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
     Ok(HttpResponse::Ok().json(LobbyData{
         id: lobby.id,
         owner: Player::find(lobby.owner, &state.db_pool).await?,
-        players: Player::find_by_lobby(lobby.id, &state.db_pool).await,
+        players: Player::find_by_lobby(lobby.id, &state.db_pool).await?,
     }))
 }
 

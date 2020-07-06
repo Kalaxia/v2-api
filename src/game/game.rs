@@ -9,13 +9,13 @@ use futures::executor::block_on;
 use crate::{
     lib::{Result, error::ServerError},
     game::{
-        faction::{FactionID},
+        faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
             fleet::{Fleet, FleetID, FLEET_TRAVEL_TIME},
         },
         lobby::Lobby,
         player::{PlayerID, Player},
-        system::{System, SystemDominion, FleetArrivalOutcome, assign_systems, generate_systems}
+        system::{System, assign_systems, generate_systems}
     },
     ws::{ client::ClientSession, protocol},
     AppState,
@@ -38,7 +38,8 @@ pub struct GameServer {
 }
 
 pub const MAP_SIZE: u16 = 10;
-pub const TERRITORIAL_DOMINION_RATE: u8 = 60;
+pub const VICTORY_POINTS: u16 = 250;
+pub const VICTORY_POINTS_PER_MINUTE: u16 = 15;
 
 impl From<GameID> for Uuid {
     fn from(gid: GameID) -> Self { gid.0 }
@@ -78,8 +79,10 @@ impl Game {
 
 impl GameServer {
     async fn init(&mut self) -> Result<()> {
+        generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
+
         let mut g = generate_systems(self.id.clone()).await?;
-        let players = Player::find_by_game(self.id, &self.state.db_pool).await;
+        let players = Player::find_by_game(self.id, &self.state.db_pool).await?;
         assign_systems(players, &mut g).await?;
 
         let (nodes, _) = g.into_nodes_edges();
@@ -111,7 +114,7 @@ impl GameServer {
     }
 
     async fn produce_income(&mut self) -> Result<()> {
-        let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await
+        let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .map(|p| (p.id.clone(), p))
             .collect();
@@ -160,38 +163,61 @@ impl GameServer {
         };
 
         let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
-        self.ws_broadcast(result.clone().into());
-        if let FleetArrivalOutcome::Conquerred{ fleet: _fleet, system: _system } = result {
-            self.check_victory().await?;
-        }
+        
+        self.ws_broadcast(result.into());
+        
         Ok(())
     }
 
-    async fn check_victory(&mut self) -> Result<()> {
-        let total_territories = System::count(self.id.clone(), &self.state.db_pool).await as f64;
-        let nb_territories_to_win = (total_territories * (TERRITORIAL_DOMINION_RATE as f64) / 100.0).ceil() as u32;
-        let faction_systems_count = System::count_by_faction(self.id.clone(), &self.state.db_pool).await?;
+    async fn distribute_victory_points(&mut self) -> Result<()> {
+        let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
+        let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
+            .into_iter()    
+            .map(|gf| (gf.faction.clone(), gf))
+            .collect::<HashMap<FactionID, GameFaction>>();
+        let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
+            .into_iter()
+            .map(|p| (p.id.clone(), p))
+            .collect::<HashMap<PlayerID, Player>>();
 
-        for system_dominion in faction_systems_count.iter() {
-            if system_dominion.nb_systems >= nb_territories_to_win {
-                self.process_victory(system_dominion, faction_systems_count.clone()).await?;
-                break;
+        for system in victory_systems {
+            factions.get_mut(
+                &players.get_mut(&system.player.unwrap())
+                    .unwrap()
+                    .faction
+                    .unwrap()
+            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE; 
+        }
+
+        let mut tx = self.state.db_pool.begin().await?;
+        for (_, f) in factions.clone() {
+            GameFaction::update(&f, &mut tx).await?;
+            if f.victory_points >= VICTORY_POINTS {
+                self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
             }
         }
+        tx.commit().await?;
+
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::FactionPointsUpdated,
+            factions,
+            None
+        ));
+
         Ok(())
     }
 
-    async fn process_victory(&mut self, system_dominion: &SystemDominion, faction_systems_count: Vec<SystemDominion>) -> Result<()> {
+    async fn process_victory(&mut self, victorious_faction: &GameFaction, factions: Vec<GameFaction>) -> Result<()> {
         #[derive(Serialize, Clone)]
         struct VictoryData {
             victorious_faction: FactionID,
-            scores: Vec<SystemDominion>
+            scores: Vec<GameFaction>
         }
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::Victory,
             VictoryData{
-                victorious_faction: system_dominion.faction_id,
-                scores: faction_systems_count,
+                victorious_faction: victorious_faction.faction,
+                scores: factions,
             },
             None,
         ));
@@ -234,9 +260,15 @@ impl Actor for GameServer {
                 println!("{:?}", result.err());
             }
         });
-        ctx.run_later(Duration::new(5, 0), |this, _| this.begin());
-        ctx.run_interval(Duration::new(6, 0), move |this, _| {
+        ctx.run_later(Duration::new(4, 0), |this, _| this.begin());
+        ctx.run_interval(Duration::new(5, 0), move |this, _| {
             let result = block_on(this.produce_income()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
+        ctx.run_interval(Duration::new(60, 0), move |this, _| {
+            let result = block_on(this.distribute_victory_points()).map_err(ServerError::from);
             if result.is_err() {
                 println!("{:?}", result.err());
             }
@@ -317,5 +349,5 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
 
 #[get("/{id}/players/")]
 pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await))
+    Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
 }

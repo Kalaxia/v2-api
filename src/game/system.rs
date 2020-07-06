@@ -2,7 +2,7 @@ use actix_web::{get, web, HttpResponse};
 use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::{ops::IndexMut, collections::HashMap};
+use std::collections::HashMap;
 use crate::{
     AppState,
     lib::{
@@ -14,7 +14,7 @@ use crate::{
         faction::{FactionID},
         fleet::combat,
         fleet::fleet::{FleetID, Fleet},
-        game::{GameID, MAP_SIZE},
+        game::{GameID},
         player::{PlayerID, Player}
     },
     ws::protocol
@@ -25,16 +25,23 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQuery
 use sqlx_core::row::Row;
 use rand::prelude::*;
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct SystemID(pub Uuid);
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct System {
     pub id: SystemID,
     pub game: GameID,
     pub player: Option<PlayerID>,
+    pub kind: SystemKind,
     pub coordinates: Coordinates,
     pub unreachable: bool
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub enum SystemKind {
+    BaseSystem,
+    VictorySystem,
 }
 
 #[derive(Serialize, Clone)]
@@ -87,6 +94,15 @@ impl From<SystemID> for Uuid {
     fn from(sid: SystemID) -> Self { sid.0 }
 }
 
+impl From<SystemKind> for i16 {
+    fn from(kind: SystemKind) -> Self {
+        match kind {
+            SystemKind::BaseSystem => 1,
+            SystemKind::VictorySystem => 2,
+        }
+    }
+}
+
 impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Coordinates{
@@ -109,8 +125,19 @@ impl<'a> FromRow<'a, PgRow<'a>> for System {
             id: SystemID(id),
             game: GameID(game_id),
             player: player_id,
+            kind: SystemKind::from_row(row)?,
             coordinates: Coordinates::from_row(row)?,
             unreachable: row.try_get("is_unreachable")?,
+        })
+    }
+}
+
+impl<'a> FromRow<'a, PgRow<'a>> for SystemKind {
+    fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
+        Ok(match row.try_get::<i16, _>("kind")? {
+            1 => Self::BaseSystem,
+            2 => Self::VictorySystem,
+            _ => Self::BaseSystem,
         })
     }
 }
@@ -123,14 +150,6 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
             faction_id: FactionID(id as u8),
             nb_systems: row.try_get::<i64, _>("nb_systems")? as u32,
         })
-    }
-}
-
-impl Coordinates {
-    pub async fn get_max(gid: &GameID, db_pool: &PgPool) -> Result<Coordinates> {
-        sqlx::query_as("SELECT MAX(coord_x) as coord_x, MAX(coord_y) as coord_y FROM map__systems WHERE game_id = $1")
-            .bind(Uuid::from(gid.clone()))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 }
 
@@ -183,6 +202,13 @@ impl System {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn find_possessed_victory_systems(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
+        sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND kind = $2 AND player_id IS NOT NULL")
+            .bind(Uuid::from(gid))
+            .bind(i16::from(SystemKind::VictorySystem))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
     pub async fn find_all(gid: &GameID, limit: i64, offset: i64, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 LIMIT $2 OFFSET $3")
             .bind(Uuid::from(gid.clone()))
@@ -210,10 +236,11 @@ impl System {
     }
 
     pub async fn create(s: System,  tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO map__systems (id, game_id, player_id, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6)")
+        sqlx::query("INSERT INTO map__systems (id, game_id, player_id, kind, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6, $7)")
             .bind(Uuid::from(s.id))
             .bind(Uuid::from(s.game))
             .bind(s.player.map(Uuid::from))
+            .bind(i16::from(s.kind))
             .bind(s.coordinates.x)
             .bind(s.coordinates.y)
             .bind(s.unreachable)
@@ -282,9 +309,12 @@ pub async fn generate_systems(gid: GameID) -> Result<Graph<System, ()>> {
         .arm_width_factor(1.0 / 24.0)
         .populate(Point { x:0f64, y:0f64 }, &mut graph);
 
+    let mut probability: f64 = 0.5;
     let node_transform = |_idx, &DataPoint { point:Point { x, y }, .. }| {
         // tout le code qui cre un systeme a partir d'un DataPoint<NodeType>
-        generate_system(&gid, x, y)
+        let (system, prob) = generate_system(&gid, x, y, probability);
+        probability = prob;
+        system
     };
 
     // tout le code qui modifie une edge (si jamais un jour on a besoin de l'info
@@ -293,14 +323,26 @@ pub async fn generate_systems(gid: GameID) -> Result<Graph<System, ()>> {
     Ok(graph.map(node_transform, edge_transform))
 }
 
-fn generate_system(gid: &GameID, x: f64, y: f64) -> System {
-    System{
+fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {
+    let (kind, prob) = generate_system_kind(x, y, probability);
+    (System{
         id: SystemID(Uuid::new_v4()),
         game: gid.clone(),
         player: None,
+        kind: kind,
         coordinates: Coordinates{ x, y },
         unreachable: false
+    }, prob)
+}
+
+fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
+    let mut rng = rand::thread_rng();
+    let rand: f64 = rng.gen_range((x.abs() + y.abs()) / 2.0, x.abs() + y.abs() + 1.0);
+
+    if rand <= probability {
+        return (SystemKind::VictorySystem, 0.5);
     }
+    (SystemKind::BaseSystem, probability + 0.1)
 }
 
 pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Graph<System, ()>) -> Result<()> {

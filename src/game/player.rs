@@ -67,19 +67,23 @@ impl Player {
             .bind(Uuid::from(pid))
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
     }
-    
-    pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Vec<Self> {
-        let players: Vec<Self> = sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
-            .bind(Uuid::from(gid))
-            .fetch_all(db_pool).await.expect("Could not retrieve game players");
-        players
+
+    pub async fn find_by_ids(ids: Vec<PlayerID>, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE id = any($1)")
+            .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Vec<Self> {
-        let players: Vec<Self> = sqlx::query_as("SELECT * FROM player__players WHERE lobby_id = $1")
+    pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
+            .bind(Uuid::from(gid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+    
+    pub async fn find_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE lobby_id = $1")
             .bind(Uuid::from(lid))
-            .fetch_all(db_pool).await.expect("Could not retrieve lobby players");
-        players
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> i16 {

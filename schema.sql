@@ -2,6 +2,7 @@ DROP TABLE IF EXISTS lobby__lobbies CASCADE;
 DROP TABLE IF EXISTS fleet__fleets CASCADE;
 DROP TABLE IF EXISTS map__systems CASCADE;
 DROP TABLE IF EXISTS game__games CASCADE;
+DROP TABLE IF EXISTS game__factions CASCADE;
 DROP TABLE IF EXISTS player__players CASCADE;
 DROP TABLE IF EXISTS faction__factions CASCADE;
 
@@ -26,6 +27,11 @@ CREATE TABLE IF NOT EXISTS player__players(
 );
 CREATE TABLE IF NOT EXISTS game__games(
     id UUID PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS game__factions(
+    faction_id INT NOT NULL,
+    game_id UUID NOT NULL,
+    victory_points SMALLINT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS map__systems(
 	id UUID PRIMARY KEY,
@@ -53,5 +59,7 @@ ALTER TABLE map__systems ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFE
 ALTER TABLE fleet__fleets ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 ALTER TABLE fleet__fleets ADD CONSTRAINT destination_fkey FOREIGN KEY (destination_id) REFERENCES map__systems (id) ON DELETE SET NULL;
 ALTER TABLE fleet__fleets ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
+ALTER TABLE game__factions ADD CONSTRAINT faction_fkey FOREIGN KEY (faction_id) REFERENCES faction__factions (id) ON DELETE CASCADE;
+ALTER TABLE game__factions ADD CONSTRAINT game_fkey FOREIGN KEY (game_id) REFERENCES game__games (id) ON DELETE CASCADE;
 
 INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469888),(2,'Valkar',4227280),(3,'Adranite',-803201024);

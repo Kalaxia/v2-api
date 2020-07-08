@@ -308,11 +308,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     if player.lobby != Some(lobby.id) {
         Err(InternalError::NotInLobby)?
     }
-    player.username = String::from("");
-    player.faction = None;
-    player.ready = false;
-    player.lobby = None;
-    Player::update(player.clone(), &state.db_pool).await?;
+    player.reset(&state.db_pool).await?;
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");

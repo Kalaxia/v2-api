@@ -1,13 +1,17 @@
-use actix_web::{get, web, HttpResponse};
+use actix_web::{get, delete, web, HttpResponse};
 use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, error::ServerError},
+    lib::{
+        Result,
+        error::{InternalError, ServerError},
+        auth::Claims,
+    },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
@@ -20,7 +24,7 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -64,6 +68,12 @@ impl Handler<protocol::Message> for GameServer {
 }
 
 impl Game {
+    pub async fn find(gid: GameID, db_pool: &PgPool) -> Result<Self> {
+        sqlx::query_as("SELECT * FROM game__games WHERE id = $1")
+            .bind(Uuid::from(gid))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
+    }
+
     pub async fn create(game: Game, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("INSERT INTO game__games(id) VALUES($1)")
             .bind(Uuid::from(game.id))
@@ -137,11 +147,13 @@ impl GameServer {
         for (pid, income) in players_income {
             players.get_mut(&pid.unwrap()).map(|p| {
                 p.wallet += income;
-                clients.get(&pid.unwrap()).unwrap().do_send(protocol::Message::new(
-                    protocol::Action::PlayerIncome,
-                    PlayerIncome{ income },
-                    None,
-                ));
+                clients.get(&pid.unwrap()).map(|c| {
+                    c.do_send(protocol::Message::new(
+                        protocol::Action::PlayerIncome,
+                        PlayerIncome{ income },
+                        None,
+                    ));
+                });
             });
         }
         for (_, p) in players {
@@ -225,7 +237,7 @@ impl GameServer {
         Ok(())
     }
 
-    pub async fn remove_player(&self, pid: PlayerID) -> Result<()> {
+    pub async fn remove_player(&self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
         self.ws_broadcast(protocol::Message::new(
@@ -234,8 +246,9 @@ impl GameServer {
             Some(pid),
         ));
         let mut clients = self.clients.write().expect("Poisoned lock on game players");
+        let client = clients.get(&pid).unwrap().clone();
         clients.remove(&pid);
-        Ok(())
+        Ok(client)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -284,7 +297,7 @@ impl Actor for GameServer {
 }
 
 #[derive(actix::Message, Serialize, Clone)]
-#[rtype(result="bool")]
+#[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
 pub struct GameRemovePlayerMessage(pub PlayerID);
 
 #[derive(actix::Message)]
@@ -298,11 +311,11 @@ pub struct GameFleetTravelMessage{
 pub struct GameEndMessage{}
 
 impl Handler<GameRemovePlayerMessage> for GameServer {
-    type Result = bool;
+    type Result = Arc<(actix::Addr<ClientSession>, bool)>;
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
-        block_on(self.remove_player(pid));
-        self.is_empty()
+        let client = block_on(self.remove_player(pid)).unwrap();
+        Arc::new((client, self.is_empty()))
     }
 }
 
@@ -350,4 +363,27 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
 #[get("/{id}/players/")]
 pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
+}
+
+#[delete("/{id}/players/")]
+pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
+    -> Result<HttpResponse>
+{
+    let mut game = Game::find(info.0, &state.db_pool).await?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
+
+    if player.game != Some(game.id) {
+        Err(InternalError::NotInLobby)?
+    }
+    player.reset(&state.db_pool).await?;
+
+    let games = state.games();
+    let game_server = games.get(&game.id).expect("Game exists in DB but not in HashMap");
+    let (client, is_empty) = Arc::try_unwrap(game_server.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
+    state.add_client(&player.id, client.clone());
+    if is_empty {
+        drop(games);
+        state.clear_game(game.id.clone()).await?;
+    }
+    Ok(HttpResponse::NoContent().finish())
 }

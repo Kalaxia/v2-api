@@ -62,6 +62,16 @@ impl Player {
         Ok(())
     }
 
+    pub async fn reset(&mut self, db_pool: &PgPool) -> Result<()> {
+        self.username = String::from("");
+        self.faction = None;
+        self.ready = false;
+        self.lobby = None;
+        self.game = None;
+        Player::update(self.clone(), db_pool).await?;
+        Ok(())
+    }
+
     pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
             .bind(Uuid::from(pid))

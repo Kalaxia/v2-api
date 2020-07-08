@@ -63,7 +63,7 @@ impl ClientSession {
             let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
             let lobbies = self.state.lobbies();
             let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
-            let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await.unwrap()).ok().unwrap();
+            let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
             if is_empty {
                 self.state.clear_lobby(lobby, player.id).await?;
             } else if player.id == lobby.owner {
@@ -79,7 +79,7 @@ impl ClientSession {
             let gid = player.clone().game.unwrap();
             let game = games.get_mut(&gid).expect("Game not found");
 
-            let is_empty = game.send(GameRemovePlayerMessage(player.id.clone())).await?;
+            let (_, is_empty) = std::sync::Arc::try_unwrap(game.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
             if is_empty {
                 drop(games);
                 self.state.clear_game(gid).await?;

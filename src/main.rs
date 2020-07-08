@@ -106,6 +106,7 @@ fn config(cfg: &mut web::ServiceConfig) {
         .service(
             web::scope("/games")
             .service(g::get_players)
+            .service(g::leave_game)
             .service(
                 web::scope("/{game_id}/systems")
                 .service(system::get_systems)

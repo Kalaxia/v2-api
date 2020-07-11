@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS fleet__fleets(
 	id UUID PRIMARY KEY,
 	system_id UUID NOT NULL,
 	destination_id UUID,
+    destination_arrival_date TIMESTAMPTZ,
 	player_id UUID NOT NULL,
 	nb_ships INT NOT NULL
 );

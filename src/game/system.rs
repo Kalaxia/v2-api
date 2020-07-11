@@ -416,6 +416,10 @@ async fn find_place<'a>(
     Some(&mut galaxy[idx?])
 }
 
+pub fn get_distance_between(from: Coordinates, to: Coordinates) -> f64 {
+    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).powf(0.5)
+}
+
 #[get("/")]
 pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>

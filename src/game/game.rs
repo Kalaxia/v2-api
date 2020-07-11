@@ -5,6 +5,7 @@ use serde::{Serialize, Deserialize};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
+use chrono::Utc;
 use futures::executor::block_on;
 use crate::{
     lib::{
@@ -15,7 +16,7 @@ use crate::{
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID, FLEET_TRAVEL_TIME},
+            fleet::{Fleet, FleetID, FleetTravelData},
         },
         lobby::Lobby,
         player::{PlayerID, Player},
@@ -24,7 +25,7 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -325,10 +326,13 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::FleetSailed,
-            msg.fleet.clone(),
+            FleetTravelData{
+                arrival_time: msg.fleet.destination_arrival_date.clone().unwrap().timestamp_millis(),
+                fleet: msg.fleet.clone(),
+            },
             Some(msg.fleet.player),
         ));
-        ctx.run_later(Duration::new(FLEET_TRAVEL_TIME.into(), 0), move |this, _| {
+        ctx.run_later(msg.fleet.destination_arrival_date.unwrap().signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
             block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
         });
     }
@@ -369,7 +373,7 @@ pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>)
 pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
     -> Result<HttpResponse>
 {
-    let mut game = Game::find(info.0, &state.db_pool).await?;
+    let game = Game::find(info.0, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.game != Some(game.id) {

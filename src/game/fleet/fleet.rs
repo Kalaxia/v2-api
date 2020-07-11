@@ -10,15 +10,15 @@ use crate::{
     game::{
         game::{GameID, GameFleetTravelMessage},
         player::{Player, PlayerID},
-        system::{System, SystemID, Coordinates}
+        system::{System, SystemID, Coordinates, get_distance_between}
     },
     ws::protocol,
     AppState
 };
+use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
 use sqlx_core::row::Row;
 
-pub const FLEET_TRAVEL_TIME: u8 = 10;
 const FLEET_COST: usize = 10;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
@@ -29,13 +29,20 @@ pub struct Fleet{
     pub id: FleetID,
     pub system: SystemID,
     pub destination_system: Option<SystemID>,
+    pub destination_arrival_date: Option<DateTime<Utc>>,
     pub player: PlayerID,
     pub nb_ships: usize,
 }
 
 #[derive(Deserialize)]
-pub struct FleetTravelData {
+pub struct FleetTravelRequest {
     pub destination_system_id: SystemID,
+}
+
+#[derive(Clone, Serialize)]
+pub struct FleetTravelData {
+    pub arrival_time: i64,
+    pub fleet: Fleet,
 }
 
 impl From<FleetID> for Uuid {
@@ -56,6 +63,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             id: FleetID(id),
             system: SystemID(sid),
             destination_system: destination_id,
+            destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: PlayerID(pid),
             nb_ships: row.try_get::<i32, _>("nb_ships")? as usize,
         })
@@ -77,6 +85,7 @@ impl Fleet {
     pub fn change_system(&mut self, system: &mut System) {
         self.system = system.id.clone();
         self.destination_system = None;
+        self.destination_arrival_date = None;
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -105,9 +114,10 @@ impl Fleet {
     }
 
     pub async fn update(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, nb_ships=$3 WHERE id=$4")
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, nb_ships=$4 WHERE id=$5")
             .bind(Uuid::from(f.system))
             .bind(f.destination_system.map(|sid| Uuid::from(sid)))
+            .bind(f.destination_arrival_date)
             .bind(f.nb_ships as i32)
             .bind(Uuid::from(f.id))
             .execute(db_pool).await
@@ -140,6 +150,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         player: player.id.clone(),
         system: system.id.clone(),
         destination_system: None,
+        destination_arrival_date: None,
         nb_ships: 1
     };
     Player::update(player.clone(), &state.db_pool).await?;
@@ -159,7 +170,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
 pub async fn travel(
     state: web::Data<AppState>,
     info: web::Path<(GameID,SystemID,FleetID,)>,
-    json_data: web::Json<FleetTravelData>,
+    json_data: web::Json<FleetTravelRequest>,
     claims: Claims
 ) -> Result<HttpResponse> {
     let (ds, s, f, p) = futures::join!(
@@ -180,13 +191,25 @@ pub async fn travel(
     if fleet.destination_system != None {
         return Err(InternalError::FleetAlreadyTravelling)?;
     }
-    fleet.check_travel_destination(system.coordinates, destination_system.coordinates)?;
+    fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
+    fleet.destination_arrival_date = Some(get_travel_time(system.coordinates, destination_system.coordinates));
     Fleet::update(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
-    Ok(HttpResponse::NoContent().finish())
+    Ok(HttpResponse::Ok().json(FleetTravelData{
+        arrival_time: fleet.destination_arrival_date.clone().unwrap().timestamp_millis(),
+        fleet,
+    }))
+}
+
+fn get_travel_time(from: Coordinates, to: Coordinates) -> DateTime<Utc> {
+    let time_coeff = 0.40;
+    let distance = get_distance_between(from, to);
+    let ms = distance / time_coeff;
+
+    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not aff travel time")
 }

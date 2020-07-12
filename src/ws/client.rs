@@ -140,7 +140,6 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for Clie
             Ok(msg) => msg,
         };
 
-        println!("WEBSOCKET MESSAGE: {:?}", msg);
         match msg {
             ws::Message::Ping(msg) => {
                 self.hb = Instant::now();

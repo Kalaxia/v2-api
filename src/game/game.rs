@@ -42,7 +42,6 @@ pub struct GameServer {
     clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
 }
 
-pub const MAP_SIZE: u16 = 10;
 pub const VICTORY_POINTS: u16 = 250;
 pub const VICTORY_POINTS_PER_MINUTE: u16 = 15;
 
@@ -92,12 +91,10 @@ impl GameServer {
     async fn init(&mut self) -> Result<()> {
         generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
 
-        let mut g = generate_systems(self.id.clone()).await?;
+        let mut systems = generate_systems(self.id.clone()).await?;
         let players = Player::find_by_game(self.id, &self.state.db_pool).await?;
-        assign_systems(players, &mut g).await?;
+        assign_systems(players, &mut systems).await?;
 
-        let (nodes, _) = g.into_nodes_edges();
-        let systems = nodes.into_iter().map(|n| n.weight);
         System::insert_all(systems, &self.state.db_pool).await?;
         
         self.ws_broadcast(protocol::Message::new(
@@ -314,7 +311,7 @@ pub struct GameEndMessage{}
 impl Handler<GameRemovePlayerMessage> for GameServer {
     type Result = Arc<(actix::Addr<ClientSession>, bool)>;
 
-    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
         Arc::new((client, self.is_empty()))
     }
@@ -333,7 +330,10 @@ impl Handler<GameFleetTravelMessage> for GameServer {
             Some(msg.fleet.player),
         ));
         ctx.run_later(msg.fleet.destination_arrival_date.unwrap().signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
+            let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
+            if res.is_err() {
+                println!("Fleet arrival fail : {:?}", res.err());
+            }
         });
     }
 }

@@ -339,11 +339,15 @@ fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
 }
 
 pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
+
+    const GRID_SIZE : usize = 16;
+    const EXCLUSION : usize = 1;
+
     let mut rng = thread_rng();
-    let mut faction_zone = HashMap::new();
-    let mut taken : [bool;256] = [false;256];
-    let mut min : Coordinates = Coordinates { x: std::f64::MAX, y: std::f64::MAX };
-    let mut max : Coordinates = Coordinates { x: std::f64::MIN, y: std::f64::MIN };
+    let mut faction_cell = HashMap::new();
+    let mut taken : [[bool;16];16] = [[false;16];16];
+    let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
+    let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
 
     for sys in galaxy.iter() {
         min.x = min.x.min(sys.coordinates.x);
@@ -352,30 +356,39 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
         max.y = max.y.max(sys.coordinates.y);
     }
 
-    let dx = max.x - min.x;
-    let dy = max.y - min.y;
+    let cell_w = (max.x - min.x) / GRID_SIZE as f64;
+    let cell_h = (max.y - min.y) / GRID_SIZE as f64;
 
     for player in players {
         // Take the zone assigned to the player's faction
         // Assigning a new zone when encountering a new faction
-        let (zmin, zmax) = faction_zone
+        let (cell_min, cell_max) = faction_cell
             .entry(player.faction.unwrap())
             .or_insert_with(|| {
-                let mut zone = rng.gen_range(0, 255);
-                while taken[zone] {
-                    zone = rng.gen_range(0, 255);
+                let mut cell_x = rng.gen_range(1, GRID_SIZE - 1);
+                let mut cell_y = rng.gen_range(1, GRID_SIZE - 1);
+                while taken[cell_x][cell_y] {
+                    cell_x = rng.gen_range(1, GRID_SIZE - 1);
+                    cell_y = rng.gen_range(1, GRID_SIZE - 1);
                 }
 
-                taken[zone] = true;
+                // make the place AND its neighbours in a zone which width is defined by the
+                // EXCLUSION constant not usable anymore
+                for i in (cell_x-EXCLUSION).max(0)..=(cell_x+EXCLUSION).min(GRID_SIZE-1) {
+                    for j in (cell_y-EXCLUSION).max(0)..=(cell_y+EXCLUSION).min(GRID_SIZE-1) {
+                        taken[i][j] = true;
+                    }
+                }
 
-                let x = (zone / 16) as f64 * dx / 16.0;
-                let y = (zone % 16) as f64 * dy / 16.0;
+                // the (x, y) coordinates of the topleft corner of the chosen cell
+                let x = cell_x as f64 * cell_w;
+                let y = cell_y as f64 * cell_h;
 
-                (Coordinates { x, y }, Coordinates { x:x+dx, y:y+dy })
+                (Coordinates { x, y }, Coordinates { x: x + cell_w, y: y + cell_h })
             });
 
         // find a place for the player in its faction zone
-        let place = find_place(zmin, zmax, galaxy).await.ok_or(InternalError::SystemUnknown)?;
+        let place = find_place(cell_min, cell_max, galaxy).await.ok_or(InternalError::SystemUnknown)?;
         place.player = Some(player.id);
     }
 

@@ -96,11 +96,21 @@ impl Player {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> i16 {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
+    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Result<i16> {
+        sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
             .bind(Uuid::from(lid))
-            .fetch_one(db_pool).await.expect("Could not count lobby players");
-        count.0 as i16
+            .fetch_one(db_pool).await
+            .map(|count: (i64,)| count.0 as i16)
+            .map_err(ServerError::from)
+    }
+
+    pub async fn check_username_exists(lid: LobbyID, username: String, db_pool: &PgPool) -> Result<bool> {
+        sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1 AND username = $2")
+            .bind(Uuid::from(lid))
+            .bind(username)
+            .fetch_one(db_pool).await
+            .map(|count: (i64,)| count.0 > 0)
+            .map_err(ServerError::from)
     }
 
     pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
@@ -186,6 +196,11 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await?;
 
+    if json_data.username.len() > 0
+    && json_data.username != player.username
+    && Player::check_username_exists(lobby.id.clone(), json_data.username.clone(), &state.db_pool).await? {
+        return Err(InternalError::PlayerUsernameAlreadyTaken)?;
+    }
     player.username = json_data.username.clone();
     player.faction = Some(json_data.faction_id);
     player.ready = json_data.is_ready;

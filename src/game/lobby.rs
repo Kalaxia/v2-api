@@ -90,10 +90,9 @@ impl Lobby {
         Self::update(self.clone(), db_pool).await
     }
 
-    pub async fn find_all(db_pool: &PgPool) -> Vec<Self> {
-        let lobbies: Vec<Self> = sqlx::query_as("SELECT * FROM lobby__lobbies")
-            .fetch_all(db_pool).await.expect("Could not retrieve lobbies");
-        lobbies
+    pub async fn find_all(db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM lobby__lobbies")
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn find(lid: LobbyID, db_pool: &PgPool) -> Result<Self> {
@@ -180,14 +179,14 @@ impl Handler<protocol::Message> for LobbyServer {
 }
 
 #[get("/")]
-pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
+pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
         owner: Player,
         nb_players: i16
     }
-    let lobbies = Lobby::find_all(&state.db_pool).await;
+    let lobbies = Lobby::find_all(&state.db_pool).await?;
     let mut futures : Vec<(&Lobby, Option<Player>, i16)> = Vec::new();
     
     for lobby in lobbies.iter() {
@@ -195,7 +194,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
             Player::find(lobby.owner, &state.db_pool),
             Player::count_by_lobby(lobby.id, &state.db_pool)
         );
-        futures.push((lobby, player.ok(), count));
+        futures.push((lobby, player.ok(), count?));
     }
 
     //let joined : Vec<(&Lobby, Option<Player>, i32)> = futures::future::join_all(futures).await;
@@ -209,7 +208,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Option<HttpResponse> {
             })
         })
         .collect();
-    Some(HttpResponse::Ok().json(datas))
+    Ok(HttpResponse::Ok().json(datas))
 }
 
 #[get("/{id}")]

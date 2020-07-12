@@ -131,6 +131,6 @@ pub async fn generate_game_factions(gid: GameID, db_pool: &PgPool) -> Result<()>
     for faction in factions {
         GameFaction::create(&faction, &mut tx).await?;
     }
-    tx.commit().await;
+    tx.commit().await?;
     Ok(())
 }

@@ -1,5 +1,4 @@
 use actix_web::{get, web, HttpResponse};
-use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
@@ -19,7 +18,6 @@ use crate::{
     },
     ws::protocol
 };
-use petgraph::Graph;
 use galaxy_rs::{GalaxyBuilder, Point, DataPoint};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
@@ -298,29 +296,24 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID) -> Result<Graph<System, ()>> {
-    let mut graph = Graph::new();
-    GalaxyBuilder::default()
+pub async fn generate_systems(gid: GameID) -> Result<Vec<System>> {
+    let graph = GalaxyBuilder::default()
+        .min_distance(Some(1.0))
         .cloud_population(2)
         .nb_arms(5)
         .nb_arm_bones(15)
         .slope_factor(0.4)
         .arm_slope(std::f64::consts::PI / 4.0)
         .arm_width_factor(1.0 / 24.0)
-        .populate(Point { x:0f64, y:0f64 }, &mut graph);
+        .build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
-    let node_transform = |_idx, &DataPoint { point:Point { x, y }, .. }| {
-        // tout le code qui cre un systeme a partir d'un DataPoint<NodeType>
+
+    Ok(graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
         let (system, prob) = generate_system(&gid, x, y, probability);
         probability = prob;
         system
-    };
-
-    // tout le code qui modifie une edge (si jamais un jour on a besoin de l'info
-    let edge_transform = |_, _| ();
-
-    Ok(graph.map(node_transform, edge_transform))
+    }).collect())
 }
 
 fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {
@@ -345,14 +338,14 @@ fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
     (SystemKind::BaseSystem, probability + 0.1)
 }
 
-pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Graph<System, ()>) -> Result<()> {
+pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
     let mut rng = thread_rng();
     let mut faction_zone = HashMap::new();
     let mut taken : [bool;256] = [false;256];
-    let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
-    let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
+    let mut min : Coordinates = Coordinates { x: std::f64::MAX, y: std::f64::MAX };
+    let mut max : Coordinates = Coordinates { x: std::f64::MIN, y: std::f64::MIN };
 
-    for sys in galaxy.node_indices().map(|idx| &galaxy[idx]) {
+    for sys in galaxy.iter() {
         min.x = min.x.min(sys.coordinates.x);
         min.y = min.y.min(sys.coordinates.y);
         max.x = max.x.max(sys.coordinates.x);
@@ -392,7 +385,7 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Graph<System, ()>) 
 async fn find_place<'a>(
     Coordinates { x:xmin, y:ymin }: &Coordinates,
     Coordinates { x:xmax, y:ymax }: &Coordinates,
-    galaxy:& 'a mut Graph<System, ()>
+    galaxy:& 'a mut Vec<System>
 )
     -> Option<& 'a mut System>
 {
@@ -402,10 +395,9 @@ async fn find_place<'a>(
     let final_y: f64 = rng.gen_range(ymin, ymax);
     let final_coord = Coordinates { x:final_x, y:final_y };
 
-    let mut min_dist = f64::MAX;
+    let mut min_dist = std::f64::MAX;
     let mut idx = None;
-    for sid in galaxy.node_indices() {
-        let sys = &galaxy[sid];
+    for (sid, sys) in galaxy.iter().enumerate() {
         let dist = final_coord.dot(&sys.coordinates);
         if sys.player.is_none() && dist < min_dist {
             min_dist = dist;

@@ -345,7 +345,7 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
 
     let mut rng = thread_rng();
     let mut faction_cell = HashMap::new();
-    let mut taken : [[bool;16];16] = [[false;16];16];
+    let mut taken : [[bool;GRID_SIZE];GRID_SIZE] = [[false;GRID_SIZE];GRID_SIZE];
     let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
     let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
 
@@ -365,11 +365,11 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
         let (cell_min, cell_max) = faction_cell
             .entry(player.faction.unwrap())
             .or_insert_with(|| {
-                let mut cell_x = rng.gen_range(1, GRID_SIZE - 1);
-                let mut cell_y = rng.gen_range(1, GRID_SIZE - 1);
+                let mut cell_x = rng.gen_range(0, GRID_SIZE);
+                let mut cell_y = rng.gen_range(0, GRID_SIZE);
                 while taken[cell_x][cell_y] {
-                    cell_x = rng.gen_range(1, GRID_SIZE - 1);
-                    cell_y = rng.gen_range(1, GRID_SIZE - 1);
+                    cell_x = rng.gen_range(0, GRID_SIZE);
+                    cell_y = rng.gen_range(0, GRID_SIZE);
                 }
 
                 // make the place AND its neighbours in a zone which width is defined by the
@@ -381,8 +381,8 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
                 }
 
                 // the (x, y) coordinates of the topleft corner of the chosen cell
-                let x = cell_x as f64 * cell_w;
-                let y = cell_y as f64 * cell_h;
+                let x = min.x + cell_x as f64 * cell_w;
+                let y = min.y + cell_y as f64 * cell_h;
 
                 (Coordinates { x, y }, Coordinates { x: x + cell_w, y: y + cell_h })
             });

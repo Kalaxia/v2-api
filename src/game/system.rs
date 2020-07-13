@@ -21,7 +21,7 @@ use crate::{
 use galaxy_rs::{GalaxyBuilder, Point, DataPoint};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
-use rand::prelude::*;
+use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct SystemID(pub Uuid);
@@ -349,6 +349,8 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
     let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
     let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
 
+    let grid_range = Uniform::from(0..GRID_SIZE);
+
     for sys in galaxy.iter() {
         min.x = min.x.min(sys.coordinates.x);
         min.y = min.y.min(sys.coordinates.y);
@@ -365,11 +367,11 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
         let (cell_min, cell_max) = faction_cell
             .entry(player.faction.unwrap())
             .or_insert_with(|| {
-                let mut cell_x = rng.gen_range(0, GRID_SIZE);
-                let mut cell_y = rng.gen_range(0, GRID_SIZE);
+                let mut cell_x = grid_range.sample(&mut rng);
+                let mut cell_y = grid_range.sample(&mut rng);
                 while taken[cell_x][cell_y] {
-                    cell_x = rng.gen_range(0, GRID_SIZE);
-                    cell_y = rng.gen_range(0, GRID_SIZE);
+                    cell_x = grid_range.sample(&mut rng);
+                    cell_y = grid_range.sample(&mut rng);
                 }
 
                 // make the place AND its neighbours in a zone which width is defined by the

@@ -83,8 +83,12 @@ impl Coordinates {
         }
     }
 
-    pub fn dot(&self, rhs:&Coordinates) -> f64 {
-        self.x * rhs.x + self.y * rhs.y
+    pub fn distance_from2(&self, rhs:&Coordinates) -> f64 {
+        (self.x - rhs.x).powi(2) + (self.y - rhs.y).powi(2)
+    }
+
+    pub fn distance_from(&self, rhs:&Coordinates) -> f64 {
+        self.distance_from2(rhs).sqrt()
     }
 }
 
@@ -404,6 +408,7 @@ async fn find_place<'a>(
 )
     -> Option<& 'a mut System>
 {
+    println!("finding place in ({}; {})-({}; {})", xmin, ymin, xmax, ymax);
 
     let mut rng = thread_rng();
     let final_x: f64 = rng.gen_range(xmin, xmax);
@@ -413,18 +418,23 @@ async fn find_place<'a>(
     let mut min_dist = std::f64::MAX;
     let mut idx = None;
     for (sid, sys) in galaxy.iter().enumerate() {
-        let dist = final_coord.dot(&sys.coordinates);
+        let dist = final_coord.distance_from(&sys.coordinates);
         if sys.player.is_none() && dist < min_dist {
             min_dist = dist;
             idx = Some(sid);
         }
     }
 
-    Some(&mut galaxy[idx?])
+    if let Some(id) = idx {
+        println!("system found at distance = {}", min_dist);
+        Some(&mut galaxy[id])
+    } else {
+        None
+    }
 }
 
 pub fn get_distance_between(from: Coordinates, to: Coordinates) -> f64 {
-    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).powf(0.5)
+    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt()
 }
 
 #[get("/")]

@@ -199,20 +199,25 @@ impl GameServer {
             ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE; 
         }
 
+        let mut victorious_faction: Option<GameFaction> = None;
         let mut tx = self.state.db_pool.begin().await?;
         for (_, f) in factions.clone() {
             GameFaction::update(&f, &mut tx).await?;
             if f.victory_points >= VICTORY_POINTS {
-                self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
+                victorious_faction = Some(f.clone());
             }
         }
         tx.commit().await?;
 
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::FactionPointsUpdated,
-            factions,
+            factions.clone(),
             None
         ));
+
+        if let Some(f) = victorious_faction {
+            self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
+        }
 
         Ok(())
     }
@@ -285,13 +290,6 @@ impl Actor for GameServer {
             }
         });
     }
- 
-    fn stopped(&mut self, _ctx: &mut Context<Self>) {
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for (pid, c) in clients.iter() {
-            self.state.add_client(&pid, c.clone());
-        }
-    }
 }
 
 #[derive(actix::Message, Serialize, Clone)]
@@ -342,6 +340,10 @@ impl Handler<GameEndMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, _msg: GameEndMessage, ctx: &mut Self::Context) -> Self::Result {
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        for (pid, c) in clients.iter() {
+            self.state.add_client(&pid, c.clone());
+        }
         ctx.stop();
         ctx.terminate();
     }

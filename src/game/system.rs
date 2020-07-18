@@ -425,12 +425,7 @@ async fn find_place<'a>(
         }
     }
 
-    if let Some(id) = idx {
-        println!("system found at distance = {}", min_dist);
-        Some(&mut galaxy[id])
-    } else {
-        None
-    }
+    idx.map(move |id| &mut galaxy[id])
 }
 
 pub fn get_distance_between(from: Coordinates, to: Coordinates) -> f64 {

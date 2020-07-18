@@ -59,10 +59,14 @@ impl AppState {
     }
 
     pub async fn clear_game(&self, gid: g::GameID) -> lib::Result<()> {
-        let mut games = self.games_mut();
-        games.get(&gid).unwrap().do_send(g::GameEndMessage{});
+        let game = {
+            let mut games = self.games_mut();
+            let g = games.get(&gid).unwrap().clone();
+            games.remove(&gid);
+            g
+        };
+        game.do_send(g::GameEndMessage{});
         g::Game::remove(gid.clone(), &self.db_pool).await?;
-        games.remove(&gid);
         Ok(())
     }
 

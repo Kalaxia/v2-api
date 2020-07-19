@@ -8,6 +8,7 @@ use crate::{
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
+    game::system::SystemID,
     lib::{Result, error::{InternalError, ServerError}, auth},
     ws::protocol,
 };
@@ -75,6 +76,12 @@ impl Player {
     pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
             .bind(Uuid::from(pid))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
+    }
+
+    pub async fn find_system_owner(sid: SystemID, db_pool: &PgPool) -> Result<Self> {
+        sqlx::query_as("SELECT p.* FROM map__systems s INNER JOIN player__players p ON p.id = s.player_id WHERE s.id = $1")
+            .bind(Uuid::from(sid))
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
     }
 

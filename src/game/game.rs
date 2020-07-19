@@ -17,6 +17,7 @@ use crate::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
             fleet::{Fleet, FleetID, FleetTravelData},
+            ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
         },
         lobby::Lobby,
         player::{PlayerID, Player},
@@ -179,6 +180,40 @@ impl GameServer {
         Ok(())
     }
 
+    async fn process_ship_queue_production(&mut self, sqid: ShipQueueID) -> Result<()> {
+        let ship_queue = ShipQueue::find(sqid, &self.state.db_pool).await?;
+        let ship_group = ShipGroup::find_by_system_and_category(
+            ship_queue.system.clone(),
+            ship_queue.category.clone(),
+            &self.state.db_pool
+        ).await?;
+        let player = Player::find_system_owner(ship_queue.system.clone(), &self.state.db_pool).await?;
+
+        if let Some(mut sg) = ship_group {
+            sg.quantity += ship_queue.quantity;
+            ShipGroup::update(sg, &self.state.db_pool).await?;
+        } else {
+            let sg = ShipGroup{
+                id: ShipGroupID(Uuid::new_v4()),
+                system: Some(ship_queue.system.clone()),
+                fleet: None,
+                quantity: ship_queue.quantity.clone(),
+                category: ship_queue.category.clone(),
+            };
+            ShipGroup::create(sg, &self.state.db_pool).await?;
+        }
+        
+        ShipQueue::remove(ship_queue.id, &self.state.db_pool).await?;
+
+        self.state.clients().get(&player.id).unwrap().do_send(protocol::Message::new(
+            protocol::Action::ShipQueueFinished,
+            ship_queue.clone(),
+            None,
+        ));
+
+        Ok(())
+    }
+
     async fn distribute_victory_points(&mut self) -> Result<()> {
         let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
         let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
@@ -304,6 +339,12 @@ pub struct GameFleetTravelMessage{
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
+pub struct GameShipQueueMessage{
+    pub ship_queue: ShipQueue
+}
+
+#[derive(actix::Message)]
+#[rtype(result="()")]
 pub struct GameEndMessage{}
 
 impl Handler<GameRemovePlayerMessage> for GameServer {
@@ -331,6 +372,19 @@ impl Handler<GameFleetTravelMessage> for GameServer {
             let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());
+            }
+        });
+    }
+}
+
+impl Handler<GameShipQueueMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameShipQueueMessage, ctx: &mut Self::Context) -> Self::Result {
+        ctx.run_later(msg.ship_queue.finished_at.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
+            let res = block_on(this.process_ship_queue_production(msg.ship_queue.id.clone()));
+            if res.is_err() {
+                println!("Ship queue production failed : {:?}", res.err());
             }
         });
     }

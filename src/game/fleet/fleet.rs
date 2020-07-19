@@ -22,7 +22,7 @@ use sqlx_core::row::Row;
 const FLEET_COST: usize = 10;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
-pub struct FleetID(Uuid);
+pub struct FleetID(pub Uuid);
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Fleet{
@@ -51,20 +51,12 @@ impl From<FleetID> for Uuid {
 
 impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-        let sid : Uuid = row.try_get("system_id")?;
-        let pid : Uuid = row.try_get("player_id")?;
-        let destination_id = match row.try_get("destination_id") {
-            Ok(sid) => Some(SystemID(sid)),
-            Err(_) => None
-        };
-
         Ok(Fleet {
-            id: FleetID(id),
-            system: SystemID(sid),
-            destination_system: destination_id,
+            id: row.try_get("id").map(FleetID)?,
+            system: row.try_get("system_id").map(SystemID)?,
+            destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
-            player: PlayerID(pid),
+            player: row.try_get("player_id").map(PlayerID)?,
             nb_ships: row.try_get::<i32, _>("nb_ships")? as usize,
         })
     }
@@ -211,5 +203,5 @@ fn get_travel_time(from: Coordinates, to: Coordinates) -> DateTime<Utc> {
     let distance = get_distance_between(from, to);
     let ms = distance / time_coeff;
 
-    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not aff travel time")
+    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
 }

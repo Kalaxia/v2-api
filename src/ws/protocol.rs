@@ -21,6 +21,7 @@ pub enum Action {
     PlayerLeft,
     PlayerDisconnected,
     PlayerIncome,
+    ShipQueueFinished,
     SystemConquerred,
     SystemsCreated,
     Victory,

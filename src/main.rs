@@ -122,9 +122,18 @@ fn config(cfg: &mut web::ServiceConfig) {
                         .service(fleet::travel)
                         .service(
                             web::scope("/ships")
-                            .service(ship::add_ship)
+                            .service(ship::assign_ships)
                         )
                     )
+                )
+                .service(
+                    web::scope("/{system_id}/ship-groups")
+                    .service(ship::get_system_ship_groups)
+                )
+                .service(
+                    web::scope("/{system_id}/ship-queues")
+                    .service(ship::add_ship_queue)
+                    .service(ship::get_ship_queues)
                 )
             )
         )

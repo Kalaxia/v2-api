@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::executor::block_on;
 use crate::{
     lib::{
@@ -16,7 +16,7 @@ use crate::{
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID, FleetTravelData},
+            fleet::{Fleet, FleetID},
             ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
         },
         lobby::Lobby,
@@ -26,7 +26,7 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -75,16 +75,16 @@ impl Game {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
     }
 
-    pub async fn create(game: Game, db_pool: &PgPool) -> Result<u64> {
+    pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO game__games(id) VALUES($1)")
             .bind(Uuid::from(game.id))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(gid: GameID, db_pool: &PgPool) -> Result<u64> {
+    pub async fn remove(gid: GameID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
             .bind(Uuid::from(gid))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 }
 
@@ -155,14 +155,17 @@ impl GameServer {
                 });
             });
         }
+        let mut tx =self.state.db_pool.begin().await?;
         for (_, p) in players {
-            Player::update(p, &self.state.db_pool).await?;
+            Player::update(p, &mut tx).await?;
         }
+        tx.commit().await?;
         Ok(())
     }
 
     async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
-        let fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
+        let mut fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
+        fleet.ship_groups = ShipGroup::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
         let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
         let player = Player::find(fleet.player, &self.state.db_pool).await?;
 
@@ -188,10 +191,11 @@ impl GameServer {
             &self.state.db_pool
         ).await?;
         let player = Player::find_system_owner(ship_queue.system.clone(), &self.state.db_pool).await?;
+        let mut tx =self.state.db_pool.begin().await?;
 
         if let Some(mut sg) = ship_group {
             sg.quantity += ship_queue.quantity;
-            ShipGroup::update(sg, &self.state.db_pool).await?;
+            ShipGroup::update(&sg, &mut tx).await?;
         } else {
             let sg = ShipGroup{
                 id: ShipGroupID(Uuid::new_v4()),
@@ -200,12 +204,15 @@ impl GameServer {
                 quantity: ship_queue.quantity.clone(),
                 category: ship_queue.category.clone(),
             };
-            ShipGroup::create(sg, &self.state.db_pool).await?;
+            ShipGroup::create(sg, &mut tx).await?;
         }
         
-        ShipQueue::remove(ship_queue.id, &self.state.db_pool).await?;
+        ShipQueue::remove(ship_queue.id, &mut tx).await?;
 
-        self.state.clients().get(&player.id).unwrap().do_send(protocol::Message::new(
+        tx.commit().await?;
+
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        clients.get(&player.id).unwrap().do_send(protocol::Message::new(
             protocol::Action::ShipQueueFinished,
             ship_queue.clone(),
             None,
@@ -362,13 +369,11 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::FleetSailed,
-            FleetTravelData{
-                arrival_time: msg.fleet.destination_arrival_date.clone().unwrap().timestamp_millis(),
-                fleet: msg.fleet.clone(),
-            },
+            msg.fleet.clone(),
             Some(msg.fleet.player),
         ));
-        ctx.run_later(msg.fleet.destination_arrival_date.unwrap().signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
+        let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
+        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
             let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());
@@ -381,7 +386,8 @@ impl Handler<GameShipQueueMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameShipQueueMessage, ctx: &mut Self::Context) -> Self::Result {
-        ctx.run_later(msg.ship_queue.finished_at.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
+        let datetime: DateTime<Utc> = msg.ship_queue.finished_at.into();
+        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
             let res = block_on(this.process_ship_queue_production(msg.ship_queue.id.clone()));
             if res.is_err() {
                 println!("Ship queue production failed : {:?}", res.err());
@@ -413,7 +419,9 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
     };
     let game = Game{ id: id.clone() };
 
-    Game::create(game, &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Game::create(game, &mut tx).await?;
+    tx.commit().await?;
 
     Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await?;
 

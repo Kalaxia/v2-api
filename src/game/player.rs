@@ -1,7 +1,7 @@
 use actix_web::{web, get, patch, post, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
@@ -69,7 +69,9 @@ impl Player {
         self.ready = false;
         self.lobby = None;
         self.game = None;
-        Player::update(self.clone(), db_pool).await?;
+        let mut tx = db_pool.begin().await?;
+        Player::update(self.clone(), &mut tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -127,16 +129,16 @@ impl Player {
             .execute(db_pool).await
     }
 
-    pub async fn create(p: Player, db_pool: &PgPool) -> Result<u64> {
+    pub async fn create(p: Player, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(p.id))
             .bind(p.wallet as i32)
             .bind(p.ready)
             .bind(p.is_connected)
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn update(p: Player, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update(p: Player, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("UPDATE player__players SET username = $1,
             game_id = $2,
             lobby_id = $3,
@@ -153,7 +155,7 @@ impl Player {
             .bind(p.ready)
             .bind(p.is_connected)
             .bind(Uuid::from(p.id))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 }
 
@@ -171,7 +173,9 @@ pub async fn login(state:web::Data<AppState>)
         wallet: 0,
         is_connected: true,
     };
-    Player::create(player.clone(), &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Player::create(player.clone(), &mut tx).await?;
+    tx.commit().await?;
     
     Ok(auth::Claims { pid: player.id })
 }
@@ -211,7 +215,9 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     player.username = json_data.username.clone();
     player.faction = Some(json_data.faction_id);
     player.ready = json_data.is_ready;
-    Player::update(player.clone(), &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Player::update(player.clone(), &mut tx).await?;
+    tx.commit().await?;
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");

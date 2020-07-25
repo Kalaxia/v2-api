@@ -15,7 +15,7 @@ use crate::{
 };
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -84,10 +84,13 @@ impl LobbyServer {
 }
 
 impl Lobby {
-    pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<()> {
         let players = Player::find_by_lobby(self.id, db_pool).await?;
         self.owner = players.iter().next().unwrap().id.clone();
-        Self::update(self.clone(), db_pool).await
+        let mut tx =db_pool.begin().await?;
+        Self::update(self.clone(), &mut tx).await;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn find_all(db_pool: &PgPool) -> Result<Vec<Self>> {
@@ -101,24 +104,24 @@ impl Lobby {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
     }
 
-    pub async fn create(l: Lobby, db_pool: &PgPool) -> Result<u64> {
+    pub async fn create(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id) VALUES($1, $2)")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn update(l: Lobby, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $1 WHERE id = $2")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(lid: LobbyID, db_pool: &PgPool) -> Result<u64> {
+    pub async fn remove(lid: LobbyID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
     }
 }
 
@@ -253,10 +256,12 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
-    Lobby::create(new_lobby.clone(), &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Lobby::create(new_lobby.clone(), &mut tx).await?;
     // Put the player in the lobby
     player.lobby = Some(new_lobby.id.clone());
-    Player::update(player.clone(), &state.db_pool).await?;
+    Player::update(player.clone(), &mut tx).await?;
+    tx.commit().await?;
     // Notify players for lobby creation
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyCreated,
@@ -292,7 +297,9 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
         None,
     ));
 
-    Lobby::remove(lobby.id, &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Lobby::remove(lobby.id, &mut tx).await?;
+    tx.commit().await?;
 
     Ok(HttpResponse::NoContent().finish())
 }
@@ -336,7 +343,9 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
         Err(InternalError::AlreadyInLobby)?
     }
     player.lobby = Some(lobby.id);
-    Player::update(player.clone(), &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Player::update(player.clone(), &mut tx).await?;
+    tx.commit().await?;
 
     let message = protocol::Message::new(
         protocol::Action::PlayerJoined,

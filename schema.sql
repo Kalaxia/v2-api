@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS fleet__ship_groups(
 CREATE TABLE IF NOT EXISTS system__ship_queues(
     id UUID PRIMARY KEY,
     system_id UUID NOT NULL,
+    category VARCHAR(25) NOT NULL,
     quantity INT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     started_at TIMESTAMPTZ NOT NULL,

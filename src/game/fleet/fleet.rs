@@ -5,18 +5,20 @@ use crate::{
     lib::{
         Result,
         error::{ServerError, InternalError},
+        time::Time,
         auth::Claims
     },
     game::{
         game::{GameID, GameFleetTravelMessage},
         player::{Player, PlayerID},
-        system::{System, SystemID, Coordinates, get_distance_between}
+        system::{System, SystemID, Coordinates, get_distance_between},
+        fleet::ship::{ShipGroup},
     },
     ws::protocol,
     AppState
 };
 use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
 const FLEET_COST: usize = 10;
@@ -24,25 +26,19 @@ const FLEET_COST: usize = 10;
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Clone)]
 pub struct Fleet{
     pub id: FleetID,
     pub system: SystemID,
     pub destination_system: Option<SystemID>,
-    pub destination_arrival_date: Option<DateTime<Utc>>,
+    pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
-    pub nb_ships: usize,
+    pub ship_groups: Vec<ShipGroup>,
 }
 
 #[derive(Deserialize)]
 pub struct FleetTravelRequest {
     pub destination_system_id: SystemID,
-}
-
-#[derive(Clone, Serialize)]
-pub struct FleetTravelData {
-    pub arrival_time: i64,
-    pub fleet: Fleet,
 }
 
 impl From<FleetID> for Uuid {
@@ -57,7 +53,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: row.try_get("player_id").map(PlayerID)?,
-            nb_ships: row.try_get::<i32, _>("nb_ships")? as usize,
+            ship_groups: vec![],
         })
     }
 }
@@ -90,41 +86,33 @@ impl Fleet {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FleetUnknown))
     }
 
-    pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Vec<Fleet> {
+    pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Vec<Fleet>> {
         sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
             .bind(Uuid::from(sid.clone()))
-            .fetch_all(db_pool).await.expect("Could not retrieve system stationed fleets")
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn create(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id, nb_ships) VALUES($1, $2, $3, $4)")
+    pub async fn create(f: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
             .bind(Uuid::from(f.id))
             .bind(Uuid::from(f.system))
             .bind(Uuid::from(f.player))
-            .bind(f.nb_ships as i32)
-            .execute(db_pool).await
+            .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn update(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, nb_ships=$4 WHERE id=$5")
+    pub async fn update(f: Fleet, db_pool: &PgPool) -> Result<u64> {
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3 WHERE id=$4")
             .bind(Uuid::from(f.system))
-            .bind(f.destination_system.map(|sid| Uuid::from(sid)))
+            .bind(f.destination_system.map(Uuid::from))
             .bind(f.destination_arrival_date)
-            .bind(f.nb_ships as i32)
             .bind(Uuid::from(f.id))
-            .execute(db_pool).await
+            .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove_defenders(sid: &SystemID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
-        sqlx::query("DELETE FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
-            .bind(Uuid::from(sid.clone()))
-            .execute(db_pool).await
-    }
-
-    pub async fn remove(f: Fleet, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn remove(f: &Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
             .bind(Uuid::from(f.id))
-            .execute(db_pool).await
+            .execute(tx).await.map_err(ServerError::from)
     }
 }
 
@@ -143,10 +131,12 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         system: system.id.clone(),
         destination_system: None,
         destination_arrival_date: None,
-        nb_ships: 1
+        ship_groups: vec![],
     };
-    Player::update(player.clone(), &state.db_pool).await?;
-    Fleet::create(fleet.clone(), &state.db_pool).await?;
+    let mut tx =state.db_pool.begin().await?;
+    Player::update(player.clone(), &mut tx).await?;
+    Fleet::create(fleet.clone(), &mut tx).await?;
+    tx.commit().await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
@@ -185,17 +175,14 @@ pub async fn travel(
     }
     fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(system.coordinates, destination_system.coordinates));
+    fleet.destination_arrival_date = Some(get_travel_time(system.coordinates, destination_system.coordinates).into());
     Fleet::update(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
-    Ok(HttpResponse::Ok().json(FleetTravelData{
-        arrival_time: fleet.destination_arrival_date.clone().unwrap().timestamp_millis(),
-        fleet,
-    }))
+    Ok(HttpResponse::Ok().json(fleet))
 }
 
 fn get_travel_time(from: Coordinates, to: Coordinates) -> DateTime<Utc> {

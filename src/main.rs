@@ -49,7 +49,9 @@ impl AppState {
     }
 
     pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
-        lobby::Lobby::remove(lobby.id, &self.db_pool).await?;
+        let mut tx =self.db_pool.begin().await?;
+        lobby::Lobby::remove(lobby.id, &mut tx).await?;
+        tx.commit().await?;
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
@@ -66,7 +68,9 @@ impl AppState {
             g
         };
         game.do_send(g::GameEndMessage{});
-        g::Game::remove(gid.clone(), &self.db_pool).await?;
+        let mut tx = self.db_pool.begin().await?;
+        g::Game::remove(gid.clone(), &mut tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 

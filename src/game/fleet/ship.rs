@@ -1,6 +1,6 @@
 use actix_web::{get, post, web, HttpResponse};
 use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, Connection, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -256,9 +256,10 @@ pub async fn add_ship_queue(
         finished_at: get_ship_construction_time(ship_model, json_data.quantity as u16, starts_at),
     };
 
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Player::update(player, &mut tx).await?;
     ShipQueue::create(ship_queue.clone(), &mut tx).await?;
+    tx.commit().await?;
 
     state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });
 

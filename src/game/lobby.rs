@@ -88,7 +88,7 @@ impl Lobby {
         let players = Player::find_by_lobby(self.id, db_pool).await?;
         self.owner = players.iter().next().unwrap().id.clone();
         let mut tx =db_pool.begin().await?;
-        Self::update(self.clone(), &mut tx).await;
+        Self::update(self.clone(), &mut tx).await?;
         tx.commit().await?;
         Ok(())
     }

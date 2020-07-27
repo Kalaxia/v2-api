@@ -62,6 +62,9 @@ pub struct ShipModel {
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum ShipModelCategory {
     Fighter,
+    Corvette,
+    Frigate,
+    Cruiser,
 }
 
 #[derive(Deserialize)]
@@ -365,6 +368,30 @@ pub fn get_ship_model(category: ShipModelCategory) -> ShipModel {
             damage: 15,
             hit_points: 10,
             precision: 60,
+        },
+        ShipModelCategory::Corvette => ShipModel{
+            category: ShipModelCategory::Corvette,
+            construction_time: 1500,
+            cost: 140,
+            damage: 40,
+            hit_points: 60,
+            precision: 45,
+        },
+        ShipModelCategory::Frigate => ShipModel{
+            category: ShipModelCategory::Frigate,
+            construction_time: 2000,
+            cost: 250,
+            damage: 25,
+            hit_points: 100,
+            precision: 50,
+        },
+        ShipModelCategory::Cruiser => ShipModel{
+            category: ShipModelCategory::Cruiser,
+            construction_time: 7000,
+            cost: 600,
+            damage: 80,
+            hit_points: 200,
+            precision: 45,
         }
     }
 }

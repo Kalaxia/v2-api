@@ -60,7 +60,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        let distance = (dest_coords.x - origin_coords.x).powi(2) + (dest_coords.y - origin_coords.y).powi(2);
+        let distance = get_distance_between(origin_coords, dest_coords);
         let range = 20f64.powi(2); // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
 
         if distance > range {
@@ -70,10 +70,14 @@ impl Fleet {
         Ok(())
     }
 
-    pub fn change_system(&mut self, system: &mut System) {
+    pub fn change_system(&mut self, system: &System) {
         self.system = system.id.clone();
         self.destination_system = None;
         self.destination_arrival_date = None;
+    }
+
+    pub fn can_fight(&self) -> bool {
+        !self.ship_groups.is_empty() && self.ship_groups.iter().any(|sg| sg.quantity > 0)
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -191,4 +195,108 @@ fn get_travel_time(from: Coordinates, to: Coordinates) -> DateTime<Utc> {
     let ms = distance / time_coeff;
 
     Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+    use crate::{
+        game::{
+            game::GameID,
+            fleet::{
+                ship::{ShipGroup, ShipGroupID, ShipModelCategory},
+            },
+            system::{System, SystemID, SystemKind,  Coordinates},
+            player::{PlayerID}
+        }
+    };
+
+    #[test]
+    fn test_can_fight() {
+        let mut fleet = get_fleet_mock();
+
+        assert!(fleet.can_fight());
+
+        fleet.ship_groups[0].quantity = 0;
+
+        assert!(!fleet.can_fight());
+        
+        fleet.ship_groups = vec![];
+
+        assert!(!fleet.can_fight());
+    }
+
+    #[test]
+    fn test_is_travelling() {
+        let mut fleet = get_fleet_mock();
+
+        assert!(!fleet.is_travelling());
+
+        fleet.destination_system = Some(SystemID(Uuid::new_v4()));
+
+        assert!(fleet.is_travelling());
+    }
+
+    #[test]
+    fn test_change_system() {
+        let mut fleet = get_fleet_mock();
+        let system = get_system_mock();
+
+        assert_ne!(fleet.system, system.id.clone());
+
+        fleet.change_system(&system);
+
+        assert_eq!(fleet.system, system.id);
+        assert_eq!(fleet.destination_system, None);
+        assert_eq!(fleet.destination_arrival_date, None);
+    }
+
+    #[test]
+    fn test_get_travel_time() {
+        let time = get_travel_time(
+            Coordinates{ x: 1.0, y: 2.0 },
+            Coordinates{ x: 4.0, y: 4.0 }
+        );
+        assert_eq!(10, time.signed_duration_since(Utc::now()).num_seconds());
+
+        let time = get_travel_time(
+            Coordinates{ x: 6.0, y: 2.0 },
+            Coordinates{ x: 4.0, y: 12.0 }
+        );
+        assert_eq!(26, time.signed_duration_since(Utc::now()).num_seconds());
+    }
+
+    fn get_fleet_mock() -> Fleet {
+        Fleet{
+            id: FleetID(Uuid::new_v4()),
+            player: PlayerID(Uuid::new_v4()),
+            system: SystemID(Uuid::new_v4()),
+            destination_system: None,
+            destination_arrival_date: None,
+            ship_groups: vec![
+                ShipGroup{
+                    id: ShipGroupID(Uuid::new_v4()),
+                    fleet: Some(FleetID(Uuid::new_v4())),
+                    system: None,
+                    category: ShipModelCategory::Fighter,
+                    quantity: 1,
+                }
+            ]
+        }
+    }
+
+    fn get_system_mock() -> System {
+        System {
+            id: SystemID(Uuid::new_v4()),
+            game: GameID(Uuid::new_v4()),
+            player: None,
+            kind: SystemKind::BaseSystem,
+            unreachable: false,
+            coordinates: Coordinates {
+                x: 0.0,
+                y: 0.0,
+            }
+        }
+    }
 }

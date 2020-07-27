@@ -168,20 +168,8 @@ impl System {
                     Fleet::update(fleet.clone(), db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
-                let mut ids = vec![];
-                // Conquest of the system by the arrived fleet
-                let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
-                    .into_iter()
-                    .map(|f| {
-                        ids.push(f.id.clone());
-                        (f.id.clone(), f)
-                    })
-                    .collect();
-                let ship_groups = ShipGroup::find_by_fleets(ids, db_pool).await?;
 
-                for sg in ship_groups.into_iter() {
-                    fleets.get_mut(&sg.fleet.unwrap()).unwrap().ship_groups.push(sg.clone()); 
-                }
+                let mut fleets = self.retrieve_orbiting_fleets(db_pool).await?;
 
                 if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets, db_pool).await? == true {
                     return self.conquer(fleet, db_pool).await;
@@ -191,6 +179,24 @@ impl System {
             },
             None => self.conquer(fleet, db_pool).await
         }
+    }
+
+    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let mut ids = vec![];
+        // Conquest of the system by the arrived fleet
+        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
+            .into_iter()
+            .map(|f| {
+                ids.push(f.id.clone());
+                (f.id.clone(), f)
+            })
+            .collect();
+        let ship_groups = ShipGroup::find_by_fleets(ids, db_pool).await?;
+
+        for sg in ship_groups.into_iter() {
+            fleets.get_mut(&sg.fleet.unwrap()).unwrap().ship_groups.push(sg.clone()); 
+        }
+        Ok(fleets)
     }
 
     pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {

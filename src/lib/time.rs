@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-#[derive(Clone, Copy, Debug, serde::Serialize, sqlx::Type)]
+#[derive(Clone, Copy, Debug, serde::Serialize, sqlx::Type, PartialEq)]
 #[serde(into = "i64")]
 #[sqlx(transparent)]
 pub struct Time(pub DateTime<Utc>);

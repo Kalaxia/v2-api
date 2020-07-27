@@ -208,10 +208,8 @@ impl GameServer {
         }
         
         ShipQueue::remove(ship_queue.id, &mut tx).await?;
-        println!("Ship queue removed");
 
         tx.commit().await?;
-        println!("Transaction success");
 
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         clients.get(&player.id).unwrap().do_send(protocol::Message::new(

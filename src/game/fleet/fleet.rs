@@ -21,8 +21,6 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
-const FLEET_COST: usize = 10;
-
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
 
@@ -123,22 +121,19 @@ impl Fleet {
 #[post("/")]
 pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
     let system = System::find(info.1, &state.db_pool).await?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await?;
     
-    if system.player != Some(player.id) {
+    if system.player != Some(claims.pid) {
         return Err(InternalError::AccessDenied)?;
     }
-    player.spend(FLEET_COST)?;
     let fleet = Fleet{
         id: FleetID(Uuid::new_v4()),
-        player: player.id.clone(),
+        player: claims.pid.clone(),
         system: system.id.clone(),
         destination_system: None,
         destination_arrival_date: None,
         ship_groups: vec![],
     };
-    let mut tx =state.db_pool.begin().await?;
-    Player::update(player.clone(), &mut tx).await?;
+    let mut tx = state.db_pool.begin().await?;
     Fleet::create(fleet.clone(), &mut tx).await?;
     tx.commit().await?;
 
@@ -147,7 +142,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     game.do_send(protocol::Message::new(
         protocol::Action::FleetCreated,
         fleet.clone(),
-        Some(player.id.clone()),
+        Some(claims.pid.clone()),
     ));
     Ok(HttpResponse::Created().json(fleet))
 }
@@ -159,16 +154,18 @@ pub async fn travel(
     json_data: web::Json<FleetTravelRequest>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let (ds, s, f, p) = futures::join!(
+    let (ds, s, f, sg, p) = futures::join!(
         System::find(json_data.destination_system_id, &state.db_pool),
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
+        ShipGroup::find_by_fleet(info.2, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     
     let destination_system = ds?;
     let system = s?;
     let mut fleet = f?;
+    fleet.ship_groups = sg?;
     let player = p?;
 
     if fleet.player != player.id.clone() {
@@ -176,6 +173,9 @@ pub async fn travel(
     }
     if fleet.destination_system != None {
         return Err(InternalError::FleetAlreadyTravelling)?;
+    }
+    if !fleet.can_fight() {
+        return Err(InternalError::FleetEmpty)?;
     }
     fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());

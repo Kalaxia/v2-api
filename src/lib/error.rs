@@ -78,7 +78,7 @@ impl ResponseError for ServerError {
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
-                Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
+                Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | FleetEmpty | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
                 NotFound | FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
@@ -121,6 +121,8 @@ pub enum InternalError {
     FleetInvalidDestination,
     /// A player wants to move a fleet which is already on a journey
     FleetAlreadyTravelling,
+    /// A player tried to move an empty fleet
+    FleetEmpty,
     /// A player tried to take a username already taken by another in the same lobby
     PlayerUsernameAlreadyTaken,
     /// A Claims was requested by the route but none were given

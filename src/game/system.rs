@@ -12,7 +12,10 @@ use crate::{
     game::{
         faction::{FactionID},
         fleet::combat,
-        fleet::fleet::{FleetID, Fleet},
+        fleet::{
+            fleet::{FleetID, Fleet},
+            ship::{ShipGroup},
+        },
         game::{GameID},
         player::{PlayerID, Player}
     },
@@ -23,7 +26,7 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQuery
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct SystemID(pub Uuid);
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -165,11 +168,9 @@ impl System {
                     Fleet::update(fleet.clone(), db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
-                // Conquest of the system by the arrived fleet
-                let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await
-                    .into_iter()
-                    .map(|f| (f.id.clone(), f))
-                    .collect();
+
+                let mut fleets = self.retrieve_orbiting_fleets(db_pool).await?;
+
                 if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets, db_pool).await? == true {
                     return self.conquer(fleet, db_pool).await;
                 }
@@ -180,8 +181,25 @@ impl System {
         }
     }
 
+    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let mut ids = vec![];
+        // Conquest of the system by the arrived fleet
+        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
+            .into_iter()
+            .map(|f| {
+                ids.push(f.id.clone());
+                (f.id.clone(), f)
+            })
+            .collect();
+        let ship_groups = ShipGroup::find_by_fleets(ids, db_pool).await?;
+
+        for sg in ship_groups.into_iter() {
+            fleets.get_mut(&sg.fleet.unwrap()).unwrap().ship_groups.push(sg.clone()); 
+        }
+        Ok(fleets)
+    }
+
     pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
-        Fleet::remove_defenders(&self.id, db_pool).await?;
         fleet.change_system(self);
         Fleet::update(fleet.clone(), db_pool).await?;
         self.player = Some(fleet.player.clone());
@@ -350,8 +368,8 @@ pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Res
     let mut rng = thread_rng();
     let mut faction_cell = HashMap::new();
     let mut taken : [[bool;GRID_SIZE];GRID_SIZE] = [[false;GRID_SIZE];GRID_SIZE];
-    let mut min : Coordinates = Coordinates { x:f64::MAX, y:f64::MAX };
-    let mut max : Coordinates = Coordinates { x:f64::MIN, y:f64::MIN };
+    let mut min : Coordinates = Coordinates { x: std::f64::MAX, y: std::f64::MAX };
+    let mut max : Coordinates = Coordinates { x: std::f64::MIN, y: std::f64::MIN };
 
     let grid_range = Uniform::from(0..GRID_SIZE);
 
@@ -408,8 +426,6 @@ async fn find_place<'a>(
 )
     -> Option<& 'a mut System>
 {
-    println!("finding place in ({}; {})-({}; {})", xmin, ymin, xmax, ymax);
-
     let mut rng = thread_rng();
     let final_x: f64 = rng.gen_range(xmin, xmax);
     let final_y: f64 = rng.gen_range(ymin, ymax);

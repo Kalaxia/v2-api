@@ -78,8 +78,8 @@ impl ResponseError for ServerError {
             ServerError::InternalError(e) => match e {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
-                AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
-                FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
+                Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | FleetEmpty | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
+                NotFound | FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -97,6 +97,10 @@ impl ResponseError for ServerError {
 pub enum InternalError {
     /// A player tried to perform a restricted operation
     AccessDenied,
+    /// A required data does not exist
+    NotFound,
+    /// The requested operation conflicts with data
+    Conflict,
     /// We couldn't map a FactionID to an existing faction
     FactionUnknown,
     /// We couldn't map a PlayerID to an existing player
@@ -117,6 +121,8 @@ pub enum InternalError {
     FleetInvalidDestination,
     /// A player wants to move a fleet which is already on a journey
     FleetAlreadyTravelling,
+    /// A player tried to move an empty fleet
+    FleetEmpty,
     /// A player tried to take a username already taken by another in the same lobby
     PlayerUsernameAlreadyTaken,
     /// A Claims was requested by the route but none were given

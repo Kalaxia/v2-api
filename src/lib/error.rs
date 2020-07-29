@@ -1,9 +1,10 @@
 use jsonwebtoken::errors::{Error as JwtError};
-use actix_web::{http::StatusCode, Error as ActixWebError, ResponseError};
+use actix_web::{http::StatusCode, Error as ActixWebError, ResponseError, HttpResponse};
 use actix_web_actors::ws::ProtocolError;
 use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use sqlx_core::{Error as SqlxError};
+use serde::Serialize;
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -11,14 +12,33 @@ use sqlx_core::{Error as SqlxError};
 /// Please, try tu use this type of error instead of specific ones at least at the front-end of the
 /// server, as it will be updated to handle more error cases as we add more libraries or more
 /// crate-specific errors.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
 pub enum ServerError {
-    ActixWebError(ActixWebError),
-    ActixWSError(ProtocolError),
-    JwtError(JwtError),
-    InternalError(InternalError),
-    MailboxError(MailboxError),
-    SqlxError(SqlxError),
+    ActixWebError(
+        #[serde(skip_serializing)]
+        ActixWebError
+    ),
+    ActixWSError(
+        #[serde(skip_serializing)]
+        ProtocolError
+    ),
+    JwtError(
+        #[serde(skip_serializing)]
+        JwtError
+    ),
+    InternalError(
+        #[serde(rename(serialize = "reason"))]
+        InternalError
+    ),
+    MailboxError(
+        #[serde(skip_serializing)]
+        MailboxError
+    ),
+    SqlxError(
+        #[serde(skip_serializing)]
+        SqlxError
+    ),
 }
 
 impl ServerError {
@@ -90,10 +110,15 @@ impl ResponseError for ServerError {
             },
         }
     }
+
+    fn error_response(&self) -> HttpResponse {
+        HttpResponse::build(self.status_code())
+            .json(self)
+    }
 }
 
 /// This enum represent all kinds of errors this specific server can encounter.
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum InternalError {
     /// A player tried to perform a restricted operation
     AccessDenied,

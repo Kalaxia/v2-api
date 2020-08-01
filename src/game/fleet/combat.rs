@@ -199,6 +199,17 @@ mod tests {
         assert_eq!(pick_target_ship_group(&fleet), 1);
     }
 
+    #[test]
+    fn test_fire() {
+        let attacker = get_ship_group_mock(ShipModelCategory::Corvette, 20);
+        let defender = get_ship_group_mock(ShipModelCategory::Fighter, 100);
+
+        let remaining_ships = fire(&attacker, &defender);
+
+        assert!(remaining_ships > 20);
+        assert!(remaining_ships < 80);
+    }
+
     fn get_fleet_mock() -> Fleet {
         Fleet{
             id: FleetID(Uuid::new_v4()),

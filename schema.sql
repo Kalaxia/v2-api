@@ -83,4 +83,4 @@ ALTER TABLE game__factions ADD CONSTRAINT faction_fkey FOREIGN KEY (faction_id) 
 ALTER TABLE game__factions ADD CONSTRAINT game_fkey FOREIGN KEY (game_id) REFERENCES game__games (id) ON DELETE CASCADE;
 ALTER TABLE system__ship_queues ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 
-INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469888),(2,'Valkar',4227280),(3,'Adranite',-803201024);
+INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469888),(2,'Valkar',1082183680),(3,'Adranite',-803201024);

@@ -353,6 +353,16 @@ pub async fn assign_ships(
     Ok(HttpResponse::NoContent().finish())
 }
 
+#[get("/ship-models/")]
+pub async fn get_ship_models() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(vec![
+        get_ship_model(ShipModelCategory::Fighter),
+        get_ship_model(ShipModelCategory::Corvette),
+        get_ship_model(ShipModelCategory::Frigate),
+        get_ship_model(ShipModelCategory::Cruiser),
+    ]))
+}
+
 fn get_ship_construction_time(model: ShipModel, quantity: u16, from: Time) -> Time {
     let datetime: DateTime<Utc> = from.into();
     let ms = quantity * model.construction_time;

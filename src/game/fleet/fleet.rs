@@ -21,6 +21,8 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
+pub const FLEET_RANGE: f64 = 20.0; // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
+
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
 
@@ -59,9 +61,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
         let distance = get_distance_between(origin_coords, dest_coords);
-        let range = 20f64.powi(2); // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
 
-        if distance > range {
+        if distance > FLEET_RANGE.powi(2) {
             return Err(InternalError::FleetInvalidDestination.into());
         }
 

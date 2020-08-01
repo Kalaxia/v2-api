@@ -156,6 +156,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(player::get_current_player)
             .service(player::update_current_player)
         )
+        .service(g::get_game_constants)
         .service(ship::get_ship_models)
     )
     .service(player::login)

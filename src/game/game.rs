@@ -16,7 +16,7 @@ use crate::{
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID},
+            fleet::{Fleet, FleetID, FLEET_RANGE},
             ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
         },
         lobby::Lobby,
@@ -454,4 +454,19 @@ pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Pa
         state.clear_game(game.id.clone()).await?;
     }
     Ok(HttpResponse::NoContent().finish())
+}
+
+#[get("/constants/")]
+pub async fn get_game_constants() -> Result<HttpResponse> {
+    #[derive(Serialize, Clone)]
+    pub struct GameConstants {
+        fleet_range: f64,
+        victory_points_per_minute: u16,
+        victory_points: u16,
+    }
+    Ok(HttpResponse::Ok().json(GameConstants{
+        fleet_range: FLEET_RANGE,
+        victory_points_per_minute: VICTORY_POINTS_PER_MINUTE,
+        victory_points: VICTORY_POINTS,
+    }))
 }

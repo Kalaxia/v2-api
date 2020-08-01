@@ -21,7 +21,7 @@ use crate::{
         },
         lobby::Lobby,
         player::{PlayerID, Player},
-        system::{System, assign_systems, generate_systems}
+        system::system::{System, assign_systems, generate_systems}
     },
     ws::{ client::ClientSession, protocol},
     AppState,

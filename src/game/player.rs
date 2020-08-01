@@ -8,7 +8,7 @@ use crate::{
     game::game::{GameID},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
-    game::system::SystemID,
+    game::system::system::SystemID,
     lib::{Result, error::{InternalError, ServerError}, auth},
     ws::protocol,
 };

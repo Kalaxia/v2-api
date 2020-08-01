@@ -19,7 +19,8 @@ use game::{
     faction,
     player,
     lobby,
-    system,
+    system::building,
+    system::system,
 };
 use lib::Result;
 
@@ -156,6 +157,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(player::get_current_player)
             .service(player::update_current_player)
         )
+        .service(building::get_buildings_data)
         .service(g::get_game_constants)
         .service(ship::get_ship_models)
     )

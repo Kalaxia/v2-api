@@ -11,7 +11,7 @@ use crate::{
     game::{
         game::{GameID, GameFleetTravelMessage},
         player::{Player, PlayerID},
-        system::{System, SystemID, Coordinates, get_distance_between},
+        system::system::{System, SystemID, Coordinates, get_distance_between},
         fleet::ship::{ShipGroup},
     },
     ws::protocol,
@@ -208,7 +208,7 @@ mod tests {
             fleet::{
                 ship::{ShipGroup, ShipGroupID, ShipModelCategory},
             },
-            system::{System, SystemID, SystemKind,  Coordinates},
+            system::system::{System, SystemID, SystemKind,  Coordinates},
             player::{PlayerID}
         }
     };

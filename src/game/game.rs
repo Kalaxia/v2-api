@@ -43,8 +43,8 @@ pub struct GameServer {
     clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
 }
 
-pub const VICTORY_POINTS: u16 = 250;
-pub const VICTORY_POINTS_PER_MINUTE: u16 = 15;
+pub const VICTORY_POINTS: u16 = 300;
+pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
 impl From<GameID> for Uuid {
     fn from(gid: GameID) -> Self { gid.0 }

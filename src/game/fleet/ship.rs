@@ -56,7 +56,7 @@ pub struct ShipModel {
     pub precision: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, sqlx::Type)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
@@ -353,6 +353,16 @@ pub async fn assign_ships(
     Ok(HttpResponse::NoContent().finish())
 }
 
+#[get("/ship-models/")]
+pub async fn get_ship_models() -> Result<HttpResponse> {
+    Ok(HttpResponse::Ok().json(vec![
+        get_ship_model(ShipModelCategory::Fighter),
+        get_ship_model(ShipModelCategory::Corvette),
+        get_ship_model(ShipModelCategory::Frigate),
+        get_ship_model(ShipModelCategory::Cruiser),
+    ]))
+}
+
 fn get_ship_construction_time(model: ShipModel, quantity: u16, from: Time) -> Time {
     let datetime: DateTime<Utc> = from.into();
     let ms = quantity * model.construction_time;
@@ -393,5 +403,23 @@ pub fn get_ship_model(category: ShipModelCategory) -> ShipModel {
             hit_points: 200,
             precision: 45,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_ship_model() {
+        let fighter = get_ship_model(ShipModelCategory::Fighter);
+
+        assert_eq!(fighter.category, ShipModelCategory::Fighter);
+
+        let cruiser = get_ship_model(ShipModelCategory::Cruiser);
+
+        assert_eq!(cruiser.category, ShipModelCategory::Cruiser);
+
+        assert_ne!(fighter.cost, cruiser.cost);
     }
 }

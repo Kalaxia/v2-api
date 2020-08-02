@@ -87,6 +87,12 @@ impl Building {
             .fetch_one(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM map__system_buildings WHERE system_id = $1")
+            .bind(Uuid::from(sid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
     pub async fn create(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(b.id))
@@ -104,6 +110,13 @@ impl Building {
             .bind(b.status)
             .execute(tx).await.map_err(ServerError::from)
     }
+}
+
+#[get("/")]
+pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>)
+    -> Result<HttpResponse>
+{
+    Ok(HttpResponse::Ok().json(Building::find_by_system(info.1, &state.db_pool).await?))
 }
 
 #[post("/")]

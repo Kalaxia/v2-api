@@ -142,6 +142,7 @@ fn config(cfg: &mut web::ServiceConfig) {
                 )
                 .service(
                     web::scope("/{system_id}/buildings")
+                    .service(building::get_system_buildings)
                     .service(building::create_building)
                 )
             )

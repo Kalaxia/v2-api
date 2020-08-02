@@ -140,6 +140,10 @@ fn config(cfg: &mut web::ServiceConfig) {
                     .service(ship::add_ship_queue)
                     .service(ship::get_ship_queues)
                 )
+                .service(
+                    web::scope("/{system_id}/buildings")
+                    .service(building::create_building)
+                )
             )
         )
         .service(

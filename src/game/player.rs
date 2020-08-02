@@ -93,6 +93,12 @@ impl Player {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
+    pub async fn find_by_faction(fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE faction_id = $1")
+            .bind(i32::from(fid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+    
     pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
             .bind(Uuid::from(gid))

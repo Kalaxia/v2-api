@@ -3,6 +3,7 @@ DROP TABLE IF EXISTS fleet__ship_groups CASCADE;
 DROP TABLE IF EXISTS fleet__fleets CASCADE;
 DROP TABLE IF EXISTS system__ship_queues CASCADE;
 DROP TABLE IF EXISTS map__systems CASCADE;
+DROP TABLE IF EXISTS map__system_buildings CASCADE;
 DROP TABLE IF EXISTS game__games CASCADE;
 DROP TABLE IF EXISTS game__factions CASCADE;
 DROP TABLE IF EXISTS player__players CASCADE;
@@ -44,6 +45,14 @@ CREATE TABLE IF NOT EXISTS map__systems(
     coord_y DOUBLE PRECISION NOT NULL,
 	is_unreachable BOOLEAN NOT NULL
 );
+CREATE TABLE IF NOT EXISTS map__system_buildings(
+    id UUID PRIMARY KEY,
+    system_id UUID NOT NULL,
+    status VARCHAR(25) NOT NULL,
+    kind VARCHAR(25) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    built_at TIMESTAMPTZ NOT NULL
+)
 CREATE TABLE IF NOT EXISTS fleet__fleets(
 	id UUID PRIMARY KEY,
 	system_id UUID NOT NULL,
@@ -74,6 +83,7 @@ ALTER TABLE player__players ADD CONSTRAINT lobby_fkey FOREIGN KEY (lobby_id) REF
 ALTER TABLE lobby__lobbies ADD CONSTRAINT owner_fkey FOREIGN KEY (owner_id) REFERENCES player__players (id) ON DELETE SET NULL;
 ALTER TABLE map__systems ADD CONSTRAINT game_fkey FOREIGN KEY (game_id) REFERENCES game__games (id) ON DELETE CASCADE;
 ALTER TABLE map__systems ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE SET NULL;
+ALTER TABLE map__system_buildings ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 ALTER TABLE fleet__fleets ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 ALTER TABLE fleet__fleets ADD CONSTRAINT destination_fkey FOREIGN KEY (destination_id) REFERENCES map__systems (id) ON DELETE SET NULL;
 ALTER TABLE fleet__fleets ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;

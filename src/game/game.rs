@@ -21,13 +21,19 @@ use crate::{
         },
         lobby::Lobby,
         player::{PlayerID, Player},
-        system::system::{System, assign_systems, generate_systems}
+        system::{
+            building::{Building, BuildingID, BuildingStatus},
+            system::{System, assign_systems, generate_systems}
+        },
     },
     ws::{ client::ClientSession, protocol},
     AppState,
 };
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
+
+pub const VICTORY_POINTS: u16 = 300;
+pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct GameID(pub Uuid);
@@ -42,9 +48,6 @@ pub struct GameServer {
     state: web::Data<AppState>,
     clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
 }
-
-pub const VICTORY_POINTS: u16 = 300;
-pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
 impl From<GameID> for Uuid {
     fn from(gid: GameID) -> Self { gid.0 }
@@ -122,6 +125,17 @@ impl GameServer {
         }
     }
 
+    async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
+        let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        for (pid, c) in clients.iter() {
+            if ids.contains(&pid) {
+                c.do_send(message.clone());
+            }
+        }
+        Ok(())
+    }
+
     async fn produce_income(&mut self) -> Result<()> {
         let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
@@ -180,6 +194,25 @@ impl GameServer {
         
         self.ws_broadcast(result.into());
         
+        Ok(())
+    }
+
+    async fn process_building_construction(&mut self, bid: BuildingID) -> Result<()> {
+        let mut building = Building::find(bid, &self.state.db_pool).await?;
+        let player = Player::find_system_owner(building.system.clone(), &self.state.db_pool).await?;
+
+        building.status = BuildingStatus::Operational;
+
+        let mut tx = self.state.db_pool.begin().await?;
+        Building::update(building.clone(), &mut tx).await?;
+        tx.commit().await?;
+
+        self.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
+            protocol::Action::BuildingConstructed,
+            building.clone(),
+            None,
+        )).await?;
+
         Ok(())
     }
 
@@ -352,6 +385,12 @@ pub struct GameShipQueueMessage{
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
+pub struct GameBuildingConstructionMessage{
+    pub building: Building
+}
+
+#[derive(actix::Message)]
+#[rtype(result="()")]
 pub struct GameEndMessage{}
 
 impl Handler<GameRemovePlayerMessage> for GameServer {
@@ -391,6 +430,20 @@ impl Handler<GameShipQueueMessage> for GameServer {
             let res = block_on(this.process_ship_queue_production(msg.ship_queue.id.clone()));
             if res.is_err() {
                 println!("Ship queue production failed : {:?}", res.err());
+            }
+        });
+    }
+}
+
+impl Handler<GameBuildingConstructionMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameBuildingConstructionMessage, ctx: &mut Self::Context) -> Self::Result {
+        let datetime: DateTime<Utc> = msg.building.built_at.into();
+        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
+            let res = block_on(this.process_building_construction(msg.building.id.clone()));
+            if res.is_err() {
+                println!("Building construction failed : {:?}", res.err());
             }
         });
     }

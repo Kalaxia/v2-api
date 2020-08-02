@@ -13,8 +13,9 @@ use crate::{
         time::Time
     },
     game::{
-        game::GameID,
-        system::system::{SystemID}
+        game::{GameID, GameBuildingConstructionMessage},
+        system::system::{System, SystemID},
+        player::Player
     }
 };
 
@@ -57,7 +58,7 @@ pub struct BuildingData {
     pub construction_time: u16,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct BuildingRequest {
     pub kind: BuildingKind,
 }
@@ -80,7 +81,13 @@ impl<'a> FromRow<'a, PgRow<'a>> for Building {
 }
 
 impl Building {
-    pub async fn create(b: &Building, db_pool: &PgPool) -> Result<u64> {
+    pub async fn find(bid: BuildingID, db_pool: &PgPool) -> Result<Self> {
+        sqlx::query_as("SELECT * FROM map__system_buildings WHERE id = $1")
+            .bind(Uuid::from(bid))
+            .fetch_one(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn create(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(b.id))
             .bind(Uuid::from(b.system))
@@ -88,18 +95,35 @@ impl Building {
             .bind(b.status)
             .bind(b.created_at)
             .bind(b.built_at)
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(tx).await.map_err(ServerError::from)
+    }
+
+    pub async fn update(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+        sqlx::query("UPDATE map__system_buildings SET status = $2 WHERE id = $1")
+            .bind(Uuid::from(b.id))
+            .bind(b.status)
+            .execute(tx).await.map_err(ServerError::from)
     }
 }
 
+#[post("/")]
 pub async fn create_building(
     state: web::Data<AppState>,
     info: web::Path<(GameID,SystemID)>,
-    data: web::Json<BuildingData>,
+    data: web::Json<BuildingRequest>,
     claims: Claims
 )
     -> Result<HttpResponse>
 {
+    let system = System::find(info.1.clone(), &state.db_pool).await?;
+    let mut player = Player::find(claims.pid, &state.db_pool).await?;
+
+    if system.player != Some(player.id) {
+        return Err(InternalError::AccessDenied)?;
+    }
+    let building_data = get_building_data(data.kind);
+    player.spend(building_data.cost as usize)?;
+
     let now = Time::now();
     let building = Building{
         id: BuildingID(Uuid::new_v4()),
@@ -107,11 +131,15 @@ pub async fn create_building(
         kind: data.kind,
         status: BuildingStatus::Constructing,
         created_at: now.clone(),
-        built_at: get_construction_time(get_building_data(data.kind), now),
+        built_at: get_construction_time(building_data, now),
     };
 
-    Building::create(&building, &state.db_pool).await?;
+    let mut tx = state.db_pool.begin().await?;
+    Player::update(player, &mut tx).await?;
+    Building::create(building.clone(), &mut tx).await?;
+    tx.commit().await?;
 
+    state.games().get(&info.0).unwrap().do_send(GameBuildingConstructionMessage{ building: building.clone() });
 
     Ok(HttpResponse::Created().json(building))
 }
@@ -146,8 +174,8 @@ pub fn get_building_data(kind: BuildingKind) -> BuildingData {
 }
 
 fn get_construction_time(data: BuildingData, from: Time) -> Time {
-    Time(from
-        .into::<DateTime<Utc>>()
+    let time: DateTime<Utc> = from.into();
+    Time(time
         .checked_add_signed(Duration::seconds(data.construction_time as i64))
         .expect("Could not add construction time")
     )

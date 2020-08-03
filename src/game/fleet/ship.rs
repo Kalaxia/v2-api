@@ -90,7 +90,7 @@ impl<'a, T : ShipOwner> FromRow<'a, PgRow<'a>> for ShipGroup<T> {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(ShipGroup {
             id: row.try_get("id").map(ShipGroupID)?,
-            owner_id: row.try_get("system_id").map(T::ID::from)?,
+            owner_id: row.try_get("owner_id").map(T::ID::from)?,
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
         })

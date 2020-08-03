@@ -1,3 +1,4 @@
+use std::convert::From;
 use actix_web::{get, post, web, HttpResponse};
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
@@ -20,11 +21,15 @@ use crate::{
     AppState,
 };
 
+pub trait ShipOwner {
+    const SHIP_TABLE_NAME : & 'static str;
+    type ID : Into<Uuid> + From<Uuid> + Sync + Send + Clone;
+}
+
 #[derive(Serialize, Clone)]
-pub struct ShipGroup {
+pub struct ShipGroup<T : ShipOwner> {
     pub id: ShipGroupID,
-    pub system: Option<SystemID>,
-    pub fleet: Option<FleetID>,
+    pub owner_id: T::ID,
     pub category: ShipModelCategory,
     pub quantity: u16,
 }
@@ -81,12 +86,11 @@ impl From<ShipQueueID> for Uuid {
     fn from(sqid: ShipQueueID) -> Self { sqid.0 }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for ShipGroup {
+impl<'a, T : ShipOwner> FromRow<'a, PgRow<'a>> for ShipGroup<T> {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(ShipGroup {
             id: row.try_get("id").map(ShipGroupID)?,
-            system: row.try_get("system_id").ok().map(SystemID),
-            fleet: row.try_get("fleet_id").ok().map(FleetID),
+            owner_id: row.try_get("system_id").map(T::ID::from)?,
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
         })
@@ -107,65 +111,69 @@ impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
     }
 }
 
-impl ShipGroup {
+impl ShipGroup<System> {
+
+    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM system__ship_groups WHERE owner_id = $1")
+            .bind(Uuid::from(sid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn find_by_system_and_category(sid: SystemID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
+        sqlx::query_as("SELECT * FROM system_ship_groups WHERE owner_id = $1 AND category = $2")
+            .bind(Uuid::from(sid))
+            .bind(category)
+            .fetch_optional(db_pool).await.map_err(ServerError::from)
+    }
+}
+
+impl ShipGroup<Fleet> {
     pub async fn find_by_fleets(ids: Vec<FleetID>, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = any($1)")
+        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE owner_id = any($1)")
             .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn find_by_fleet(fid: FleetID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = $1")
+        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE owner_id = $1")
             .bind(Uuid::from(fid))
-            .fetch_all(db_pool).await.map_err(ServerError::from)
-    }
-
-    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE system_id = $1")
-            .bind(Uuid::from(sid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn find_by_fleet_and_category(fid: FleetID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = $1 AND category = $2")
+        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE owner_id = $1 AND category = $2")
             .bind(Uuid::from(fid))
             .bind(category)
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
-
-    pub async fn find_by_system_and_category(sid: SystemID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE system_id = $1 AND category = $2")
-            .bind(Uuid::from(sid))
-            .bind(category)
-            .fetch_optional(db_pool).await.map_err(ServerError::from)
-    }
     
-    pub async fn create<E>(sg: ShipGroup, exec: &mut E) -> Result<u64>
+}
+
+impl<T : ShipOwner> ShipGroup<T> {
+    pub async fn create<E>(sg: Self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO fleet__ship_groups (id, system_id, fleet_id, category, quantity) VALUES($1, $2, $3, $4, $5)")
+        sqlx::query(format!("INSERT INTO  {}  (id, owner_id, category, quantity) VALUES($1, $2, $3, $4)", T::SHIP_TABLE_NAME).as_ref())
             .bind(Uuid::from(sg.id))
-            .bind(sg.system.map(Uuid::from))
-            .bind(sg.fleet.map(Uuid::from))
+            .bind(sg.owner_id.into())
             .bind(sg.category)
             .bind(sg.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(sg: &ShipGroup, exec: &mut E) -> Result<u64>
+    pub async fn update<E>(sg: &Self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__ship_groups SET system_id = $2, fleet_id = $3, category = $4, quantity = $5 WHERE id = $1")
+        sqlx::query(format!("UPDATE  {}  SET owner_id = $2, category = $3, quantity = $4 WHERE id = $1", T::SHIP_TABLE_NAME).as_ref())
             .bind(Uuid::from(sg.id))
-            .bind(sg.system.map(Uuid::from))
-            .bind(sg.fleet.map(Uuid::from))
+            .bind(sg.owner_id.clone().into())
             .bind(sg.category)
             .bind(sg.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
     
     pub async fn remove(sgid: ShipGroupID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("DELETE FROM fleet__ship_groups WHERE id = $1")
+        sqlx::query(format!("DELETE FROM  {}  WHERE id = $1", T::SHIP_TABLE_NAME).as_ref())
             .bind(Uuid::from(sgid))
             .execute(tx).await.map_err(ServerError::from)
     }
@@ -328,10 +336,9 @@ pub async fn assign_ships(
     let mut tx = state.db_pool.begin().await?;
     
     if fleet_ship_group.is_none() {
-        ShipGroup::create(ShipGroup{
+        ShipGroup::create(ShipGroup::<Fleet>{
             id: ShipGroupID(Uuid::new_v4()),
-            system: None,
-            fleet: Some(fleet.id.clone()),
+            owner_id: fleet.id.clone(),
             quantity: json_data.quantity as u16,
             category: json_data.category.clone(),
         }, &mut tx).await?;
@@ -344,10 +351,10 @@ pub async fn assign_ships(
     let mut sg = system_ship_group.unwrap();
     let quantity = available_quantity as i32 - json_data.quantity as i32;
     if quantity < 1 {
-        ShipGroup::remove(sg.id, &mut tx).await?;
+        ShipGroup::<System>::remove(sg.id, &mut tx).await?;
     } else {
         sg.quantity = quantity as u16;
-        ShipGroup::update(&sg, &mut tx).await?;
+        ShipGroup::<System>::update(&sg, &mut tx).await?;
     }
     tx.commit().await?;
     Ok(HttpResponse::NoContent().finish())

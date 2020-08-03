@@ -12,7 +12,7 @@ use crate::{
         game::{GameID, GameFleetTravelMessage},
         player::{Player, PlayerID},
         system::{System, SystemID, Coordinates, get_distance_between},
-        fleet::ship::{ShipGroup},
+        fleet::ship::{ShipOwner, ShipGroup},
     },
     ws::protocol,
     AppState
@@ -33,7 +33,12 @@ pub struct Fleet{
     pub destination_system: Option<SystemID>,
     pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
-    pub ship_groups: Vec<ShipGroup>,
+    pub ship_groups: Vec<ShipGroup<Self>>,
+}
+
+impl ShipOwner for Fleet {
+    const SHIP_TABLE_NAME : & 'static str = "fleet__ship_groups";
+    type ID = FleetID;
 }
 
 #[derive(Deserialize)]
@@ -43,6 +48,10 @@ pub struct FleetTravelRequest {
 
 impl From<FleetID> for Uuid {
     fn from(fid: FleetID) -> Self { fid.0 }
+}
+
+impl From<Uuid> for FleetID {
+    fn from(uuid : Uuid) -> Self { Self(uuid) }
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Fleet {

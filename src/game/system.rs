@@ -14,7 +14,7 @@ use crate::{
         fleet::combat,
         fleet::{
             fleet::{FleetID, Fleet},
-            ship::{ShipGroup},
+            ship::{ShipOwner, ShipGroup},
         },
         game::{GameID},
         player::{PlayerID, Player}
@@ -37,6 +37,11 @@ pub struct System {
     pub kind: SystemKind,
     pub coordinates: Coordinates,
     pub unreachable: bool
+}
+
+impl ShipOwner for System {
+    const SHIP_TABLE_NAME : & 'static str = "system__ship_groups";
+    type ID = SystemID;
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -97,6 +102,10 @@ impl Coordinates {
 
 impl From<SystemID> for Uuid {
     fn from(sid: SystemID) -> Self { sid.0 }
+}
+
+impl From<Uuid> for SystemID {
+    fn from(uuid: Uuid) -> Self { Self(uuid) }
 }
 
 impl From<SystemKind> for i16 {
@@ -194,7 +203,7 @@ impl System {
         let ship_groups = ShipGroup::find_by_fleets(ids, db_pool).await?;
 
         for sg in ship_groups.into_iter() {
-            fleets.get_mut(&sg.fleet.unwrap()).unwrap().ship_groups.push(sg.clone()); 
+            fleets.get_mut(&sg.owner_id).unwrap().ship_groups.push(sg.clone()); 
         }
         Ok(fleets)
     }

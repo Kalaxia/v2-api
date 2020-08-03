@@ -3,7 +3,7 @@ use crate::{
     lib::Result,
     game::{
         fleet::{
-            ship::{get_ship_model, ShipGroup},
+            ship::{ShipOwner, get_ship_model, ShipGroup},
             fleet::{Fleet, FleetID},
         },
         system::{System}
@@ -77,7 +77,7 @@ fn pick_target_fleet(fleets: &HashMap<FleetID, Fleet>) -> Option<FleetID> {
 }
 
 fn pick_target_ship_group(fleet: &Fleet) -> usize {
-    let fighting_groups: Vec<(usize, &ShipGroup)> = fleet.ship_groups
+    let fighting_groups: Vec<(usize, &ShipGroup<Fleet>)> = fleet.ship_groups
         .iter()
         .enumerate()
         .filter(|(_, sg)| sg.quantity > 0)
@@ -89,7 +89,7 @@ fn pick_target_ship_group(fleet: &Fleet) -> usize {
     fighting_groups[idx].0
 }
 
-fn fire(attacker: &ShipGroup, defender: &ShipGroup) -> u16 {
+fn fire<T : ShipOwner, U : ShipOwner>(attacker: &ShipGroup<T>, defender: &ShipGroup<U>) -> u16 {
     let attacker_model = get_ship_model(attacker.category.clone());
     let defender_model = get_ship_model(defender.category.clone());
 
@@ -126,7 +126,7 @@ async fn update_fleet(fleet: &mut Fleet, mut tx: &mut Transaction<PoolConnection
         if sg.quantity > 0 {
             ShipGroup::update(sg, tx).await?;
         } else {
-            ShipGroup::remove(sg.id.clone(), &mut tx).await?;
+            ShipGroup::<Fleet>::remove(sg.id.clone(), &mut tx).await?;
         }
     }
 

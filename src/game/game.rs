@@ -197,10 +197,9 @@ impl GameServer {
             sg.quantity += ship_queue.quantity;
             ShipGroup::update(&sg, &mut tx).await?;
         } else {
-            let sg = ShipGroup{
+            let sg = ShipGroup::<System>{
                 id: ShipGroupID(Uuid::new_v4()),
-                system: Some(ship_queue.system.clone()),
-                fleet: None,
+                owner_id: ship_queue.system.clone(),
                 quantity: ship_queue.quantity.clone(),
                 category: ship_queue.category.clone(),
             };

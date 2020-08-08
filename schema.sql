@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS map__system_buildings(
     kind VARCHAR(25) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     built_at TIMESTAMPTZ NOT NULL
-)
+);
 CREATE TABLE IF NOT EXISTS fleet__fleets(
 	id UUID PRIMARY KEY,
 	system_id UUID NOT NULL,

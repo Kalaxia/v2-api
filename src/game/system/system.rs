@@ -17,7 +17,10 @@ use crate::{
             ship::{ShipGroup},
         },
         game::{GameID},
-        player::{PlayerID, Player}
+        player::{PlayerID, Player},
+        system::{
+            building::{Building, BuildingID, BuildingStatus, BuildingKind, get_building_data},
+        },
     },
     ws::protocol
 };
@@ -360,7 +363,7 @@ fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
     (SystemKind::BaseSystem, probability + 0.1)
 }
 
-pub async fn assign_systems(players:Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
+pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
 
     const GRID_SIZE : usize = 16;
     const EXCLUSION : usize = 1;
@@ -458,4 +461,23 @@ pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>,
         System::count(info.0.clone(), &state.db_pool).await.into(),
         System::find_all(&info.0, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await?,
     ))
+}
+
+pub async fn init_player_systems(systems: &Vec<System>, db_pool: &PgPool) -> Result<()> {
+    let building_data = get_building_data(BuildingKind::Shipyard);
+    let mut tx = db_pool.begin().await?;
+
+    for s in systems.iter() {
+        if s.player.is_none() {
+            continue;
+        }
+
+        let mut building = Building::new(s.id, BuildingKind::Shipyard, &building_data);
+        building.status = BuildingStatus::Operational;
+        building.built_at = building.created_at;
+
+        Building::create(building, &mut tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }

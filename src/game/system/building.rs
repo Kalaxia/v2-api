@@ -81,6 +81,19 @@ impl<'a> FromRow<'a, PgRow<'a>> for Building {
 }
 
 impl Building {
+    pub fn new(sid: SystemID, kind: BuildingKind, data: &BuildingData) -> Building {
+        let now = Time::now();
+
+        Building{
+            id: BuildingID(Uuid::new_v4()),
+            system: sid,
+            kind: kind,
+            status: BuildingStatus::Constructing,
+            created_at: now.clone(),
+            built_at: get_construction_time(data, now),
+        }
+    }
+
     pub async fn find(bid: BuildingID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM map__system_buildings WHERE id = $1")
             .bind(Uuid::from(bid))
@@ -90,6 +103,12 @@ impl Building {
     pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM map__system_buildings WHERE system_id = $1")
             .bind(Uuid::from(sid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn find_by_kind(kind: BuildingKind, db_pool: &PgPool) -> Result<Vec<Building>> {
+        sqlx::query_as("SELECT * FROM map__system_buildings WHERE kind = $1")
+            .bind(kind)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
@@ -137,15 +156,7 @@ pub async fn create_building(
     let building_data = get_building_data(data.kind);
     player.spend(building_data.cost as usize)?;
 
-    let now = Time::now();
-    let building = Building{
-        id: BuildingID(Uuid::new_v4()),
-        system: info.1.clone(),
-        kind: data.kind,
-        status: BuildingStatus::Constructing,
-        created_at: now.clone(),
-        built_at: get_construction_time(building_data, now),
-    };
+    let building = Building::new(info.1.clone(), data.kind, &building_data);
 
     let mut tx = state.db_pool.begin().await?;
     Player::update(player, &mut tx).await?;
@@ -186,7 +197,7 @@ pub fn get_building_data(kind: BuildingKind) -> BuildingData {
     }
 }
 
-fn get_construction_time(data: BuildingData, from: Time) -> Time {
+fn get_construction_time(data: &BuildingData, from: Time) -> Time {
     let time: DateTime<Utc> = from.into();
     Time(time
         .checked_add_signed(Duration::seconds(data.construction_time as i64))

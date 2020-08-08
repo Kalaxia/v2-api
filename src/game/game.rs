@@ -20,10 +20,10 @@ use crate::{
             ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
         },
         lobby::Lobby,
-        player::{PlayerID, Player},
+        player::{PlayerID, Player, init_player_wallets},
         system::{
-            building::{Building, BuildingID, BuildingStatus},
-            system::{System, assign_systems, generate_systems}
+            building::{Building, BuildingID, BuildingStatus, BuildingKind},
+            system::{System, SystemID, assign_systems, generate_systems, init_player_systems}
         },
     },
     ws::{ client::ClientSession, protocol},
@@ -32,6 +32,7 @@ use crate::{
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
+pub const GAME_START_WALLET: usize = 200;
 pub const VICTORY_POINTS: u16 = 300;
 pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
@@ -96,10 +97,11 @@ impl GameServer {
         generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
 
         let mut systems = generate_systems(self.id.clone()).await?;
-        let players = Player::find_by_game(self.id, &self.state.db_pool).await?;
-        assign_systems(players, &mut systems).await?;
-
-        System::insert_all(systems, &self.state.db_pool).await?;
+        let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
+        assign_systems(&players, &mut systems).await?;
+        init_player_wallets(&mut players, &self.state.db_pool).await?;
+        System::insert_all(systems.clone(), &self.state.db_pool).await?;
+        init_player_systems(&systems, &self.state.db_pool).await?;
         
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::SystemsCreated,
@@ -142,13 +144,21 @@ impl GameServer {
             .map(|p| (p.id.clone(), p))
             .collect();
         let mut players_income = HashMap::new();
+        let mines: Vec<SystemID> = Building::find_by_kind(BuildingKind::Mine, &self.state.db_pool).await?
+            .into_iter()
+            .map(|b| b.system)
+            .collect();
 
         // Add money to each player based on the number of
         // currently, the income is `some_player.income = some_player.number_of_systems_owned * 15`
         System::find_possessed(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .for_each(|system| {
-                *players_income.entry(system.player).or_insert(0) += 15
+                let mut income = 10;
+                if mines.contains(&system.id) {
+                    income = 40;
+                }
+                *players_income.entry(system.player).or_insert(0) += income
             }); // update the player's income
 
         // Notify the player for wallet update

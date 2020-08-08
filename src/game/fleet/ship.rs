@@ -313,8 +313,6 @@ pub async fn assign_ships(
 
     if let Some(sg) = system_ship_group.clone() {
         available_quantity += sg.quantity;
-    } else {
-        return Err(InternalError::NotFound)?;
     }
 
     if fleet_ship_group.is_some() {
@@ -327,7 +325,7 @@ pub async fn assign_ships(
 
     let mut tx = state.db_pool.begin().await?;
     
-    if fleet_ship_group.is_none() {
+    if fleet_ship_group.is_none() && json_data.quantity > 0 {
         ShipGroup::create(ShipGroup{
             id: ShipGroupID(Uuid::new_v4()),
             system: None,
@@ -335,19 +333,30 @@ pub async fn assign_ships(
             quantity: json_data.quantity as u16,
             category: json_data.category.clone(),
         }, &mut tx).await?;
-    } else {
+    } else if fleet_ship_group.is_some() && json_data.quantity > 0 {
         let mut sg = fleet_ship_group.unwrap();
         sg.quantity = json_data.quantity as u16;
         ShipGroup::update(&sg, &mut tx).await?;
+    } else if fleet_ship_group.is_some() {
+        ShipGroup::remove(fleet_ship_group.unwrap().id, &mut tx).await?;
     }
 
-    let mut sg = system_ship_group.unwrap();
-    let quantity = available_quantity as i32 - json_data.quantity as i32;
-    if quantity < 1 {
-        ShipGroup::remove(sg.id, &mut tx).await?;
-    } else {
-        sg.quantity = quantity as u16;
+    let remaining_quantity = available_quantity - json_data.quantity as u16;
+
+    if system_ship_group.is_none() && remaining_quantity > 0 {
+        ShipGroup::create(ShipGroup{
+            id: ShipGroupID(Uuid::new_v4()),
+            system: Some(system.id.clone()),
+            fleet: None,
+            quantity: remaining_quantity,
+            category: json_data.category.clone(),
+        }, &mut tx).await?;
+    } else if system_ship_group.is_some() && remaining_quantity > 0 {
+        let mut sg = system_ship_group.unwrap();
+        sg.quantity = json_data.quantity as u16;
         ShipGroup::update(&sg, &mut tx).await?;
+    } else if system_ship_group.is_some() {
+        ShipGroup::remove(system_ship_group.unwrap().id, &mut tx).await?;
     }
     tx.commit().await?;
     Ok(HttpResponse::NoContent().finish())
@@ -365,7 +374,7 @@ pub async fn get_ship_models() -> Result<HttpResponse> {
 
 fn get_ship_construction_time(model: ShipModel, quantity: u16, from: Time) -> Time {
     let datetime: DateTime<Utc> = from.into();
-    let ms = quantity * model.construction_time;
+    let ms = quantity as usize * model.construction_time as usize;
     Time(datetime.checked_add_signed(Duration::milliseconds(ms as i64)).expect("Could not add construction time"))
 }
 

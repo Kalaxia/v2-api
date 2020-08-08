@@ -153,6 +153,12 @@ pub async fn create_building(
     if system.player != Some(player.id) {
         return Err(InternalError::AccessDenied)?;
     }
+
+    let buildings = Building::find_by_system(system.id.clone(), &state.db_pool).await?;
+    if buildings.len() > 0 {
+        return Err(InternalError::Conflict)?;
+    }
+
     let building_data = get_building_data(data.kind);
     player.spend(building_data.cost as usize)?;
 

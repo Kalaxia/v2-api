@@ -119,10 +119,11 @@ impl Player {
             .map_err(ServerError::from)
     }
 
-    pub async fn check_username_exists(lid: LobbyID, username: String, db_pool: &PgPool) -> Result<bool> {
-        sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1 AND username = $2")
+    pub async fn check_username_exists(pid: PlayerID, lid: LobbyID, username: String, db_pool: &PgPool) -> Result<bool> {
+        sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1 AND username = $2 AND id != $3")
             .bind(Uuid::from(lid))
             .bind(username)
+            .bind(Uuid::from(pid))
             .fetch_one(db_pool).await
             .map(|count: (i64,)| count.0 > 0)
             .map_err(ServerError::from)
@@ -215,7 +216,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
 
     if json_data.username.len() > 0
     && json_data.username != player.username
-    && Player::check_username_exists(lobby.id.clone(), json_data.username.clone(), &state.db_pool).await? {
+    && Player::check_username_exists(player.id.clone(), lobby.id.clone(), json_data.username.clone(), &state.db_pool).await? {
         return Err(InternalError::PlayerUsernameAlreadyTaken)?;
     }
     player.username = json_data.username.clone();

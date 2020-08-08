@@ -5,10 +5,10 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQuery
 use sqlx_core::row::Row;
 use crate::{
     AppState,
-    game::game::{GameID},
+    game::game::{GameID, GAME_START_WALLET},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
-    game::system::SystemID,
+    game::system::system::SystemID,
     lib::{Result, error::{InternalError, ServerError}, auth},
     ws::protocol,
 };
@@ -90,6 +90,12 @@ impl Player {
     pub async fn find_by_ids(ids: Vec<PlayerID>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = any($1)")
             .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+    
+    pub async fn find_by_faction(fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE faction_id = $1")
+            .bind(i32::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
@@ -241,4 +247,15 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     }
 
     Ok(HttpResponse::NoContent().finish())
+}
+
+
+pub async fn init_player_wallets(players: &mut Vec<Player>, db_pool: &PgPool) -> Result<()> {
+    let mut tx = db_pool.begin().await?;
+    for player in players.iter_mut() {
+        player.wallet = GAME_START_WALLET;
+        Player::update(player.clone(), &mut tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }

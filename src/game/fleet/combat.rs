@@ -6,7 +6,7 @@ use crate::{
             ship::{get_ship_model, ShipGroup},
             fleet::{Fleet, FleetID},
         },
-        system::{System}
+        system::system::{System}
     }
 };
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, Transaction};
@@ -149,7 +149,7 @@ mod tests {
                 fleet::{Fleet, FleetID},
                 ship::{ShipGroup, ShipGroupID, ShipModelCategory},
             },
-            system::{SystemID},
+            system::system::{SystemID},
             player::{PlayerID}
         }
     };

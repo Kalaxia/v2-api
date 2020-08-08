@@ -15,7 +15,7 @@ use crate::{
         player::{Player},
         game::{GameID, GameShipQueueMessage},
         fleet::fleet::{FleetID, Fleet},
-        system::{SystemID, System},
+        system::system::{SystemID, System},
     },
     AppState,
 };

@@ -19,7 +19,8 @@ use game::{
     faction,
     player,
     lobby,
-    system,
+    system::building,
+    system::system,
 };
 use lib::Result;
 
@@ -139,6 +140,11 @@ fn config(cfg: &mut web::ServiceConfig) {
                     .service(ship::add_ship_queue)
                     .service(ship::get_ship_queues)
                 )
+                .service(
+                    web::scope("/{system_id}/buildings")
+                    .service(building::get_system_buildings)
+                    .service(building::create_building)
+                )
             )
         )
         .service(
@@ -156,6 +162,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(player::get_current_player)
             .service(player::update_current_player)
         )
+        .service(building::get_buildings_data)
         .service(g::get_game_constants)
         .service(ship::get_ship_models)
     )

@@ -353,7 +353,7 @@ pub async fn assign_ships(
         }, &mut tx).await?;
     } else if system_ship_group.is_some() && remaining_quantity > 0 {
         let mut sg = system_ship_group.unwrap();
-        sg.quantity = json_data.quantity as u16;
+        sg.quantity = remaining_quantity;
         ShipGroup::update(&sg, &mut tx).await?;
     } else if system_ship_group.is_some() {
         ShipGroup::remove(system_ship_group.unwrap().id, &mut tx).await?;

@@ -50,6 +50,28 @@ pub struct GameServer {
     clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[sqlx(rename = "VARCHAR")]
+#[sqlx(rename_all = "snake_case")]
+#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
+pub enum GameOptionSpeed {
+    Slow,
+    Medium,
+    Fast,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[sqlx(rename = "VARCHAR")]
+#[sqlx(rename_all = "snake_case")]
+#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
+pub enum GameOptionMapSize {
+    VerySmall,
+    Small,
+    Medium,
+    Large,
+    VeryLarge,
+}
+
 impl From<GameID> for Uuid {
     fn from(gid: GameID) -> Self { gid.0 }
 }

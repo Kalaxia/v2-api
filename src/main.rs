@@ -153,6 +153,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(lobby::get_lobbies)
             .service(lobby::get_lobby)
             .service(lobby::join_lobby)
+            .service(lobby::update_lobby_options)
             .service(lobby::leave_lobby)
             .service(lobby::launch_game)
         )

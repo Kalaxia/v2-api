@@ -1,4 +1,4 @@
-use actix_web::{delete, get, post, web, HttpResponse};
+use actix_web::{delete, get, patch, post, web, HttpResponse};
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -8,7 +8,7 @@ use crate::{
         error::{ServerError, InternalError},
         auth::Claims
     },
-    game::game::{create_game},
+    game::game::{create_game, GameOptionMapSize, GameOptionSpeed},
     game::player::{PlayerID, Player},
     ws::{ client::ClientSession, protocol},
     AppState,
@@ -34,6 +34,14 @@ pub struct LobbyServer {
 pub struct Lobby {
     pub id: LobbyID,
     pub owner: PlayerID,
+    pub game_speed: GameOptionSpeed, 
+    pub map_size: GameOptionMapSize 
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LobbyOptionsPatch {
+    pub map_size: Option<GameOptionMapSize>, 
+    pub game_speed: Option<GameOptionSpeed>, 
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
@@ -44,6 +52,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
         Ok(Lobby {
             id: LobbyID(id),
             owner: PlayerID(owner_id),
+            game_speed: row.try_get("game_speed")?,
+            map_size: row.try_get("map_size")?
         })
     }
 }
@@ -105,9 +115,11 @@ impl Lobby {
     }
 
     pub async fn create(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO lobby__lobbies(id, owner_id) VALUES($1, $2)")
+        sqlx::query("INSERT INTO lobby__lobbies(id, owner_id, game_speed, map_size) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
+            .bind(l.game_speed)
+            .bind(l.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
@@ -247,6 +259,8 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     let new_lobby = Lobby {
         id: LobbyID(Uuid::new_v4()),
         owner: player.id.clone(),
+        game_speed: GameOptionSpeed::Medium,
+        map_size: GameOptionMapSize::Medium,
     };
     let lobby_server = LobbyServer{
         id: new_lobby.id.clone(),
@@ -270,6 +284,37 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     ));
 
     Ok(HttpResponse::Created().json(new_lobby))
+}
+
+#[patch("/{id}/")]
+pub async fn update_lobby_options(
+    state: web::Data<AppState>,
+    info: web::Path<(LobbyID,)>,
+    data: web::Json<LobbyOptionsPatch>,
+    claims: Claims
+) -> Result<HttpResponse>
+{
+    let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
+
+    if lobby.owner != claims.pid.clone() {
+        Err(InternalError::AccessDenied)?
+    }
+
+    lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
+    lobby.map_size = data.map_size.clone().map_or(GameOptionMapSize::Medium, |ms| ms);
+
+    let mut tx = state.db_pool.begin().await?;
+    Lobby::update(lobby.clone(), &mut tx).await?;
+    tx.commit().await?;
+
+    let lobbies = state.lobbies();
+    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    lobby_server.do_send(protocol::Message::new(
+        protocol::Action::LobbyOptionsUpdated,
+        data.clone(),
+        Some(claims.pid),
+    ));
+    Ok(HttpResponse::NoContent().finish())
 }
 
 #[post("/{id}/launch/")]
@@ -297,7 +342,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
         None,
     ));
 
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Lobby::remove(lobby.id, &mut tx).await?;
     tx.commit().await?;
 

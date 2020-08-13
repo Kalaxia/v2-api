@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS player__players(
     is_connected BOOLEAN NOT NULL DEFAULT true
 );
 CREATE TABLE IF NOT EXISTS game__games(
-    id UUID PRIMARY KEY
+    id UUID PRIMARY KEY,
+    game_speed VARCHAR(15) NOT NULL,
+    map_size VARCHAR(15) NOT NULL
 );
 CREATE TABLE IF NOT EXISTS game__factions(
     faction_id INT NOT NULL,

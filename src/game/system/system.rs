@@ -16,7 +16,7 @@ use crate::{
             fleet::{FleetID, Fleet},
             ship::{ShipGroup},
         },
-        game::{GameID},
+        game::{GameID, GameOptionMapSize},
         player::{PlayerID, Player},
         system::{
             building::{Building, BuildingID, BuildingStatus, BuildingKind, get_building_data},
@@ -40,6 +40,16 @@ pub struct System {
     pub kind: SystemKind,
     pub coordinates: Coordinates,
     pub unreachable: bool
+}
+
+struct MapSizeData {
+    cloud_population: u64,
+    nb_arms: u64,
+    nb_arm_bones: u64,
+    min_distance: f64,
+    slope_factor: f64,
+    arm_slope: f64,
+    arm_width_factor: f64
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -321,15 +331,16 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID) -> Result<Vec<System>> {
+pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<Vec<System>> {
+    let map_size_data = get_map_size_data(map_size);
     let graph = GalaxyBuilder::default()
-        .min_distance(Some(1.0))
-        .cloud_population(2)
-        .nb_arms(5)
-        .nb_arm_bones(15)
-        .slope_factor(0.4)
-        .arm_slope(std::f64::consts::PI / 4.0)
-        .arm_width_factor(1.0 / 24.0)
+        .min_distance(Some(map_size_data.min_distance))
+        .cloud_population(map_size_data.cloud_population)
+        .nb_arms(map_size_data.nb_arms)
+        .nb_arm_bones(map_size_data.nb_arm_bones)
+        .slope_factor(map_size_data.slope_factor)
+        .arm_slope(map_size_data.arm_slope)
+        .arm_width_factor(map_size_data.arm_width_factor)
         .build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
@@ -480,4 +491,54 @@ pub async fn init_player_systems(systems: &Vec<System>, db_pool: &PgPool) -> Res
     }
     tx.commit().await?;
     Ok(())
+}
+
+fn get_map_size_data(map_size: GameOptionMapSize) -> MapSizeData {
+    match map_size {
+        GameOptionMapSize::VerySmall => MapSizeData{
+            cloud_population: 2,
+            nb_arms: 3,
+            nb_arm_bones: 5,
+            min_distance: 1.0,
+            slope_factor: 0.4,
+            arm_slope: std::f64::consts::PI / 4.0,
+            arm_width_factor: 1.0 / 24.0
+        },
+        GameOptionMapSize::Small => MapSizeData{
+            cloud_population: 2,
+            nb_arms: 3,
+            nb_arm_bones: 5,
+            min_distance: 1.0,
+            slope_factor: 0.4,
+            arm_slope: std::f64::consts::PI / 4.0,
+            arm_width_factor: 1.0 / 24.0
+        },
+        GameOptionMapSize::Medium => MapSizeData{
+            cloud_population: 2,
+            nb_arms: 5,
+            nb_arm_bones: 15,
+            min_distance: 1.0,
+            slope_factor: 0.4,
+            arm_slope: std::f64::consts::PI / 4.0,
+            arm_width_factor: 1.0 / 24.0
+        },
+        GameOptionMapSize::Large => MapSizeData{
+            cloud_population: 2,
+            nb_arms: 3,
+            nb_arm_bones: 5,
+            min_distance: 1.0,
+            slope_factor: 0.4,
+            arm_slope: std::f64::consts::PI / 4.0,
+            arm_width_factor: 1.0 / 24.0
+        },
+        GameOptionMapSize::VeryLarge => MapSizeData{
+            cloud_population: 2,
+            nb_arms: 3,
+            nb_arm_bones: 5,
+            min_distance: 1.0,
+            slope_factor: 0.4,
+            arm_slope: std::f64::consts::PI / 4.0,
+            arm_width_factor: 1.0 / 24.0
+        },
+    }
 }

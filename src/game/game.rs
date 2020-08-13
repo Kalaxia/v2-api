@@ -42,6 +42,8 @@ pub struct GameID(pub Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
     pub id: GameID,
+    pub game_speed: GameOptionSpeed,
+    pub map_size: GameOptionMapSize
 }
 
 pub struct GameServer {
@@ -82,6 +84,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
 
         Ok(Game {
             id: GameID(id),
+            game_speed: row.try_get("game_speed")?,
+            map_size: row.try_get("map_size")?
         })
     }
 }
@@ -102,8 +106,10 @@ impl Game {
     }
 
     pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO game__games(id) VALUES($1)")
+        sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
             .bind(Uuid::from(game.id))
+            .bind(game.game_speed)
+            .bind(game.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
@@ -118,7 +124,9 @@ impl GameServer {
     async fn init(&mut self) -> Result<()> {
         generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
 
-        let mut systems = generate_systems(self.id.clone()).await?;
+        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+
+        let mut systems = generate_systems(self.id.clone(), game.map_size).await?;
         let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
         assign_systems(&players, &mut systems).await?;
         init_player_wallets(&mut players, &self.state.db_pool).await?;
@@ -502,9 +510,13 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
         state: state.clone(),
         clients: RwLock::new(clients),
     };
-    let game = Game{ id: id.clone() };
+    let game = Game{
+        id: id.clone(),
+        game_speed: lobby.game_speed.clone(),
+        map_size: lobby.map_size.clone(),
+    };
 
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Game::create(game, &mut tx).await?;
     tx.commit().await?;
 

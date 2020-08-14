@@ -97,7 +97,7 @@ impl Lobby {
     pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<()> {
         let players = Player::find_by_lobby(self.id, db_pool).await?;
         self.owner = players.iter().next().unwrap().id.clone();
-        let mut tx =db_pool.begin().await?;
+        let mut tx = db_pool.begin().await?;
         Self::update(self.clone(), &mut tx).await?;
         tx.commit().await?;
         Ok(())
@@ -235,12 +235,16 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
         id: LobbyID,
         owner: Player,
         players: Vec<Player>,
+        game_speed: GameOptionSpeed,
+        map_size: GameOptionMapSize
     }
 
     Ok(HttpResponse::Ok().json(LobbyData{
         id: lobby.id,
         owner: Player::find(lobby.owner, &state.db_pool).await?,
         players: Player::find_by_lobby(lobby.id, &state.db_pool).await?,
+        game_speed: lobby.game_speed,
+        map_size: lobby.map_size
     }))
 }
 
@@ -270,7 +274,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Lobby::create(new_lobby.clone(), &mut tx).await?;
     // Put the player in the lobby
     player.lobby = Some(new_lobby.id.clone());

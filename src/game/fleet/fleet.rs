@@ -11,7 +11,7 @@ use crate::{
     game::{
         game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
         player::{Player, PlayerID},
-        system::system::{System, SystemID, Coordinates, get_distance_between},
+        system::system::{System, SystemID, Coordinates},
         fleet::ship::{ShipGroup},
     },
     ws::protocol,
@@ -60,7 +60,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        let distance = get_distance_between(origin_coords, dest_coords);
+        let distance = origin_coords.as_distance_to(&dest_coords);
 
         if distance > FLEET_RANGE.powi(2) {
             return Err(InternalError::FleetInvalidDestination.into());
@@ -197,7 +197,7 @@ pub async fn travel(
 }
 
 fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
-    let distance = get_distance_between(from, to);
+    let distance = from.as_distance_to(&to);
     let ms = distance / time_coeff;
 
     Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")

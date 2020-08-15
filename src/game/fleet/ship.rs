@@ -107,6 +107,58 @@ impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
     }
 }
 
+impl ShipModelCategory {
+    pub fn as_data(&self) -> ShipModel {
+        match self {
+            ShipModelCategory::Fighter => ShipModel{
+                category: ShipModelCategory::Fighter,
+                construction_time: 400,
+                cost: 20,
+                damage: 15,
+                hit_points: 10,
+                precision: 60,
+            },
+            ShipModelCategory::Corvette => ShipModel{
+                category: ShipModelCategory::Corvette,
+                construction_time: 1500,
+                cost: 140,
+                damage: 40,
+                hit_points: 60,
+                precision: 45,
+            },
+            ShipModelCategory::Frigate => ShipModel{
+                category: ShipModelCategory::Frigate,
+                construction_time: 2000,
+                cost: 250,
+                damage: 25,
+                hit_points: 100,
+                precision: 50,
+            },
+            ShipModelCategory::Cruiser => ShipModel{
+                category: ShipModelCategory::Cruiser,
+                construction_time: 7000,
+                cost: 600,
+                damage: 80,
+                hit_points: 200,
+                precision: 45,
+            }
+        }
+    }
+}
+
+impl ShipModel {
+    pub fn as_construction_time(&self, quantity: u16, from: Time, game_speed: GameOptionSpeed) -> Time {
+        let datetime: DateTime<Utc> = from.into();
+        Time(datetime.checked_add_signed(
+            Duration::milliseconds(self.as_construction_milliseconds(quantity, game_speed))
+        ).expect("Could not add construction time"))
+    }
+
+    pub fn as_construction_milliseconds(&self, quantity: u16, game_speed: GameOptionSpeed) -> i64 {
+        ((quantity as usize * self.construction_time as usize) as f64 * game_speed.into_coeff()).ceil() as i64
+    }
+}
+
 impl ShipGroup {
     pub async fn find_by_fleets(ids: Vec<FleetID>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = any($1)")
@@ -242,7 +294,7 @@ pub async fn add_ship_queue(
     let game = g?;
     let system = s?;
     let mut player = p?;
-    let ship_model = get_ship_model(json_data.category.clone());
+    let ship_model = json_data.category.as_data();
 
     if system.player.clone() != Some(player.id.clone()) {
         return Err(InternalError::AccessDenied)?;
@@ -258,7 +310,7 @@ pub async fn add_ship_queue(
         quantity: json_data.quantity as u16,
         created_at: Time::now(),
         started_at: starts_at.clone(),
-        finished_at: get_ship_construction_time(&ship_model, json_data.quantity as u16, starts_at, game.game_speed),
+        finished_at: ship_model.as_construction_time(json_data.quantity as u16, starts_at, game.game_speed),
     };
 
     let mut tx = state.db_pool.begin().await?;
@@ -367,67 +419,11 @@ pub async fn assign_ships(
 #[get("/ship-models/")]
 pub async fn get_ship_models() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(vec![
-        get_ship_model(ShipModelCategory::Fighter),
-        get_ship_model(ShipModelCategory::Corvette),
-        get_ship_model(ShipModelCategory::Frigate),
-        get_ship_model(ShipModelCategory::Cruiser),
+        ShipModelCategory::Fighter.as_data(),
+        ShipModelCategory::Corvette.as_data(),
+        ShipModelCategory::Frigate.as_data(),
+        ShipModelCategory::Cruiser.as_data(),
     ]))
-}
-
-fn get_ship_construction_time(model: &ShipModel, quantity: u16, from: Time, game_speed: GameOptionSpeed) -> Time {
-    let datetime: DateTime<Utc> = from.into();
-    Time(datetime.checked_add_signed(
-        Duration::milliseconds(get_ship_construction_milliseconds(model, quantity, game_speed))
-    ).expect("Could not add construction time"))
-}
-
-fn get_ship_construction_milliseconds(model: &ShipModel, quantity: u16, game_speed: GameOptionSpeed) -> i64 {
-    ((quantity as usize * model.construction_time as usize) as f64 * get_ship_construction_time_coeff(game_speed)).ceil() as i64
-}
-
-fn get_ship_construction_time_coeff(game_speed: GameOptionSpeed) -> f64 {
-    match game_speed {
-        GameOptionSpeed::Slow => 1.2,
-        GameOptionSpeed::Medium => 1.0,
-        GameOptionSpeed::Fast => 0.8,
-    }
-}
-
-pub fn get_ship_model(category: ShipModelCategory) -> ShipModel {
-    match category {
-        ShipModelCategory::Fighter => ShipModel{
-            category: ShipModelCategory::Fighter,
-            construction_time: 400,
-            cost: 20,
-            damage: 15,
-            hit_points: 10,
-            precision: 60,
-        },
-        ShipModelCategory::Corvette => ShipModel{
-            category: ShipModelCategory::Corvette,
-            construction_time: 1500,
-            cost: 140,
-            damage: 40,
-            hit_points: 60,
-            precision: 45,
-        },
-        ShipModelCategory::Frigate => ShipModel{
-            category: ShipModelCategory::Frigate,
-            construction_time: 2000,
-            cost: 250,
-            damage: 25,
-            hit_points: 100,
-            precision: 50,
-        },
-        ShipModelCategory::Cruiser => ShipModel{
-            category: ShipModelCategory::Cruiser,
-            construction_time: 7000,
-            cost: 600,
-            damage: 80,
-            hit_points: 200,
-            precision: 45,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -435,12 +431,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_ship_model() {
-        let fighter = get_ship_model(ShipModelCategory::Fighter);
+    fn test_ship_model_data() {
+        let fighter = ShipModelCategory::Fighter.as_data();
 
         assert_eq!(fighter.category, ShipModelCategory::Fighter);
 
-        let cruiser = get_ship_model(ShipModelCategory::Cruiser);
+        let cruiser = ShipModelCategory::Cruiser.as_data();
 
         assert_eq!(cruiser.category, ShipModelCategory::Cruiser);
 
@@ -448,18 +444,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_ship_construction_time_coeff() {
-        assert_eq!(1.2, get_ship_construction_time_coeff(GameOptionSpeed::Slow));
-        assert_eq!(1.0, get_ship_construction_time_coeff(GameOptionSpeed::Medium));
-        assert_eq!(0.8, get_ship_construction_time_coeff(GameOptionSpeed::Fast));
-    }
+    fn test_ship_model_construction_milliseconds() {
+        let fighter_model = ShipModelCategory::Fighter.as_data();
 
-    #[test]
-    fn test_get_ship_construction_milliseconds() {
-        let fighter_model = get_ship_model(ShipModelCategory::Fighter);
-
-        assert_eq!(960, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Slow));
-        assert_eq!(800, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Medium));
-        assert_eq!(640, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Fast));
+        assert_eq!(960, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Slow));
+        assert_eq!(800, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Medium));
+        assert_eq!(640, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Fast));
     }
 }

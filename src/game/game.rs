@@ -7,6 +7,7 @@ use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
+use galaxy_rs::GalaxyBuilder;
 use crate::{
     lib::{
         Result,
@@ -95,6 +96,63 @@ impl Handler<protocol::Message> for GameServer {
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
         self.ws_broadcast(msg);
+    }
+}
+
+impl GameOptionSpeed {
+    pub fn into_coeff(self) -> f64 {
+        match self {
+            GameOptionSpeed::Slow => 1.2,
+            GameOptionSpeed::Medium => 1.0,
+            GameOptionSpeed::Fast => 0.8,
+        }
+    }
+}
+
+impl GameOptionMapSize {
+    pub fn to_galaxy_builder(&self) -> GalaxyBuilder {
+        match self {
+            GameOptionMapSize::VerySmall => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(1)
+                .nb_arms(3)
+                .nb_arm_bones(3)
+                .slope_factor(0.6)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 32.0),
+            GameOptionMapSize::Small => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(3)
+                .nb_arm_bones(5)
+                .slope_factor(0.5)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 28.0),
+            GameOptionMapSize::Medium => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(4)
+                .nb_arm_bones(10)
+                .slope_factor(0.5)
+                .arm_slope(std::f64::consts::PI / 2.0)
+                .arm_width_factor(1.0 / 24.0),
+            GameOptionMapSize::Large => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(5)
+                .nb_arm_bones(15)
+                .slope_factor(0.4)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 20.0),
+            GameOptionMapSize::VeryLarge => GalaxyBuilder::default()
+                .min_distance(Some(1.5))
+                .cloud_population(2)
+                .nb_arms(6)
+                .nb_arm_bones(20)
+                .slope_factor(0.4)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 16.0),
+        }
     }
 }
 
@@ -566,4 +624,16 @@ pub async fn get_game_constants() -> Result<HttpResponse> {
         victory_points_per_minute: VICTORY_POINTS_PER_MINUTE,
         victory_points: VICTORY_POINTS,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_construction_time_coeff() {
+        assert_eq!(1.2, GameOptionSpeed::Slow.into_coeff());
+        assert_eq!(1.0, GameOptionSpeed::Medium.into_coeff());
+        assert_eq!(0.8, GameOptionSpeed::Fast.into_coeff());
+    }
 }

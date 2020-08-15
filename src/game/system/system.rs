@@ -19,12 +19,12 @@ use crate::{
         game::{GameID, GameOptionMapSize, GameOptionSpeed},
         player::{PlayerID, Player},
         system::{
-            building::{Building, BuildingID, BuildingStatus, BuildingKind, get_building_data},
+            building::{Building, BuildingStatus, BuildingKind},
         },
     },
     ws::protocol
 };
-use galaxy_rs::{GalaxyBuilder, Point, DataPoint};
+use galaxy_rs::{Point, DataPoint};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
@@ -99,13 +99,9 @@ impl Coordinates {
             y: r * theta.sin(),
         }
     }
-
-    pub fn distance_from2(&self, rhs:&Coordinates) -> f64 {
-        (self.x - rhs.x).powi(2) + (self.y - rhs.y).powi(2)
-    }
-
-    pub fn distance_from(&self, rhs:&Coordinates) -> f64 {
-        self.distance_from2(rhs).sqrt()
+    
+    pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
+        ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
     }
 }
 
@@ -333,18 +329,7 @@ impl From<FleetArrivalOutcome> for protocol::Message {
 }
 
 pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<Vec<System>> {
-    println!("{:?}", map_size.clone());
-    let map_size_data = get_map_size_data(map_size);
-    println!("{:?}", map_size_data.clone());
-    let graph = GalaxyBuilder::default()
-        .min_distance(Some(map_size_data.min_distance))
-        .cloud_population(map_size_data.cloud_population)
-        .nb_arms(map_size_data.nb_arms)
-        .nb_arm_bones(map_size_data.nb_arm_bones)
-        .slope_factor(map_size_data.slope_factor)
-        .arm_slope(map_size_data.arm_slope)
-        .arm_width_factor(map_size_data.arm_width_factor)
-        .build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
+    let graph = map_size.to_galaxy_builder().build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
 
@@ -451,7 +436,7 @@ async fn find_place<'a>(
     let mut min_dist = std::f64::MAX;
     let mut idx = None;
     for (sid, sys) in galaxy.iter().enumerate() {
-        let dist = final_coord.distance_from(&sys.coordinates);
+        let dist = final_coord.as_distance_to(&sys.coordinates);
         if sys.player.is_none() && dist < min_dist {
             min_dist = dist;
             idx = Some(sid);
@@ -459,10 +444,6 @@ async fn find_place<'a>(
     }
 
     idx.map(move |id| &mut galaxy[id])
-}
-
-pub fn get_distance_between(from: Coordinates, to: Coordinates) -> f64 {
-    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt()
 }
 
 #[get("/")]
@@ -478,7 +459,7 @@ pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>,
 }
 
 pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSpeed, db_pool: &PgPool) -> Result<()> {
-    let building_data = get_building_data(BuildingKind::Shipyard);
+    let building_data = BuildingKind::Shipyard.as_data();
     let mut tx = db_pool.begin().await?;
 
     for s in systems.iter() {
@@ -486,7 +467,7 @@ pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSp
             continue;
         }
 
-        let mut building = Building::new(s.id, BuildingKind::Shipyard, &building_data, game_speed);
+        let mut building = Building::new(s.id, BuildingKind::Shipyard, building_data, game_speed);
         building.status = BuildingStatus::Operational;
         building.built_at = building.created_at;
 
@@ -496,83 +477,19 @@ pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSp
     Ok(())
 }
 
-fn get_map_size_data(map_size: GameOptionMapSize) -> MapSizeData {
-    match map_size {
-        GameOptionMapSize::VerySmall => MapSizeData{
-            cloud_population: 1,
-            nb_arms: 3,
-            nb_arm_bones: 3,
-            min_distance: 1.0,
-            slope_factor: 0.6,
-            arm_slope: std::f64::consts::PI / 4.0,
-            arm_width_factor: 1.0 / 32.0
-        },
-        GameOptionMapSize::Small => MapSizeData{
-            cloud_population: 2,
-            nb_arms: 3,
-            nb_arm_bones: 5,
-            min_distance: 1.0,
-            slope_factor: 0.5,
-            arm_slope: std::f64::consts::PI / 4.0,
-            arm_width_factor: 1.0 / 28.0
-        },
-        GameOptionMapSize::Medium => MapSizeData{
-            cloud_population: 2,
-            nb_arms: 4,
-            nb_arm_bones: 10,
-            min_distance: 1.0,
-            slope_factor: 0.5,
-            arm_slope: std::f64::consts::PI / 2.0,
-            arm_width_factor: 1.0 / 24.0
-        },
-        GameOptionMapSize::Large => MapSizeData{
-            cloud_population: 2,
-            nb_arms: 5,
-            nb_arm_bones: 15,
-            min_distance: 1.2,
-            slope_factor: 0.4,
-            arm_slope: std::f64::consts::PI / 4.0,
-            arm_width_factor: 1.0 / 20.0
-        },
-        GameOptionMapSize::VeryLarge => MapSizeData{
-            cloud_population: 2,
-            nb_arms: 6,
-            nb_arm_bones: 20,
-            min_distance: 1.5,
-            slope_factor: 0.4,
-            arm_slope: std::f64::consts::PI / 4.0,
-            arm_width_factor: 1.0 / 16.0
-        },
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_get_distance_between() {
-        assert_eq!(2.8284271247461903, get_distance_between(Coordinates{
+    fn test_as_distance_to() {
+        assert_eq!(2.8284271247461903, Coordinates{
             x: 2.0,
             y: 2.0,
-        }, Coordinates{
+        }.as_distance_to(&Coordinates{
             x: 4.0,
             y: 4.0
         }));
-    }
-
-    #[test]
-    fn test_get_map_size_data() {
-        let very_small_map_data = get_map_size_data(GameOptionMapSize::VerySmall);
-        let small_map_data = get_map_size_data(GameOptionMapSize::Small);
-        let medium_map_data = get_map_size_data(GameOptionMapSize::Medium);
-        let large_map_data = get_map_size_data(GameOptionMapSize::Large);
-        let very_large_map_data = get_map_size_data(GameOptionMapSize::VeryLarge);
-
-        assert!(very_small_map_data.nb_arms < medium_map_data.nb_arms);
-        assert!(small_map_data.arm_width_factor < large_map_data.arm_width_factor);
-        assert!(medium_map_data.min_distance < very_large_map_data.min_distance);
-        assert!(large_map_data.nb_arm_bones > small_map_data.nb_arm_bones);
-        assert!(very_large_map_data.slope_factor < very_small_map_data.slope_factor);
     }
 }

@@ -11,7 +11,7 @@ pub enum Action {
     FleetSailed,
     GameStarted,
     LobbyCreated,
-    LobbyUpdated,
+    LobbyOptionsUpdated,
     LobbyOwnerUpdated,
     LobbyNameUpdated,
     LobbyRemoved,

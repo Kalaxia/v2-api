@@ -3,7 +3,7 @@ use crate::{
     lib::Result,
     game::{
         fleet::{
-            ship::{get_ship_model, ShipGroup},
+            ship::ShipGroup,
             fleet::{Fleet, FleetID},
         },
         system::system::{System}
@@ -90,8 +90,8 @@ fn pick_target_ship_group(fleet: &Fleet) -> usize {
 }
 
 fn fire(attacker: &ShipGroup, defender: &ShipGroup) -> u16 {
-    let attacker_model = get_ship_model(attacker.category.clone());
-    let defender_model = get_ship_model(defender.category.clone());
+    let attacker_model = attacker.category.as_data();
+    let defender_model = defender.category.as_data();
 
     let mut rng = thread_rng();
     let percent = rng.gen_range(attacker_model.precision as f64 / 2.0, attacker_model.precision as f64);

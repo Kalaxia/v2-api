@@ -9,9 +9,9 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{GameID, GameFleetTravelMessage},
+        game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
         player::{Player, PlayerID},
-        system::system::{System, SystemID, Coordinates, get_distance_between},
+        system::system::{System, SystemID, Coordinates},
         fleet::ship::{ShipGroup},
     },
     ws::protocol,
@@ -60,7 +60,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 
 impl Fleet {
     fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        let distance = get_distance_between(origin_coords, dest_coords);
+        let distance = origin_coords.as_distance_to(&dest_coords);
 
         if distance > FLEET_RANGE.powi(2) {
             return Err(InternalError::FleetInvalidDestination.into());
@@ -155,8 +155,9 @@ pub async fn travel(
     json_data: web::Json<FleetTravelRequest>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let (ds, s, f, sg, p) = futures::join!(
+    let (ds, g, s, f, sg, p) = futures::join!(
         System::find(json_data.destination_system_id, &state.db_pool),
+        Game::find(info.0, &state.db_pool),
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
         ShipGroup::find_by_fleet(info.2, &state.db_pool),
@@ -164,6 +165,7 @@ pub async fn travel(
     );
     
     let destination_system = ds?;
+    let game = g?;
     let system = s?;
     let mut fleet = f?;
     fleet.ship_groups = sg?;
@@ -180,7 +182,11 @@ pub async fn travel(
     }
     fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(system.coordinates, destination_system.coordinates).into());
+    fleet.destination_arrival_date = Some(get_travel_time(
+        system.coordinates,
+        destination_system.coordinates,
+        get_travel_time_coeff(game.game_speed)
+    ).into());
     Fleet::update(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
@@ -190,12 +196,19 @@ pub async fn travel(
     Ok(HttpResponse::Ok().json(fleet))
 }
 
-fn get_travel_time(from: Coordinates, to: Coordinates) -> DateTime<Utc> {
-    let time_coeff = 0.40;
-    let distance = get_distance_between(from, to);
+fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
+    let distance = from.as_distance_to(&to);
     let ms = distance / time_coeff;
 
     Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
+}
+
+fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
+    match game_speed {
+        GameOptionSpeed::Slow => 0.4,
+        GameOptionSpeed::Medium => 0.55,
+        GameOptionSpeed::Fast => 0.7,
+    }
 }
 
 #[cfg(test)]
@@ -257,15 +270,24 @@ mod tests {
     fn test_get_travel_time() {
         let time = get_travel_time(
             Coordinates{ x: 1.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 4.0 }
+            Coordinates{ x: 4.0, y: 4.0 },
+            0.4,
         );
         assert_eq!(10, time.signed_duration_since(Utc::now()).num_seconds());
 
         let time = get_travel_time(
             Coordinates{ x: 6.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 12.0 }
+            Coordinates{ x: 4.0, y: 12.0 },
+            0.55,
         );
-        assert_eq!(26, time.signed_duration_since(Utc::now()).num_seconds());
+        assert_eq!(19, time.signed_duration_since(Utc::now()).num_seconds());
+    }
+
+    #[test]
+    fn test_get_travel_time_coeff() {
+        assert_eq!(0.4, get_travel_time_coeff(GameOptionSpeed::Slow));
+        assert_eq!(0.55, get_travel_time_coeff(GameOptionSpeed::Medium));
+        assert_eq!(0.7, get_travel_time_coeff(GameOptionSpeed::Fast));
     }
 
     fn get_fleet_mock() -> Fleet {

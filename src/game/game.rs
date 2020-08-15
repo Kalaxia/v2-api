@@ -7,6 +7,7 @@ use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
+use galaxy_rs::GalaxyBuilder;
 use crate::{
     lib::{
         Result,
@@ -42,12 +43,36 @@ pub struct GameID(pub Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
     pub id: GameID,
+    pub game_speed: GameOptionSpeed,
+    pub map_size: GameOptionMapSize
 }
 
 pub struct GameServer {
     pub id: GameID,
     state: web::Data<AppState>,
     clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[sqlx(rename = "VARCHAR")]
+#[sqlx(rename_all = "snake_case")]
+#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
+pub enum GameOptionSpeed {
+    Slow,
+    Medium,
+    Fast,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[sqlx(rename = "VARCHAR")]
+#[sqlx(rename_all = "snake_case")]
+#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
+pub enum GameOptionMapSize {
+    VerySmall,
+    Small,
+    Medium,
+    Large,
+    VeryLarge,
 }
 
 impl From<GameID> for Uuid {
@@ -60,6 +85,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
 
         Ok(Game {
             id: GameID(id),
+            game_speed: row.try_get("game_speed")?,
+            map_size: row.try_get("map_size")?
         })
     }
 }
@@ -72,6 +99,63 @@ impl Handler<protocol::Message> for GameServer {
     }
 }
 
+impl GameOptionSpeed {
+    pub fn into_coeff(self) -> f64 {
+        match self {
+            GameOptionSpeed::Slow => 1.2,
+            GameOptionSpeed::Medium => 1.0,
+            GameOptionSpeed::Fast => 0.8,
+        }
+    }
+}
+
+impl GameOptionMapSize {
+    pub fn to_galaxy_builder(&self) -> GalaxyBuilder {
+        match self {
+            GameOptionMapSize::VerySmall => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(1)
+                .nb_arms(3)
+                .nb_arm_bones(3)
+                .slope_factor(0.6)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 32.0),
+            GameOptionMapSize::Small => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(3)
+                .nb_arm_bones(5)
+                .slope_factor(0.5)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 28.0),
+            GameOptionMapSize::Medium => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(4)
+                .nb_arm_bones(10)
+                .slope_factor(0.5)
+                .arm_slope(std::f64::consts::PI / 2.0)
+                .arm_width_factor(1.0 / 24.0),
+            GameOptionMapSize::Large => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(2)
+                .nb_arms(5)
+                .nb_arm_bones(15)
+                .slope_factor(0.4)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 20.0),
+            GameOptionMapSize::VeryLarge => GalaxyBuilder::default()
+                .min_distance(Some(1.5))
+                .cloud_population(2)
+                .nb_arms(6)
+                .nb_arm_bones(20)
+                .slope_factor(0.4)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 16.0),
+        }
+    }
+}
+
 impl Game {
     pub async fn find(gid: GameID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM game__games WHERE id = $1")
@@ -80,8 +164,10 @@ impl Game {
     }
 
     pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO game__games(id) VALUES($1)")
+        sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
             .bind(Uuid::from(game.id))
+            .bind(game.game_speed)
+            .bind(game.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
@@ -96,12 +182,14 @@ impl GameServer {
     async fn init(&mut self) -> Result<()> {
         generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
 
-        let mut systems = generate_systems(self.id.clone()).await?;
+        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+
+        let mut systems = generate_systems(self.id.clone(), game.map_size).await?;
         let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
         assign_systems(&players, &mut systems).await?;
         init_player_wallets(&mut players, &self.state.db_pool).await?;
         System::insert_all(systems.clone(), &self.state.db_pool).await?;
-        init_player_systems(&systems, &self.state.db_pool).await?;
+        init_player_systems(&systems, game.game_speed, &self.state.db_pool).await?;
         
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::SystemsCreated,
@@ -480,9 +568,13 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
         state: state.clone(),
         clients: RwLock::new(clients),
     };
-    let game = Game{ id: id.clone() };
+    let game = Game{
+        id: id.clone(),
+        game_speed: lobby.game_speed.clone(),
+        map_size: lobby.map_size.clone(),
+    };
 
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Game::create(game, &mut tx).await?;
     tx.commit().await?;
 
@@ -532,4 +624,16 @@ pub async fn get_game_constants() -> Result<HttpResponse> {
         victory_points_per_minute: VICTORY_POINTS_PER_MINUTE,
         victory_points: VICTORY_POINTS,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_construction_time_coeff() {
+        assert_eq!(1.2, GameOptionSpeed::Slow.into_coeff());
+        assert_eq!(1.0, GameOptionSpeed::Medium.into_coeff());
+        assert_eq!(0.8, GameOptionSpeed::Fast.into_coeff());
+    }
 }

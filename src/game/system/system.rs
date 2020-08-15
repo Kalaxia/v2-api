@@ -16,15 +16,15 @@ use crate::{
             fleet::{FleetID, Fleet},
             ship::{ShipGroup},
         },
-        game::{GameID},
+        game::{GameID, GameOptionMapSize, GameOptionSpeed},
         player::{PlayerID, Player},
         system::{
-            building::{Building, BuildingID, BuildingStatus, BuildingKind, get_building_data},
+            building::{Building, BuildingStatus, BuildingKind},
         },
     },
     ws::protocol
 };
-use galaxy_rs::{GalaxyBuilder, Point, DataPoint};
+use galaxy_rs::{Point, DataPoint};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
@@ -40,6 +40,17 @@ pub struct System {
     pub kind: SystemKind,
     pub coordinates: Coordinates,
     pub unreachable: bool
+}
+
+#[derive(Debug, Clone)]
+struct MapSizeData {
+    cloud_population: u64,
+    nb_arms: u64,
+    nb_arm_bones: u64,
+    min_distance: f64,
+    slope_factor: f64,
+    arm_slope: f64,
+    arm_width_factor: f64
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -88,13 +99,9 @@ impl Coordinates {
             y: r * theta.sin(),
         }
     }
-
-    pub fn distance_from2(&self, rhs:&Coordinates) -> f64 {
-        (self.x - rhs.x).powi(2) + (self.y - rhs.y).powi(2)
-    }
-
-    pub fn distance_from(&self, rhs:&Coordinates) -> f64 {
-        self.distance_from2(rhs).sqrt()
+    
+    pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
+        ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
     }
 }
 
@@ -321,16 +328,8 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID) -> Result<Vec<System>> {
-    let graph = GalaxyBuilder::default()
-        .min_distance(Some(1.0))
-        .cloud_population(2)
-        .nb_arms(5)
-        .nb_arm_bones(15)
-        .slope_factor(0.4)
-        .arm_slope(std::f64::consts::PI / 4.0)
-        .arm_width_factor(1.0 / 24.0)
-        .build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
+pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<Vec<System>> {
+    let graph = map_size.to_galaxy_builder().build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
 
@@ -437,7 +436,7 @@ async fn find_place<'a>(
     let mut min_dist = std::f64::MAX;
     let mut idx = None;
     for (sid, sys) in galaxy.iter().enumerate() {
-        let dist = final_coord.distance_from(&sys.coordinates);
+        let dist = final_coord.as_distance_to(&sys.coordinates);
         if sys.player.is_none() && dist < min_dist {
             min_dist = dist;
             idx = Some(sid);
@@ -445,10 +444,6 @@ async fn find_place<'a>(
     }
 
     idx.map(move |id| &mut galaxy[id])
-}
-
-pub fn get_distance_between(from: Coordinates, to: Coordinates) -> f64 {
-    ((to.x - from.x).powi(2) + (to.y - from.y).powi(2)).sqrt()
 }
 
 #[get("/")]
@@ -463,8 +458,8 @@ pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>,
     ))
 }
 
-pub async fn init_player_systems(systems: &Vec<System>, db_pool: &PgPool) -> Result<()> {
-    let building_data = get_building_data(BuildingKind::Shipyard);
+pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSpeed, db_pool: &PgPool) -> Result<()> {
+    let building_data = BuildingKind::Shipyard.to_data();
     let mut tx = db_pool.begin().await?;
 
     for s in systems.iter() {
@@ -472,7 +467,7 @@ pub async fn init_player_systems(systems: &Vec<System>, db_pool: &PgPool) -> Res
             continue;
         }
 
-        let mut building = Building::new(s.id, BuildingKind::Shipyard, &building_data);
+        let mut building = Building::new(s.id, BuildingKind::Shipyard, building_data, game_speed);
         building.status = BuildingStatus::Operational;
         building.built_at = building.created_at;
 
@@ -480,4 +475,21 @@ pub async fn init_player_systems(systems: &Vec<System>, db_pool: &PgPool) -> Res
     }
     tx.commit().await?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_as_distance_to() {
+        assert_eq!(2.8284271247461903, Coordinates{
+            x: 2.0,
+            y: 2.0,
+        }.as_distance_to(&Coordinates{
+            x: 4.0,
+            y: 4.0
+        }));
+    }
 }

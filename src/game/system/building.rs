@@ -13,7 +13,7 @@ use crate::{
         time::Time
     },
     game::{
-        game::{GameID, GameBuildingConstructionMessage},
+        game::{Game, GameID, GameBuildingConstructionMessage, GameOptionSpeed},
         system::system::{System, SystemID},
         player::Player
     }
@@ -51,7 +51,7 @@ pub enum BuildingKind {
 #[derive(Deserialize, Serialize, Clone)]
 pub struct BuildingID(pub Uuid);
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Copy, Clone)]
 pub struct BuildingData {
     pub kind: BuildingKind,
     pub cost: u16,
@@ -80,8 +80,44 @@ impl<'a> FromRow<'a, PgRow<'a>> for Building {
     }
 }
 
+impl BuildingKind {
+    pub fn to_data(&self) -> BuildingData {
+        match self {
+            BuildingKind::Mine => BuildingData{
+                cost: 250,
+                construction_time: 10,
+                kind: BuildingKind::Mine,
+            },
+            BuildingKind::Portal => BuildingData{
+                cost: 5000,
+                construction_time: 60,
+                kind: BuildingKind::Portal,
+            },
+            BuildingKind::Shipyard => BuildingData {
+                cost: 500,
+                construction_time: 20,
+                kind: BuildingKind::Shipyard,
+            }
+        }
+    }
+}
+
+impl BuildingData {
+    fn into_construction_time(self, from: Time, game_speed: GameOptionSpeed) -> Time {
+        let time: DateTime<Utc> = from.into();
+        Time(time
+            .checked_add_signed(self.into_duration(game_speed))
+            .expect("Could not add construction time")
+        )
+    }
+
+    fn into_duration(self, game_speed: GameOptionSpeed) -> Duration {
+        Duration::seconds((self.construction_time as f64 * game_speed.into_coeff()).ceil() as i64)
+    }
+}
+
 impl Building {
-    pub fn new(sid: SystemID, kind: BuildingKind, data: &BuildingData) -> Building {
+    pub fn new(sid: SystemID, kind: BuildingKind, data: BuildingData, game_speed: GameOptionSpeed) -> Building {
         let now = Time::now();
 
         Building{
@@ -90,7 +126,7 @@ impl Building {
             kind: kind,
             status: BuildingStatus::Constructing,
             created_at: now.clone(),
-            built_at: get_construction_time(data, now),
+            built_at: data.into_construction_time(now, game_speed),
         }
     }
 
@@ -147,6 +183,7 @@ pub async fn create_building(
 )
     -> Result<HttpResponse>
 {
+    let game = Game::find(info.0, &state.db_pool).await?;
     let system = System::find(info.1.clone(), &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
@@ -159,10 +196,10 @@ pub async fn create_building(
         return Err(InternalError::Conflict)?;
     }
 
-    let building_data = get_building_data(data.kind);
+    let building_data = data.kind.to_data();
     player.spend(building_data.cost as usize)?;
 
-    let building = Building::new(info.1.clone(), data.kind, &building_data);
+    let building = Building::new(info.1.clone(), data.kind, building_data, game.game_speed);
 
     let mut tx = state.db_pool.begin().await?;
     Player::update(player, &mut tx).await?;
@@ -177,36 +214,22 @@ pub async fn create_building(
 #[get("/buildings/")]
 pub async fn get_buildings_data() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(vec![
-        get_building_data(BuildingKind::Mine),
-        get_building_data(BuildingKind::Portal),
-        get_building_data(BuildingKind::Shipyard),
+        BuildingKind::Mine.to_data(),
+        BuildingKind::Portal.to_data(),
+        BuildingKind::Shipyard.to_data(),
     ]))
 }
 
-pub fn get_building_data(kind: BuildingKind) -> BuildingData {
-    match kind {
-        BuildingKind::Mine => BuildingData{
-            cost: 250,
-            construction_time: 10,
-            kind: BuildingKind::Mine,
-        },
-        BuildingKind::Portal => BuildingData{
-            cost: 5000,
-            construction_time: 60,
-            kind: BuildingKind::Portal,
-        },
-        BuildingKind::Shipyard => BuildingData {
-            cost: 500,
-            construction_time: 20,
-            kind: BuildingKind::Shipyard,
-        }
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn get_construction_time(data: &BuildingData, from: Time) -> Time {
-    let time: DateTime<Utc> = from.into();
-    Time(time
-        .checked_add_signed(Duration::seconds(data.construction_time as i64))
-        .expect("Could not add construction time")
-    )
+    #[test]
+    fn test_get_construction_seconds() {
+        let shipyard_data = BuildingKind::Shipyard.to_data();
+
+        assert_eq!(24, shipyard_data.into_duration(GameOptionSpeed::Slow).num_seconds());
+        assert_eq!(20, shipyard_data.into_duration(GameOptionSpeed::Medium).num_seconds());
+        assert_eq!(16, shipyard_data.into_duration(GameOptionSpeed::Fast).num_seconds());
+    }
 }

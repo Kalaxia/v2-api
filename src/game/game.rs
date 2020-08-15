@@ -131,7 +131,7 @@ impl GameServer {
         assign_systems(&players, &mut systems).await?;
         init_player_wallets(&mut players, &self.state.db_pool).await?;
         System::insert_all(systems.clone(), &self.state.db_pool).await?;
-        init_player_systems(&systems, &self.state.db_pool).await?;
+        init_player_systems(&systems, game.game_speed, &self.state.db_pool).await?;
         
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::SystemsCreated,

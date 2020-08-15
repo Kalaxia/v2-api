@@ -38,7 +38,7 @@ pub struct Lobby {
     pub map_size: GameOptionMapSize 
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LobbyOptionsPatch {
     pub map_size: Option<GameOptionMapSize>, 
     pub game_speed: Option<GameOptionSpeed>, 
@@ -124,9 +124,11 @@ impl Lobby {
     }
 
     pub async fn update(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("UPDATE lobby__lobbies SET owner_id = $1 WHERE id = $2")
+        sqlx::query("UPDATE lobby__lobbies SET owner_id = $2, game_speed = $3, map_size = $4 WHERE id = $1")
             .bind(Uuid::from(l.id))
             .bind(Uuid::from(l.owner))
+            .bind(l.game_speed)
+            .bind(l.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
@@ -303,9 +305,12 @@ pub async fn update_lobby_options(
     if lobby.owner != claims.pid.clone() {
         Err(InternalError::AccessDenied)?
     }
-
+    println!("{:?}", data);
     lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
     lobby.map_size = data.map_size.clone().map_or(GameOptionMapSize::Medium, |ms| ms);
+
+    println!("{:?}", lobby.game_speed.clone());
+    println!("{:?}", lobby.map_size.clone());
 
     let mut tx = state.db_pool.begin().await?;
     Lobby::update(lobby.clone(), &mut tx).await?;

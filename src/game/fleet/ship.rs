@@ -13,7 +13,7 @@ use crate::{
     },
     game::{
         player::{Player},
-        game::{GameID, GameShipQueueMessage},
+        game::{Game, GameID, GameShipQueueMessage, GameOptionSpeed},
         fleet::fleet::{FleetID, Fleet},
         system::system::{SystemID, System},
     },
@@ -234,10 +234,12 @@ pub async fn add_ship_queue(
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let (s, p) = futures::join!(
+    let (g, s, p) = futures::join!(
+        Game::find(info.0, &state.db_pool),
         System::find(info.1, &state.db_pool),
         Player::find(claims.pid, &state.db_pool),
     );
+    let game = g?;
     let system = s?;
     let mut player = p?;
     let ship_model = get_ship_model(json_data.category.clone());
@@ -256,7 +258,7 @@ pub async fn add_ship_queue(
         quantity: json_data.quantity as u16,
         created_at: Time::now(),
         started_at: starts_at.clone(),
-        finished_at: get_ship_construction_time(ship_model, json_data.quantity as u16, starts_at),
+        finished_at: get_ship_construction_time(&ship_model, json_data.quantity as u16, starts_at, game.game_speed),
     };
 
     let mut tx = state.db_pool.begin().await?;
@@ -372,10 +374,23 @@ pub async fn get_ship_models() -> Result<HttpResponse> {
     ]))
 }
 
-fn get_ship_construction_time(model: ShipModel, quantity: u16, from: Time) -> Time {
+fn get_ship_construction_time(model: &ShipModel, quantity: u16, from: Time, game_speed: GameOptionSpeed) -> Time {
     let datetime: DateTime<Utc> = from.into();
-    let ms = quantity as usize * model.construction_time as usize;
-    Time(datetime.checked_add_signed(Duration::milliseconds(ms as i64)).expect("Could not add construction time"))
+    Time(datetime.checked_add_signed(
+        Duration::milliseconds(get_ship_construction_milliseconds(model, quantity, game_speed))
+    ).expect("Could not add construction time"))
+}
+
+fn get_ship_construction_milliseconds(model: &ShipModel, quantity: u16, game_speed: GameOptionSpeed) -> i64 {
+    ((quantity as usize * model.construction_time as usize) as f64 * get_ship_construction_time_coeff(game_speed)).ceil() as i64
+}
+
+fn get_ship_construction_time_coeff(game_speed: GameOptionSpeed) -> f64 {
+    match game_speed {
+        GameOptionSpeed::Slow => 1.2,
+        GameOptionSpeed::Medium => 1.0,
+        GameOptionSpeed::Fast => 0.8,
+    }
 }
 
 pub fn get_ship_model(category: ShipModelCategory) -> ShipModel {
@@ -430,5 +445,21 @@ mod tests {
         assert_eq!(cruiser.category, ShipModelCategory::Cruiser);
 
         assert_ne!(fighter.cost, cruiser.cost);
+    }
+
+    #[test]
+    fn test_get_ship_construction_time_coeff() {
+        assert_eq!(1.2, get_ship_construction_time_coeff(GameOptionSpeed::Slow));
+        assert_eq!(1.0, get_ship_construction_time_coeff(GameOptionSpeed::Medium));
+        assert_eq!(0.8, get_ship_construction_time_coeff(GameOptionSpeed::Fast));
+    }
+
+    #[test]
+    fn test_get_ship_construction_milliseconds() {
+        let fighter_model = get_ship_model(ShipModelCategory::Fighter);
+
+        assert_eq!(960, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Slow));
+        assert_eq!(800, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Medium));
+        assert_eq!(640, get_ship_construction_milliseconds(&fighter_model, 2, GameOptionSpeed::Fast));
     }
 }

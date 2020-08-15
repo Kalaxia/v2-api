@@ -46,7 +46,7 @@ pub struct ShipQueue {
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipQueueID(pub Uuid);
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Copy, Clone)]
 pub struct ShipModel {
     pub category: ShipModelCategory,
     pub construction_time: u16,
@@ -147,15 +147,16 @@ impl ShipModelCategory {
 }
 
 impl ShipModel {
-    pub fn as_construction_time(&self, quantity: u16, from: Time, game_speed: GameOptionSpeed) -> Time {
+    pub fn compute_construction_deadline(self, quantity: u16, from: Time, game_speed: GameOptionSpeed) -> Time {
         let datetime: DateTime<Utc> = from.into();
-        Time(datetime.checked_add_signed(
-            Duration::milliseconds(self.as_construction_milliseconds(quantity, game_speed))
-        ).expect("Could not add construction time"))
+
+        Time(datetime.checked_add_signed(self.into_duration(quantity, game_speed)).expect("Could not add construction time"))
     }
 
-    pub fn as_construction_milliseconds(&self, quantity: u16, game_speed: GameOptionSpeed) -> i64 {
-        ((quantity as usize * self.construction_time as usize) as f64 * game_speed.into_coeff()).ceil() as i64
+    pub fn into_duration(self, quantity: u16, game_speed: GameOptionSpeed) -> Duration {
+        Duration::milliseconds((
+            (quantity as usize * self.construction_time as usize) as f64 * game_speed.into_coeff()
+        ).ceil() as i64)
     }
 }
 
@@ -310,7 +311,7 @@ pub async fn add_ship_queue(
         quantity: json_data.quantity as u16,
         created_at: Time::now(),
         started_at: starts_at.clone(),
-        finished_at: ship_model.as_construction_time(json_data.quantity as u16, starts_at, game.game_speed),
+        finished_at: ship_model.compute_construction_deadline(json_data.quantity as u16, starts_at, game.game_speed),
     };
 
     let mut tx = state.db_pool.begin().await?;
@@ -447,8 +448,8 @@ mod tests {
     fn test_ship_model_construction_milliseconds() {
         let fighter_model = ShipModelCategory::Fighter.as_data();
 
-        assert_eq!(960, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Slow));
-        assert_eq!(800, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Medium));
-        assert_eq!(640, fighter_model.as_construction_milliseconds(2, GameOptionSpeed::Fast));
+        assert_eq!(960, fighter_model.into_duration(2, GameOptionSpeed::Slow).num_milliseconds());
+        assert_eq!(800, fighter_model.into_duration(2, GameOptionSpeed::Medium).num_milliseconds());
+        assert_eq!(640, fighter_model.into_duration(2, GameOptionSpeed::Fast).num_milliseconds());
     }
 }

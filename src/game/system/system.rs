@@ -459,7 +459,7 @@ pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>,
 }
 
 pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSpeed, db_pool: &PgPool) -> Result<()> {
-    let building_data = BuildingKind::Shipyard.as_data();
+    let building_data = BuildingKind::Shipyard.to_data();
     let mut tx = db_pool.begin().await?;
 
     for s in systems.iter() {

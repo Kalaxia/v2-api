@@ -81,7 +81,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Building {
 }
 
 impl BuildingKind {
-    pub fn as_data(&self) -> BuildingData {
+    pub fn to_data(&self) -> BuildingData {
         match self {
             BuildingKind::Mine => BuildingData{
                 cost: 250,
@@ -106,13 +106,13 @@ impl BuildingData {
     fn into_construction_time(self, from: Time, game_speed: GameOptionSpeed) -> Time {
         let time: DateTime<Utc> = from.into();
         Time(time
-            .checked_add_signed(Duration::seconds(self.into_construction_seconds(game_speed)))
+            .checked_add_signed(self.into_duration(game_speed))
             .expect("Could not add construction time")
         )
     }
 
-    fn into_construction_seconds(self, game_speed: GameOptionSpeed) -> i64 {
-        (self.construction_time as f64 * game_speed.into_coeff()).ceil() as i64
+    fn into_duration(self, game_speed: GameOptionSpeed) -> Duration {
+        Duration::seconds((self.construction_time as f64 * game_speed.into_coeff()).ceil() as i64)
     }
 }
 
@@ -196,7 +196,7 @@ pub async fn create_building(
         return Err(InternalError::Conflict)?;
     }
 
-    let building_data = data.kind.as_data();
+    let building_data = data.kind.to_data();
     player.spend(building_data.cost as usize)?;
 
     let building = Building::new(info.1.clone(), data.kind, building_data, game.game_speed);
@@ -214,9 +214,9 @@ pub async fn create_building(
 #[get("/buildings/")]
 pub async fn get_buildings_data() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(vec![
-        BuildingKind::Mine.as_data(),
-        BuildingKind::Portal.as_data(),
-        BuildingKind::Shipyard.as_data(),
+        BuildingKind::Mine.to_data(),
+        BuildingKind::Portal.to_data(),
+        BuildingKind::Shipyard.to_data(),
     ]))
 }
 
@@ -226,10 +226,10 @@ mod tests {
 
     #[test]
     fn test_get_construction_seconds() {
-        let shipyard_data = BuildingKind::Shipyard.as_data();
+        let shipyard_data = BuildingKind::Shipyard.to_data();
 
-        assert_eq!(24, shipyard_data.into_construction_seconds(GameOptionSpeed::Slow));
-        assert_eq!(20, shipyard_data.into_construction_seconds(GameOptionSpeed::Medium));
-        assert_eq!(16, shipyard_data.into_construction_seconds(GameOptionSpeed::Fast));
+        assert_eq!(24, shipyard_data.into_duration(GameOptionSpeed::Slow).num_seconds());
+        assert_eq!(20, shipyard_data.into_duration(GameOptionSpeed::Medium).num_seconds());
+        assert_eq!(16, shipyard_data.into_duration(GameOptionSpeed::Fast).num_seconds());
     }
 }

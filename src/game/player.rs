@@ -31,7 +31,7 @@ pub struct PlayerID(pub Uuid);
 #[derive(Deserialize)]
 pub struct PlayerUpdateData{
     pub username: String,
-    pub faction_id: FactionID,
+    pub faction_id: Option<FactionID>,
     pub is_ready: bool,
 }
 
@@ -220,7 +220,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
         return Err(InternalError::PlayerUsernameAlreadyTaken)?;
     }
     player.username = json_data.username.clone();
-    player.faction = Some(json_data.faction_id);
+    player.faction = json_data.faction_id;
     player.ready = json_data.is_ready;
     let mut tx =state.db_pool.begin().await?;
     Player::update(player.clone(), &mut tx).await?;

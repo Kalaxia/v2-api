@@ -234,6 +234,7 @@ impl GameServer {
         let mut players_income = HashMap::new();
         let mines: Vec<SystemID> = Building::find_by_kind(BuildingKind::Mine, &self.state.db_pool).await?
             .into_iter()
+            .filter(|b| b.status == BuildingStatus::Operational)
             .map(|b| b.system)
             .collect();
 

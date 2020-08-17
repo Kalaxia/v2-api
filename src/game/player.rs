@@ -99,6 +99,13 @@ impl Player {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
+    pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1 AND faction_id = $2")
+            .bind(Uuid::from(gid))
+            .bind(i32::from(fid))
+            .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+    
     pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
             .bind(Uuid::from(gid))
@@ -164,6 +171,16 @@ impl Player {
             .bind(Uuid::from(p.id))
             .execute(tx).await.map_err(ServerError::from)
     }
+}
+
+pub async fn init_player_wallets(players: &mut Vec<Player>, db_pool: &PgPool) -> Result<()> {
+    let mut tx = db_pool.begin().await?;
+    for player in players.iter_mut() {
+        player.wallet = GAME_START_WALLET;
+        Player::update(player.clone(), &mut tx).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 
 #[post("/login")]
@@ -250,13 +267,9 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     Ok(HttpResponse::NoContent().finish())
 }
 
-
-pub async fn init_player_wallets(players: &mut Vec<Player>, db_pool: &PgPool) -> Result<()> {
-    let mut tx = db_pool.begin().await?;
-    for player in players.iter_mut() {
-        player.wallet = GAME_START_WALLET;
-        Player::update(player.clone(), &mut tx).await?;
-    }
-    tx.commit().await?;
-    Ok(())
+#[get("/players/")]
+pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(GameID, FactionID)>)
+    -> Result<HttpResponse>
+{
+    Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(info.0, info.1, &state.db_pool).await?))
 }

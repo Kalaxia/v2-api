@@ -117,6 +117,13 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(g::get_players)
             .service(g::leave_game)
             .service(
+                web::scope("/{game_id}/factions")
+                .service(
+                    web::scope("/{faction_id}")
+                    .service(player::get_faction_members)
+                )
+            )
+            .service(
                 web::scope("/{game_id}/systems")
                 .service(system::get_systems)
                 .service(

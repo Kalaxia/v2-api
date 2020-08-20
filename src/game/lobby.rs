@@ -272,7 +272,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
         id: new_lobby.id.clone(),
         clients: RwLock::new(HashMap::new()),
     }.start();
-    let client = state.retrieve_client(&claims.pid);
+    let client = state.retrieve_client(&claims.pid)?;
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
@@ -406,7 +406,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
         player,
         Some(claims.pid),
     );
-    let client = state.retrieve_client(&claims.pid);
+    let client = state.retrieve_client(&claims.pid)?;
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
     lobby_server.do_send(LobbyAddClientMessage(claims.pid.clone(), client));

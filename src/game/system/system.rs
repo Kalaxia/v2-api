@@ -400,8 +400,8 @@ pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Re
 
                 // make the place AND its neighbours in a zone which width is defined by the
                 // EXCLUSION constant not usable anymore
-                for i in (cell_x-EXCLUSION).max(0)..=(cell_x+EXCLUSION).min(GRID_SIZE-1) {
-                    for j in (cell_y-EXCLUSION).max(0)..=(cell_y+EXCLUSION).min(GRID_SIZE-1) {
+                for i in cell_x.saturating_sub(EXCLUSION)..=(cell_x+EXCLUSION).min(GRID_SIZE-1) {
+                    for j in cell_y.saturating_sub(EXCLUSION)..=(cell_y+EXCLUSION).min(GRID_SIZE-1) {
                         taken[i][j] = true;
                     }
                 }

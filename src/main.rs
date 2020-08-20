@@ -79,11 +79,11 @@ impl AppState {
         self.clients_mut().insert(pid.clone(), client);
     }
 
-    pub fn retrieve_client(&self, pid: &player::PlayerID) -> actix::Addr<ws::client::ClientSession> {
+    pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
         let mut clients = self.clients_mut();
-        let client = clients.get(&pid).expect("Client not found").clone();
-        clients.remove(&pid);
-        client
+        clients.remove_entry(&pid)
+            .ok_or(lib::error::InternalError::PlayerUnknown.into())
+            .map(|t| t.1)
     }
 
     pub fn remove_client(&self, pid: &player::PlayerID) {

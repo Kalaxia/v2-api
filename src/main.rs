@@ -220,7 +220,7 @@ async fn main() -> std::io::Result<()> {
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
-    
+
     let state = web::Data::new(generate_state().await);
 
     HttpServer::new(move || App::new()

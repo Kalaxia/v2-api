@@ -5,7 +5,7 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQuery
 use sqlx_core::row::Row;
 use crate::{
     AppState,
-    game::game::{GameID, GAME_START_WALLET},
+    game::game::{GameID, GAME_START_WALLET, GameNotifyPlayerMessage},
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,
@@ -33,6 +33,11 @@ pub struct PlayerUpdateData{
     pub username: String,
     pub faction_id: Option<FactionID>,
     pub is_ready: bool,
+}
+
+#[derive(Deserialize)]
+pub struct PlayerMoneyTransferRequest{
+    pub amount: usize
 }
 
 impl From<PlayerID> for Uuid {
@@ -239,7 +244,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     player.username = json_data.username.clone();
     player.faction = json_data.faction_id;
     player.ready = json_data.is_ready;
-    let mut tx =state.db_pool.begin().await?;
+    let mut tx = state.db_pool.begin().await?;
     Player::update(player.clone(), &mut tx).await?;
     tx.commit().await?;
 
@@ -272,4 +277,47 @@ pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(Ga
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(info.0, info.1, &state.db_pool).await?))
+}
+
+#[patch("/players/{player_id}/money/")]
+pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID, FactionID, PlayerID)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
+    -> Result<HttpResponse>
+{
+    let mut current_player = Player::find(claims.pid, &state.db_pool).await?;
+    let mut other_player = Player::find(info.2, &state.db_pool).await?;
+
+    if current_player.faction != other_player.faction {
+        return Err(InternalError::Conflict)?;
+    }
+
+    if current_player.wallet < data.amount {
+        return Err(InternalError::Conflict)?;
+    }
+
+    other_player.wallet += data.amount;
+    current_player.wallet -= data.amount;
+
+    let mut tx = state.db_pool.begin().await?;
+    Player::update(current_player.clone(), &mut tx).await?;
+    Player::update(other_player.clone(), &mut tx).await?;
+    tx.commit().await?;
+
+    #[derive(Serialize)]
+    pub struct PlayerMoneyTransferData{
+        pub amount: usize,
+        pub player_id: PlayerID,
+    }
+    
+    let games = state.games();
+    let game_server = games.get(&other_player.game.clone().unwrap()).expect("Lobby exists in DB but not in HashMap");
+    game_server.do_send(GameNotifyPlayerMessage(
+        other_player.id.clone(),
+        protocol::Message::new(
+            protocol::Action::PlayerMoneyTransfer,
+            PlayerMoneyTransferData{ player_id: current_player.id.clone(), amount: data.amount },
+            None,
+        )
+    ));
+
+    Ok(HttpResponse::NoContent().finish())
 }

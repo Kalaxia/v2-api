@@ -19,6 +19,7 @@ pub enum Action {
     PlayerConnected,
     PlayerJoined,
     PlayerUpdate,
+    PlayerMoneyTransfer,
     PlayerLeft,
     PlayerDisconnected,
     PlayerIncome,

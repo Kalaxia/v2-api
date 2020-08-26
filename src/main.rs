@@ -121,6 +121,7 @@ fn config(cfg: &mut web::ServiceConfig) {
                 .service(
                     web::scope("/{faction_id}")
                     .service(player::get_faction_members)
+                    .service(player::transfer_money)
                 )
             )
             .service(

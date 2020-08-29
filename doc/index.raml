@@ -1,0 +1,221 @@
+openapi: 3.0.0
+# Added by API Auto Mocking Plugin
+servers:
+  - description: SwaggerHub API Auto Mocking
+    url: https://virtserver.swaggerhub.com/Kalaxia/kalaxia-api/1.0.0
+info:
+  description: This is the game server API for Kalaxia V2
+  version: "1.0.0"
+  title: Kalaxia Game API
+  contact:
+    email: kern046@gmail.com
+  license:
+    name: Apache 2.0
+    url: 'http://www.apache.org/licenses/LICENSE-2.0.html'
+tags:
+  - name: factions
+    description: Faction related routes
+  - name: lobbies
+    description: Lobby related routes
+  - name: players
+    description: Player related routes
+paths:
+  /api/factions/:
+    get:
+      tags:
+        - factions
+      summary: retrieve playable factions
+      responses:
+        '200':
+          description: all playable factions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Faction'
+  /api/lobbies/:
+    get:
+      summary: retrieve active lobbies
+      tags:
+        - lobbies
+      responses:
+        '200':
+          description: Active lobbies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Lobby'
+    post:
+      summary: create a new lobby
+      tags:
+        - lobbies
+      security:
+        - bearerAuth: []
+      responses:
+        '201':
+          description: The created lobby, which the current user is a part of
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lobby'
+                
+  /api/lobbies/{id}:
+    get:
+      summary: Retrieve the requested lobby
+      tags:
+        - lobbies
+      parameters:
+        - $ref: '#/components/parameters/lobbyId'
+      responses:
+        '200':
+          description: The requested lobby
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lobby'
+        '404':
+          description: Lobby not found
+          
+  /api/lobbies/{id}/launch/:
+    post:
+      summary: Launch a lobby to create a new game
+      tags:
+        - lobbies
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/lobbyId'
+      responses:
+        '204':
+          description: Game created from lobby. Game data will be transfered via websocket later
+        '403':
+          description: Access denied if you\'re not the lobby\'s owner
+        '404':
+          description: Lobby not found
+  /api/lobbies/{id}/players/:
+    post:
+      summary: Join the requested lobby as a connected player
+      tags:
+        - lobbies
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/lobbyId'
+      responses:
+        '204':
+          description: 'Player has joined lobby'
+        '404':
+          description: 'Unknown lobby'
+        '409':
+          description: 'Player is already in a lobby'
+    delete:
+      summary: Leave the requested lobby
+      tags:
+        - lobbies
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/lobbyId'
+      responses:
+        '204':
+          description: 'Player has left lobby'
+        '404':
+          description: 'Lobby or Player not found'
+        '409':
+          description: 'Player not in lobby'
+  /login:
+    post:
+      summary: Authenticate the current player by creating a JWT
+      tags:
+        - players
+      responses:
+        '200':
+          description: The JWT is created and ready to be used
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    format: jwt
+          
+  /api/players/me/:
+    get:
+      summary: Retrieve data about the connected player
+      tags:
+        - players
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current player data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Player'
+    
+                
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT  
+  parameters:
+    lobbyId:
+      in: path
+      name: id
+      schema:
+        type: string
+        format: uuid
+      required: true
+      description: Uuid of the lobby to retrieve
+  schemas:
+    Faction:
+      type: object
+      required:
+        - id
+        - name
+        - color
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        name:
+          type: string
+          example: The Kalankars
+        color:
+          type: array
+          items: 
+            type: integer
+          example: [255,0,0]
+    Lobby:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        owner:
+          $ref: '#/components/schemas/Player'
+        players:
+          type: array
+          items:
+            type: string
+            format: uuid
+            example: d290f1ee-6c54-4b01-90e6-d701748f0851
+    Player:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: d290f1ee-6c54-4b01-90e6-d701748f0851
+        username:
+          type: string
+          example: John Doe

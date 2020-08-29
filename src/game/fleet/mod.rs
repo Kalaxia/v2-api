@@ -1,3 +1,3 @@
 pub mod fleet;
-pub mod ship;
-pub mod combat;
+pub mod squadron;
+pub mod travel;

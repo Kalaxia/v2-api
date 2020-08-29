@@ -12,7 +12,8 @@ use crate::{
         game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
         player::{Player, PlayerID},
         system::system::{System, SystemID, Coordinates},
-        fleet::ship::{ShipGroup},
+        fleet::squadron::{FleetSquadron, FleetSquadronID},
+        ship::model::ShipModelCategory,
     },
     ws::protocol,
     AppState
@@ -33,7 +34,7 @@ pub struct Fleet{
     pub destination_system: Option<SystemID>,
     pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
-    pub ship_groups: Vec<ShipGroup>,
+    pub squadrons: Vec<FleetSquadron>,
 }
 
 #[derive(Deserialize)]
@@ -53,7 +54,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: row.try_get("player_id").map(PlayerID)?,
-            ship_groups: vec![],
+            squadrons: vec![],
         })
     }
 }
@@ -76,7 +77,7 @@ impl Fleet {
     }
 
     pub fn can_fight(&self) -> bool {
-        !self.ship_groups.is_empty() && self.ship_groups.iter().any(|sg| sg.quantity > 0)
+        !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -133,7 +134,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         system: system.id.clone(),
         destination_system: None,
         destination_arrival_date: None,
-        ship_groups: vec![],
+        squadrons: vec![],
     };
     let mut tx = state.db_pool.begin().await?;
     Fleet::create(fleet.clone(), &mut tx).await?;
@@ -158,7 +159,7 @@ pub async fn donate(
     let (s, f, sg, p) = futures::join!(
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
-        ShipGroup::find_by_fleet(info.2, &state.db_pool),
+        FleetShipGroup::find_by_fleet(info.2, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     let system = s?;
@@ -196,69 +197,6 @@ pub async fn donate(
     ));
 
     Ok(HttpResponse::NoContent().finish())
-}
-
-#[post("/travel/")]
-pub async fn travel(
-    state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID,FleetID,)>,
-    json_data: web::Json<FleetTravelRequest>,
-    claims: Claims
-) -> Result<HttpResponse> {
-    let (ds, g, s, f, sg, p) = futures::join!(
-        System::find(json_data.destination_system_id, &state.db_pool),
-        Game::find(info.0, &state.db_pool),
-        System::find(info.1, &state.db_pool),
-        Fleet::find(&info.2, &state.db_pool),
-        ShipGroup::find_by_fleet(info.2, &state.db_pool),
-        Player::find(claims.pid, &state.db_pool)
-    );
-    
-    let destination_system = ds?;
-    let game = g?;
-    let system = s?;
-    let mut fleet = f?;
-    fleet.ship_groups = sg?;
-    let player = p?;
-
-    if fleet.player != player.id.clone() {
-        return Err(InternalError::AccessDenied)?;
-    }
-    if fleet.destination_system != None {
-        return Err(InternalError::FleetAlreadyTravelling)?;
-    }
-    if !fleet.can_fight() {
-        return Err(InternalError::FleetEmpty)?;
-    }
-    fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
-    fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(
-        system.coordinates,
-        destination_system.coordinates,
-        get_travel_time_coeff(game.game_speed)
-    ).into());
-    Fleet::update(fleet.clone(), &state.db_pool).await?;
-
-    let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
-    game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
-
-    Ok(HttpResponse::Ok().json(fleet))
-}
-
-fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
-    let distance = from.as_distance_to(&to);
-    let ms = distance / time_coeff;
-
-    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
-}
-
-fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
-    match game_speed {
-        GameOptionSpeed::Slow => 0.4,
-        GameOptionSpeed::Medium => 0.55,
-        GameOptionSpeed::Fast => 0.7,
-    }
 }
 
 #[cfg(test)]
@@ -348,10 +286,10 @@ mod tests {
             destination_system: None,
             destination_arrival_date: None,
             ship_groups: vec![
-                ShipGroup{
+                FleetShipGroup{
                     id: ShipGroupID(Uuid::new_v4()),
-                    fleet: Some(FleetID(Uuid::new_v4())),
-                    system: None,
+                    fleet: FleetID(Uuid::new_v4()),
+                    formation: FleetFormation::Center,
                     category: ShipModelCategory::Fighter,
                     quantity: 1,
                 }

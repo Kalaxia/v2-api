@@ -474,6 +474,10 @@ pub struct GameRemovePlayerMessage(pub PlayerID);
 #[rtype(result="()")]
 pub struct GameNotifyPlayerMessage(pub PlayerID, pub protocol::Message);
 
+#[derive(actix::Message, Serialize, Clone)]
+#[rtype(result="()")]
+pub struct GameNotifyFactionMessage(pub FactionID, pub protocol::Message);
+
 #[derive(actix::Message)]
 #[rtype(result="()")]
 pub struct GameFleetTravelMessage{
@@ -508,10 +512,21 @@ impl Handler<GameRemovePlayerMessage> for GameServer {
 impl Handler<GameNotifyPlayerMessage> for GameServer {
     type Result = ();
 
-    fn handle(&mut self, msg: GameNotifyPlayerMessage, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GameNotifyPlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         let client = clients.get(&msg.0).unwrap().clone();
         client.do_send(msg.1);
+    }
+}
+
+impl Handler<GameNotifyFactionMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameNotifyFactionMessage, _ctx: &mut Self::Context) -> Self::Result {
+        let res = block_on(self.faction_broadcast(msg.0, msg.1));
+        if res.is_err() {
+            println!("Faction broadcast failed : {:?}", res.err());
+        }
     }
 }
 

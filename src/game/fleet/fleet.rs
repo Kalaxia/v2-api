@@ -1,4 +1,4 @@
-use actix_web::{post, web, HttpResponse};
+use actix_web::{post, patch, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::{
@@ -104,10 +104,11 @@ impl Fleet {
     }
 
     pub async fn update(f: Fleet, db_pool: &PgPool) -> Result<u64> {
-        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3 WHERE id=$4")
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
             .bind(Uuid::from(f.system))
             .bind(f.destination_system.map(Uuid::from))
             .bind(f.destination_arrival_date)
+            .bind(Uuid::from(f.player))
             .bind(Uuid::from(f.id))
             .execute(db_pool).await.map_err(ServerError::from)
     }
@@ -146,6 +147,55 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         Some(claims.pid.clone()),
     ));
     Ok(HttpResponse::Created().json(fleet))
+}
+
+#[patch("/donate/")]
+pub async fn donate(
+    state: web::Data<AppState>,
+    info: web::Path<(GameID,SystemID,FleetID,)>,
+    claims: Claims
+) -> Result<HttpResponse> {
+    let (s, f, sg, p) = futures::join!(
+        System::find(info.1, &state.db_pool),
+        Fleet::find(&info.2, &state.db_pool),
+        ShipGroup::find_by_fleet(info.2, &state.db_pool),
+        Player::find(claims.pid, &state.db_pool)
+    );
+    let system = s?;
+    let mut fleet = f?;
+    fleet.ship_groups = sg?;
+    let player = p?;
+
+    if fleet.player != player.id || system.player.is_none() || fleet.system != system.id {
+        return Err(InternalError::Conflict)?;
+    }
+
+    let other_player = Player::find(system.player.unwrap(), &state.db_pool).await?;
+
+    if other_player.faction != player.faction || other_player.id == player.id {
+        return Err(InternalError::Conflict)?;
+    }
+
+    fleet.player = other_player.id;
+
+    Fleet::update(fleet.clone(), &state.db_pool).await?;
+
+    #[derive(Serialize)]
+    pub struct FleetTransferData{
+        pub fleet: Fleet,
+        pub donator_id: PlayerID,
+        pub receiver_id: PlayerID,
+    }
+
+    let games = state.games();
+    let game_server = games.get(&other_player.game.clone().unwrap()).expect("Game exists in DB but not in HashMap");
+    game_server.do_send(protocol::Message::new(
+        protocol::Action::FleetTransfer,
+        FleetTransferData{ donator_id: player.id, receiver_id: other_player.id, fleet },
+        None,
+    ));
+
+    Ok(HttpResponse::NoContent().finish())
 }
 
 #[post("/travel/")]

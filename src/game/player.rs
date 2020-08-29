@@ -309,7 +309,7 @@ pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID,
     }
     
     let games = state.games();
-    let game_server = games.get(&other_player.game.clone().unwrap()).expect("Lobby exists in DB but not in HashMap");
+    let game_server = games.get(&other_player.game.clone().unwrap()).expect("Game exists in DB but not in HashMap");
     game_server.do_send(GameNotifyPlayerMessage(
         other_player.id.clone(),
         protocol::Message::new(

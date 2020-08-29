@@ -132,6 +132,7 @@ fn config(cfg: &mut web::ServiceConfig) {
                     .service(fleet::create_fleet)
                     .service(
                         web::scope("/{fleet_id}")
+                        .service(fleet::donate)
                         .service(fleet::travel)
                         .service(
                             web::scope("/ship-groups")

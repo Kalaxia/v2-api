@@ -470,6 +470,10 @@ impl Actor for GameServer {
 #[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
 pub struct GameRemovePlayerMessage(pub PlayerID);
 
+#[derive(actix::Message, Serialize, Clone)]
+#[rtype(result="()")]
+pub struct GameNotifyPlayerMessage(pub PlayerID, pub protocol::Message);
+
 #[derive(actix::Message)]
 #[rtype(result="()")]
 pub struct GameFleetTravelMessage{
@@ -498,6 +502,16 @@ impl Handler<GameRemovePlayerMessage> for GameServer {
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
         Arc::new((client, self.is_empty()))
+    }
+}
+
+impl Handler<GameNotifyPlayerMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameNotifyPlayerMessage, ctx: &mut Self::Context) -> Self::Result {
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        let client = clients.get(&msg.0).unwrap().clone();
+        client.do_send(msg.1);
     }
 }
 

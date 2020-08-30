@@ -9,6 +9,7 @@ pub enum Action {
     FleetCreated,
     FleetArrived,
     FleetSailed,
+    FleetTransfer,
     GameStarted,
     LobbyCreated,
     LobbyOptionsUpdated,

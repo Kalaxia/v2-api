@@ -34,6 +34,23 @@ pub enum ServerError {
     ),
 }
 
+/// We implement our own Serialize trait for fine error report handling.
+/// In the future, we might change the implementation according to our needs.
+///
+/// One example would be to send a "translation keys" used by client apps. Such translation key will
+/// be used by the client to show the error in any supported language.
+///
+/// For now the format reflect these JSON structure:
+/// 
+/// {
+///     "type" : "JwtError",
+///     "data" : null,
+/// }
+/// or
+/// {
+///     "type" : "InternalError",
+///     "data" : "player_not_found",
+/// }
 impl Serialize for ServerError {
     fn serialize<S>(&self, serializer:S) -> Result<S::Ok, S::Error>
         where S: Serializer,
@@ -50,7 +67,8 @@ impl Serialize for ServerError {
         };
 
         let data = match self {
-            ServerError::InternalError(InternalError::NotFound(nf)) => Some(nf),
+            ServerError::InternalError(InternalError::NotFound(nf)) => Some(format!("{}_not_found", nf)),
+            ServerError::InternalError(e) => Some(format!("{:?}", e)),
             _ => None,
         };
 

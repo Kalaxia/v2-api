@@ -42,12 +42,12 @@ pub enum ServerError {
 }
 
 impl ServerError {
-    pub fn if_row_not_found<E>(internal_error:E) -> impl FnOnce(SqlxError) -> Self
-        where E : Into<Self>,
+    pub fn if_row_not_found<E>(_:&E) -> impl FnOnce(SqlxError) -> Self
+        where E : Entity,
     {
         |e| {
             match e {
-                SqlxError::RowNotFound => internal_error.into(),
+                SqlxError::RowNotFound => InternalError::NotFound(E::ETYPE).into(),
                 _ => e.into()
             }
         }
@@ -99,7 +99,7 @@ impl ResponseError for ServerError {
                 NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
                 AccessDenied => StatusCode::FORBIDDEN,
                 Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | FleetEmpty | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
-                NotFound | FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
+                NotFound(_) => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
             ServerError::ActixWSError(e) => e.status_code(),
@@ -117,27 +117,19 @@ impl ResponseError for ServerError {
     }
 }
 
+pub trait Entity {
+    const ETYPE : & 'static str;
+}
+
 /// This enum represent all kinds of errors this specific server can encounter.
 #[derive(Debug, Serialize)]
 pub enum InternalError {
     /// A player tried to perform a restricted operation
     AccessDenied,
     /// A required data does not exist
-    NotFound,
+    NotFound(& 'static str),
     /// The requested operation conflicts with data
     Conflict,
-    /// We couldn't map a FactionID to an existing faction
-    FactionUnknown,
-    /// We couldn't map a PlayerID to an existing player
-    PlayerUnknown,
-    /// We couldn't map a FleetID to an existing fleet
-    FleetUnknown,
-    /// We couldn't map a GameID to an existing game
-    GameUnknown,
-    /// We couldn't map a LobbyID to an existing Lobby
-    LobbyUnknown,
-    /// We couldn't map a SystemID to an existing System
-    SystemUnknown,
     /// A player already in a lobby tries to create a lobby
     AlreadyInLobby,
     /// A player wants to modify a lobby its not in
@@ -154,4 +146,10 @@ pub enum InternalError {
     NoAuthorizationGiven,
     /// A player tried to spend an unauthorized amount of money
     NotEnoughMoney,
+}
+
+impl InternalError {
+    pub fn not_found<T : Entity>(_ : &T) -> Self {
+        Self::NotFound(T::ETYPE)
+    }
 }

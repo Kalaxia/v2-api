@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     lib::{
         Result,
-        error::{ServerError, InternalError},
+        error::*,
         time::Time,
         auth::Claims
     },
@@ -25,6 +25,9 @@ pub const FLEET_RANGE: f64 = 20.0; // ici j'ai une hypothétique "range", qu'on 
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
+impl Entity for FleetID {
+    const ETYPE : & 'static str = "fleet";
+}
 
 #[derive(Serialize, Clone)]
 pub struct Fleet{
@@ -86,7 +89,7 @@ impl Fleet {
     pub async fn find(fid: &FleetID, db_pool: &PgPool) -> Result<Fleet> {
         sqlx::query_as("SELECT * FROM fleet__fleets WHERE id = $1")
             .bind(Uuid::from(fid.clone()))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FleetUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(fid))
     }
 
     pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Vec<Fleet>> {
@@ -140,7 +143,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     tx.commit().await?;
 
     let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    let game = games.get(&info.0).cloned().ok_or(InternalError::not_found(&info.0))?;
     game.do_send(protocol::Message::new(
         protocol::Action::FleetCreated,
         fleet.clone(),
@@ -240,7 +243,7 @@ pub async fn travel(
     Fleet::update(fleet.clone(), &state.db_pool).await?;
 
     let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    let game = games.get(&info.0).cloned().ok_or(InternalError::not_found(&info.0))?;
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))

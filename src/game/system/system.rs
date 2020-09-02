@@ -7,7 +7,7 @@ use crate::{
     lib::{
         Result,
         pagination::{Paginator, new_paginated_response},
-        error::{ServerError, InternalError}
+        error::*,
     },
     game::{
         faction::{FactionID},
@@ -31,6 +31,9 @@ use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
 #[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct SystemID(pub Uuid);
+impl Entity for SystemID {
+    const ETYPE : & 'static str = "system";
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct System {
@@ -223,7 +226,7 @@ impl System {
     pub async fn find(sid: SystemID, db_pool: &PgPool) -> Result<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE id = $1")
             .bind(Uuid::from(sid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&sid))
     }
 
     pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
@@ -414,7 +417,7 @@ pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Re
             });
 
         // find a place for the player in its faction zone
-        let place = find_place(cell_min, cell_max, galaxy).await.ok_or(InternalError::SystemUnknown)?;
+        let place = find_place(cell_min, cell_max, galaxy).await.ok_or(InternalError::NotFound(SystemID::ETYPE))?;
         place.player = Some(player.id);
     }
 

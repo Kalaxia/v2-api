@@ -8,7 +8,7 @@ use crate::{
     lib::{
         Result,
         auth::Claims,
-        error::{ServerError, InternalError},
+        error::*,
         time::Time,
     },
     game::{
@@ -31,6 +31,9 @@ pub struct ShipGroup {
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipGroupID(pub Uuid);
+impl Entity for ShipGroupID {
+    const ETYPE : & 'static str = "ship_group";
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ShipQueue {

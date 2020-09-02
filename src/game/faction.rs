@@ -5,7 +5,7 @@ use crate::{
     game::{
         game::GameID,
     },
-    lib::{Result, error::{ServerError, InternalError}},
+    lib::{Result, error::*}
 };
 use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
@@ -47,6 +47,10 @@ impl<'a> FromRow<'a, PgRow<'a>> for GameFaction {
 
 #[derive(Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct FactionID(pub u8);
+impl Entity for FactionID {
+    const ETYPE : & 'static str = "faction";
+}
+
 #[derive(Serialize, Deserialize, Copy, Clone)]
 pub struct FactionColor(pub u8, pub u8, pub u8, pub u8);
 
@@ -80,7 +84,7 @@ impl Faction {
     pub async fn find(fid: FactionID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM faction__factions WHERE id = $1")
             .bind(i32::from(fid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&fid))
     }
 }
 
@@ -95,7 +99,7 @@ impl GameFaction {
         sqlx::query_as("SELECT * FROM game__factions WHERE game_id = $1 AND faction_id = $2")
             .bind(Uuid::from(gid))
             .bind(i32::from(fid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&gid))
     }
 
     pub async fn create(game_faction: &GameFaction, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {

@@ -5,7 +5,7 @@ use std::sync::RwLock;
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
-use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
+use openssl::ssl::{SslAcceptor, SslFilETYPE, SslMethod};
 use sqlx::PgPool;
 
 mod ws;
@@ -82,7 +82,7 @@ impl AppState {
     pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
         let mut clients = self.clients_mut();
         clients.remove_entry(&pid)
-            .ok_or(lib::error::InternalError::PlayerUnknown.into())
+            .ok_or(lib::error::InternalError::not_found(pid).into())
             .map(|t| t.1)
     }
 
@@ -211,7 +211,7 @@ async fn main() -> std::io::Result<()> {
     let cert = get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem");
 
     let mut ssl_config = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    ssl_config.set_private_key_file(key, SslFiletype::PEM).unwrap();
+    ssl_config.set_private_key_file(key, SslFilETYPE::PEM).unwrap();
     ssl_config.set_certificate_chain_file(cert).unwrap();
 
     let state = web::Data::new(generate_state().await);

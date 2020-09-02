@@ -9,7 +9,7 @@ use crate::{
     lib::{
         Result,
         auth::Claims,
-        error::{ServerError, InternalError},
+        error::*,
         time::Time
     },
     game::{
@@ -50,6 +50,9 @@ pub enum BuildingKind {
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct BuildingID(pub Uuid);
+impl Entity for BuildingID {
+    const ETYPE : & 'static str = "building";
+}
 
 #[derive(Serialize, Copy, Clone)]
 pub struct BuildingData {

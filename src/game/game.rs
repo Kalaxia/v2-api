@@ -11,7 +11,7 @@ use galaxy_rs::GalaxyBuilder;
 use crate::{
     lib::{
         Result,
-        error::{InternalError, ServerError},
+        error::*,
         auth::Claims,
     },
     game::{
@@ -39,6 +39,9 @@ pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct GameID(pub Uuid);
+impl Entity for GameID {
+    const ETYPE : & 'static str = "game";
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
@@ -160,7 +163,7 @@ impl Game {
     pub async fn find(gid: GameID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM game__games WHERE id = $1")
             .bind(Uuid::from(gid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&gid))
     }
 
     pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {

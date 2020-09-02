@@ -9,7 +9,7 @@ use crate::{
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,
-    lib::{Result, error::{InternalError, ServerError}, auth},
+    lib::{Result, error::*, auth},
     ws::protocol,
 };
 
@@ -27,6 +27,9 @@ pub struct Player {
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct PlayerID(pub Uuid);
+impl Entity for PlayerID {
+    const ETYPE : & 'static str = "player";
+}
 
 #[derive(Deserialize)]
 pub struct PlayerUpdateData{
@@ -83,13 +86,13 @@ impl Player {
     pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
             .bind(Uuid::from(pid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&pid))
     }
 
     pub async fn find_system_owner(sid: SystemID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT p.* FROM map__systems s INNER JOIN player__players p ON p.id = s.player_id WHERE s.id = $1")
             .bind(Uuid::from(sid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&sid))
     }
 
     pub async fn find_by_ids(ids: Vec<PlayerID>, db_pool: &PgPool) -> Result<Vec<Self>> {

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     lib::{
         Result,
-        error::{ServerError, InternalError},
+        error::*,
         auth::Claims
     },
     game::game::{create_game, GameOptionMapSize, GameOptionSpeed},
@@ -20,6 +20,9 @@ use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LobbyID(pub Uuid);
+impl Entity for LobbyID {
+    const ETYPE : & 'static str = "lobby";
+}
 
 impl From<LobbyID> for Uuid {
     fn from(lid: LobbyID) -> Self { lid.0 }
@@ -111,7 +114,7 @@ impl Lobby {
     pub async fn find(lid: LobbyID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(lid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(&lid))
     }
 
     pub async fn create(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
@@ -317,7 +320,7 @@ pub async fn update_lobby_options(
     tx.commit().await?;
 
     let lobbies = state.lobbies();
-    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::not_found(&lobby.id))?;
     lobby_server.do_send(protocol::Message::new(
         protocol::Action::LobbyOptionsUpdated,
         data.clone(),
@@ -339,7 +342,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     }
     let clients = Arc::try_unwrap({
         let lobbies = state.lobbies();
-        let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+        let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::not_found(&lobby.id))?;
         lobby_server.send(LobbyGetClientsMessage{})
     }.await?).ok().unwrap();
     let (game_id, game) = create_game(&lobby, state.clone(), clients).await?;
@@ -408,7 +411,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     );
     let client = state.retrieve_client(&claims.pid)?;
     let lobbies = state.lobbies();
-    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
+    let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::not_found(&lobby.id))?;
     lobby_server.do_send(LobbyAddClientMessage(claims.pid.clone(), client));
     lobby_server.do_send(message.clone());
 

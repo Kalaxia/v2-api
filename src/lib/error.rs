@@ -4,7 +4,7 @@ use actix_web_actors::ws::ProtocolError;
 use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use sqlx_core::{Error as SqlxError};
-use serde::Serialize;
+use serde::{Serialize, Serializer, ser::SerializeStruct};
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -12,33 +12,52 @@ use serde::Serialize;
 /// Please, try tu use this type of error instead of specific ones at least at the front-end of the
 /// server, as it will be updated to handle more error cases as we add more libraries or more
 /// crate-specific errors.
-#[derive(Debug, Serialize)]
-#[serde(tag = "type")]
+#[derive(Debug)]
 pub enum ServerError {
     ActixWebError(
-        #[serde(skip_serializing)]
         ActixWebError
     ),
     ActixWSError(
-        #[serde(skip_serializing)]
         ProtocolError
     ),
     JwtError(
-        #[serde(skip_serializing)]
         JwtError
     ),
     InternalError(
-        #[serde(rename(serialize = "reason"))]
         InternalError
     ),
     MailboxError(
-        #[serde(skip_serializing)]
         MailboxError
     ),
     SqlxError(
-        #[serde(skip_serializing)]
         SqlxError
     ),
+}
+
+impl Serialize for ServerError {
+    fn serialize<S>(&self, serializer:S) -> Result<S::Ok, S::Error>
+        where S: Serializer,
+    {
+        let mut s = serializer.serialize_struct("Error", 2)?;
+
+        let ty = match self {
+            ServerError::ActixWebError(_) => "ActixWebError",
+            ServerError::ActixWSError(_) => "ActixWSError",
+            ServerError::JwtError(_) => "JwtError",
+            ServerError::InternalError(_) => "InternalError",
+            ServerError::MailboxError(_) => "MailboxError",
+            ServerError::SqlxError(_) => "SqlxError",
+        };
+
+        let data = match self {
+            ServerError::InternalError(InternalError::NotFound(nf)) => Some(nf),
+            _ => None,
+        };
+
+        s.serialize_field("type", &ty)?;
+        s.serialize_field("data", &data)?;
+        s.end()
+    }
 }
 
 impl ServerError {

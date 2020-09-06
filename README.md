@@ -54,7 +54,9 @@ docker-compose up -d
 Documentation
 -------------
 
-The API documentation can be found [here](https://github.com/Kalaxia/v2-api/wiki).
+The API documentation can be found [here](https://app.swaggerhub.com/apis/Kalaxia/kalaxia-api/1.0.0).
+
+The Websocket endpoints are documented [here](/doc/websockets.md)
 
 Contribute
 ----------

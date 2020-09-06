@@ -22,7 +22,7 @@ pub struct Faction{
 pub struct GameFaction{
     pub faction: FactionID,
     pub game: GameID,
-    pub victory_points: u16,
+    pub victory_points: i16,
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Faction {
@@ -40,7 +40,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for GameFaction {
         Ok(GameFaction{
             faction: row.try_get::<i32, _>("faction_id").map(|id| FactionID(id as u8))?,
             game: row.try_get::<Uuid, _>("game_id").map(GameID)?,
-            victory_points: row.try_get::<i16, _>("victory_points").map(|vp| vp as u16)?,
+            victory_points: row.try_get::<i16, _>("victory_points")?,
         })
     }
 }

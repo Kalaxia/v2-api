@@ -1,6 +1,5 @@
 use actix_web::{get, post, web, HttpResponse};
-use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -13,8 +12,8 @@ use crate::{
     },
     game::{
         player::{Player},
-        game::{Game, GameID, GameShipQueueMessage, GameOptionSpeed},
-        fleet::fleet::{FleetID, Fleet, FleetFormation},
+        game::{Game, GameID, GameShipQueueMessage},
+        ship::model::ShipModelCategory,
         system::system::{SystemID, System},
     },
     AppState,
@@ -32,6 +31,12 @@ pub struct ShipQueue {
     pub created_at: Time,
     pub started_at: Time,
     pub finished_at: Time,
+}
+
+#[derive(serde::Deserialize)]
+pub struct ShipQuantityData {
+    pub category: ShipModelCategory,
+    pub quantity: usize
 }
 
 impl From<ShipQueueID> for Uuid {

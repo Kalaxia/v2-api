@@ -9,20 +9,18 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
+        game::GameID,
         player::{Player, PlayerID},
-        system::system::{System, SystemID, Coordinates},
-        fleet::squadron::{FleetSquadron, FleetSquadronID},
-        ship::model::ShipModelCategory,
+        system::system::{System, SystemID},
+        fleet::squadron::{FleetSquadron},
     },
     ws::protocol,
     AppState
 };
-use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
-pub const FLEET_RANGE: f64 = 20.0; // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
+pub const FLEET_RANGE: f64 = 20.0;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
@@ -35,11 +33,6 @@ pub struct Fleet{
     pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
     pub squadrons: Vec<FleetSquadron>,
-}
-
-#[derive(Deserialize)]
-pub struct FleetTravelRequest {
-    pub destination_system_id: SystemID,
 }
 
 impl From<FleetID> for Uuid {
@@ -60,16 +53,6 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
 }
 
 impl Fleet {
-    fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        let distance = origin_coords.as_distance_to(&dest_coords);
-
-        if distance > FLEET_RANGE.powi(2) {
-            return Err(InternalError::FleetInvalidDestination.into());
-        }
-
-        Ok(())
-    }
-
     pub fn change_system(&mut self, system: &System) {
         self.system = system.id.clone();
         self.destination_system = None;
@@ -159,12 +142,12 @@ pub async fn donate(
     let (s, f, sg, p) = futures::join!(
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
-        FleetShipGroup::find_by_fleet(info.2, &state.db_pool),
+        FleetSquadron::find_by_fleet(info.2, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     let system = s?;
     let mut fleet = f?;
-    fleet.ship_groups = sg?;
+    fleet.squadrons = sg?;
     let player = p?;
 
     if fleet.player != player.id || system.player.is_none() || fleet.system != system.id {
@@ -207,8 +190,9 @@ mod tests {
         game::{
             game::GameID,
             fleet::{
-                ship::{ShipGroup, ShipGroupID, ShipModelCategory},
+                squadron::{FleetSquadron, FleetSquadronID, FleetFormation},
             },
+            ship::model::ShipModelCategory,
             system::system::{System, SystemID, SystemKind,  Coordinates},
             player::{PlayerID}
         }
@@ -220,11 +204,11 @@ mod tests {
 
         assert!(fleet.can_fight());
 
-        fleet.ship_groups[0].quantity = 0;
+        fleet.squadrons[0].quantity = 0;
 
         assert!(!fleet.can_fight());
         
-        fleet.ship_groups = vec![];
+        fleet.squadrons = vec![];
 
         assert!(!fleet.can_fight());
     }
@@ -254,30 +238,6 @@ mod tests {
         assert_eq!(fleet.destination_arrival_date, None);
     }
 
-    #[test]
-    fn test_get_travel_time() {
-        let time = get_travel_time(
-            Coordinates{ x: 1.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 4.0 },
-            0.4,
-        );
-        assert_eq!(10, time.signed_duration_since(Utc::now()).num_seconds());
-
-        let time = get_travel_time(
-            Coordinates{ x: 6.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 12.0 },
-            0.55,
-        );
-        assert_eq!(19, time.signed_duration_since(Utc::now()).num_seconds());
-    }
-
-    #[test]
-    fn test_get_travel_time_coeff() {
-        assert_eq!(0.4, get_travel_time_coeff(GameOptionSpeed::Slow));
-        assert_eq!(0.55, get_travel_time_coeff(GameOptionSpeed::Medium));
-        assert_eq!(0.7, get_travel_time_coeff(GameOptionSpeed::Fast));
-    }
-
     fn get_fleet_mock() -> Fleet {
         Fleet{
             id: FleetID(Uuid::new_v4()),
@@ -285,9 +245,9 @@ mod tests {
             system: SystemID(Uuid::new_v4()),
             destination_system: None,
             destination_arrival_date: None,
-            ship_groups: vec![
-                FleetShipGroup{
-                    id: ShipGroupID(Uuid::new_v4()),
+            squadrons: vec![
+                FleetSquadron{
+                    id: FleetSquadronID(Uuid::new_v4()),
                     fleet: FleetID(Uuid::new_v4()),
                     formation: FleetFormation::Center,
                     category: ShipModelCategory::Fighter,

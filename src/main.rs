@@ -13,14 +13,18 @@ mod game;
 mod lib;
 
 use game::{
-    fleet::ship,
     fleet::fleet,
+    fleet::travel,
+    fleet::squadron as fleet_squadron,
     game as g,
     faction,
     player,
     lobby,
     system::building,
     system::system,
+    ship::model,
+    ship::queue,
+    ship::squadron
 };
 use lib::Result;
 
@@ -133,21 +137,21 @@ fn config(cfg: &mut web::ServiceConfig) {
                     .service(
                         web::scope("/{fleet_id}")
                         .service(fleet::donate)
-                        .service(fleet::travel)
+                        .service(travel::travel)
                         .service(
                             web::scope("/ship-groups")
-                            .service(ship::assign_ships)
+                            .service(fleet_squadron::assign_ships)
                         )
                     )
                 )
                 .service(
                     web::scope("/{system_id}/ship-groups")
-                    .service(ship::get_system_ship_groups)
+                    .service(squadron::get_system_squadrons)
                 )
                 .service(
                     web::scope("/{system_id}/ship-queues")
-                    .service(ship::add_ship_queue)
-                    .service(ship::get_ship_queues)
+                    .service(queue::add_ship_queue)
+                    .service(queue::get_ship_queues)
                 )
                 .service(
                     web::scope("/{system_id}/buildings")
@@ -174,7 +178,7 @@ fn config(cfg: &mut web::ServiceConfig) {
         )
         .service(building::get_buildings_data)
         .service(g::get_game_constants)
-        .service(ship::get_ship_models)
+        .service(model::get_ship_models)
     )
     .service(player::login)
     .service(web::resource("/ws/").to(ws::client::entrypoint));

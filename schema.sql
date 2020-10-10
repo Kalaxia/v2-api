@@ -64,10 +64,16 @@ CREATE TABLE IF NOT EXISTS fleet__fleets(
     destination_arrival_date TIMESTAMPTZ,
 	player_id UUID NOT NULL
 );
-CREATE TABLE IF NOT EXISTS fleet__ship_groups(
+CREATE TABLE IF NOT EXISTS fleet__squadrons(
     id UUID PRIMARY KEY,
-    system_id UUID,
-    fleet_id UUID,
+    fleet_id UUID NOT NULL,
+    category VARCHAR(25) NOT NULL,
+    formation VARCHAR(10) NOT NULL,
+    quantity INT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS system__squadrons(
+    id UUID PRIMARY KEY,
+    system_id UUID NOT NULL,
     category VARCHAR(25) NOT NULL,
     quantity INT NOT NULL
 );
@@ -91,10 +97,10 @@ ALTER TABLE map__system_buildings ADD CONSTRAINT system_fkey FOREIGN KEY (system
 ALTER TABLE fleet__fleets ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 ALTER TABLE fleet__fleets ADD CONSTRAINT destination_fkey FOREIGN KEY (destination_id) REFERENCES map__systems (id) ON DELETE SET NULL;
 ALTER TABLE fleet__fleets ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
-ALTER TABLE fleet__ship_groups ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
-ALTER TABLE fleet__ship_groups ADD CONSTRAINT fleet_fkey FOREIGN KEY (fleet_id) REFERENCES fleet__fleets (id) ON DELETE CASCADE;
+ALTER TABLE fleet__squadrons ADD CONSTRAINT fleet_fkey FOREIGN KEY (fleet_id) REFERENCES fleet__fleets (id) ON DELETE CASCADE;
 ALTER TABLE game__factions ADD CONSTRAINT faction_fkey FOREIGN KEY (faction_id) REFERENCES faction__factions (id) ON DELETE CASCADE;
 ALTER TABLE game__factions ADD CONSTRAINT game_fkey FOREIGN KEY (game_id) REFERENCES game__games (id) ON DELETE CASCADE;
 ALTER TABLE system__ship_queues ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
+ALTER TABLE system__squadrons ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 
 INSERT INTO faction__factions(id, name, color) VALUES(1,'Kalankar',-2469633),(2,'Valkar',1082183935),(3,'Adranite',-803200769);

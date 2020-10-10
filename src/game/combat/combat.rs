@@ -25,7 +25,7 @@ pub async fn engage(mut attacker: &mut Fleet, mut defenders: &mut HashMap<FleetI
         }
     }
     update_fleets(&mut attacker, &mut defenders, db_pool).await?;
-    Ok(!attacker.ship_groups.is_empty())
+    Ok(!attacker.squadrons.is_empty())
 }
 
 fn is_fight_over(attacker: &Fleet, defenders: &HashMap<FleetID, Fleet>) -> bool {
@@ -54,9 +54,9 @@ fn attack_fleet(attacker: &Fleet, defender: &mut Fleet) {
     let attacker_ship_group = pick_target_squadron(&attacker);
     let defender_ship_group = pick_target_squadron(&defender);
 
-    defender.ship_groups[defender_ship_group].quantity = fire(
-        &attacker.ship_groups[attacker_ship_group],
-        &defender.ship_groups[defender_ship_group]
+    defender.squadrons[defender_ship_group].quantity = fire(
+        &attacker.squadrons[attacker_ship_group],
+        &defender.squadrons[defender_ship_group]
     );
 }
 
@@ -147,7 +147,7 @@ mod tests {
         game::{
             fleet::{
                 fleet::{Fleet, FleetID},
-                squadron::{FleetSquadron, FleetSquadronID},
+                squadron::{FleetSquadron, FleetSquadronID, FleetFormation},
             },
             ship::model::ShipModelCategory,
             system::system::{SystemID},
@@ -218,15 +218,15 @@ mod tests {
             system: SystemID(Uuid::new_v4()),
             destination_system: None,
             destination_arrival_date: None,
-            ship_groups: vec![get_squadron_mock(ShipModelCategory::Fighter, 1)]
+            squadrons: vec![get_squadron_mock(ShipModelCategory::Fighter, 1)]
         }
     }
 
     fn get_squadron_mock(category: ShipModelCategory, quantity: u16) -> FleetSquadron {
         FleetSquadron{
             id: FleetSquadronID(Uuid::new_v4()),
-            fleet: Some(FleetID(Uuid::new_v4())),
-            system: None,
+            fleet: FleetID(Uuid::new_v4()),
+            formation: FleetFormation::Center,
             category,
             quantity,
         }

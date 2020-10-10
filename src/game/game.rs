@@ -18,8 +18,10 @@ use crate::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
             fleet::{Fleet, FleetID, FLEET_RANGE},
-            ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
+            squadron::{FleetSquadron},
         },
+        ship::queue::{ShipQueue, ShipQueueID},
+        ship::squadron::{Squadron, SquadronID},
         lobby::Lobby,
         player::{PlayerID, Player, init_player_wallets},
         system::{
@@ -278,7 +280,7 @@ impl GameServer {
 
     async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
         let mut fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
-        fleet.ship_groups = ShipGroup::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
+        fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
         let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
         let player = Player::find(fleet.player, &self.state.db_pool).await?;
 
@@ -317,7 +319,7 @@ impl GameServer {
 
     async fn process_ship_queue_production(&mut self, sqid: ShipQueueID) -> Result<()> {
         let ship_queue = ShipQueue::find(sqid, &self.state.db_pool).await?;
-        let ship_group = ShipGroup::find_by_system_and_category(
+        let squadron = Squadron::find_by_system_and_category(
             ship_queue.system.clone(),
             ship_queue.category.clone(),
             &self.state.db_pool
@@ -325,18 +327,17 @@ impl GameServer {
         let player = Player::find_system_owner(ship_queue.system.clone(), &self.state.db_pool).await?;
         let mut tx = self.state.db_pool.begin().await?;
 
-        if let Some(mut sg) = ship_group {
-            sg.quantity += ship_queue.quantity;
-            ShipGroup::update(&sg, &mut tx).await?;
+        if let Some(mut s) = squadron {
+            s.quantity += ship_queue.quantity;
+            Squadron::update(&s, &mut tx).await?;
         } else {
-            let sg = ShipGroup{
-                id: ShipGroupID(Uuid::new_v4()),
-                system: Some(ship_queue.system.clone()),
-                fleet: None,
+            let s = Squadron{
+                id: SquadronID(Uuid::new_v4()),
+                system: ship_queue.system.clone(),
                 quantity: ship_queue.quantity.clone(),
                 category: ship_queue.category.clone(),
             };
-            ShipGroup::create(sg, &mut tx).await?;
+            Squadron::create(s, &mut tx).await?;
         }
         
         ShipQueue::remove(ship_queue.id, &mut tx).await?;

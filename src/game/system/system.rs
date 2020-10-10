@@ -11,10 +11,10 @@ use crate::{
     },
     game::{
         faction::{FactionID},
-        fleet::combat,
+        combat::combat,
         fleet::{
             fleet::{FleetID, Fleet},
-            ship::{ShipGroup},
+            squadron::{FleetSquadron},
         },
         game::{GameID, GameOptionMapSize, GameOptionSpeed},
         player::{PlayerID, Player},
@@ -201,10 +201,10 @@ impl System {
                 (f.id.clone(), f)
             })
             .collect();
-        let ship_groups = ShipGroup::find_by_fleets(ids, db_pool).await?;
+        let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
 
-        for sg in ship_groups.into_iter() {
-            fleets.get_mut(&sg.fleet.unwrap()).unwrap().ship_groups.push(sg.clone()); 
+        for s in squadrons.into_iter() {
+            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
         }
         Ok(fleets)
     }

@@ -1,5 +1,4 @@
-use actix_web::{get, post, web, HttpResponse};
-use chrono::{DateTime, Duration, Utc};
+use actix_web::{get, web, HttpResponse};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
@@ -9,13 +8,10 @@ use crate::{
         Result,
         auth::Claims,
         error::{ServerError, InternalError},
-        time::Time,
     },
     game::{
         player::{Player},
-        game::{Game, GameID, GameShipQueueMessage, GameOptionSpeed},
-        fleet::fleet::{FleetID, Fleet},
-        fleet::squadron::{FleetFormation},
+        game::GameID,
         system::system::{SystemID, System},
         ship::model::ShipModelCategory,
     },
@@ -67,7 +63,7 @@ impl Squadron {
         E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO system__squadrons (id, system_id, category, quantity) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(s.id))
-            .bind(s.system.map(Uuid::from))
+            .bind(Uuid::from(s.system))
             .bind(s.category)
             .bind(s.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
@@ -78,7 +74,7 @@ impl Squadron {
         E: Executor<Database = Postgres> {
         sqlx::query("UPDATE system__squadrons SET system_id = $2, category = $3, quantity = $4 WHERE id = $1")
             .bind(Uuid::from(s.id))
-            .bind(s.system.map(Uuid::from))
+            .bind(Uuid::from(s.system))
             .bind(s.category)
             .bind(s.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)

@@ -17,7 +17,7 @@ use crate::{
     ws::protocol,
     AppState
 };
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
 use sqlx_core::row::Row;
 
 pub const FLEET_RANGE: f64 = 20.0;
@@ -33,6 +33,7 @@ pub struct Fleet{
     pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
     pub squadrons: Vec<FleetSquadron>,
+    pub is_destroyed: bool,
 }
 
 impl From<FleetID> for Uuid {
@@ -48,6 +49,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: row.try_get("player_id").map(PlayerID)?,
             squadrons: vec![],
+            is_destroyed: row.try_get("is_destroyed")?,
         })
     }
 }
@@ -87,14 +89,15 @@ impl Fleet {
             .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn update(f: Fleet, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update<E>(f: Fleet, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
             .bind(Uuid::from(f.system))
             .bind(f.destination_system.map(Uuid::from))
             .bind(f.destination_arrival_date)
             .bind(Uuid::from(f.player))
             .bind(Uuid::from(f.id))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
     pub async fn remove(f: &Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
@@ -118,6 +121,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         destination_system: None,
         destination_arrival_date: None,
         squadrons: vec![],
+        is_destroyed: false,
     };
     let mut tx = state.db_pool.begin().await?;
     Fleet::create(fleet.clone(), &mut tx).await?;
@@ -162,7 +166,7 @@ pub async fn donate(
 
     fleet.player = other_player.id;
 
-    Fleet::update(fleet.clone(), &state.db_pool).await?;
+    Fleet::update(fleet.clone(), &mut &state.db_pool).await?;
 
     #[derive(Serialize)]
     pub struct FleetTransferData{
@@ -190,7 +194,8 @@ mod tests {
         game::{
             game::GameID,
             fleet::{
-                squadron::{FleetSquadron, FleetSquadronID, FleetFormation},
+                formation::{FleetFormation},
+                squadron::{FleetSquadron, FleetSquadronID},
             },
             ship::model::ShipModelCategory,
             system::system::{System, SystemID, SystemKind,  Coordinates},
@@ -253,7 +258,8 @@ mod tests {
                     category: ShipModelCategory::Fighter,
                     quantity: 1,
                 }
-            ]
+            ],
+            is_destroyed: false,
         }
     }
 

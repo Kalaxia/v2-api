@@ -10,7 +10,10 @@ use crate::{
     game::{
         game::GameID,
         system::system::{System, SystemID},
-        fleet::fleet::{Fleet, FleetID},
+        fleet::{
+            formation::{FleetFormation},
+            fleet::{Fleet, FleetID},
+        },
         ship::squadron::{Squadron, SquadronID},
         ship::model::ShipModelCategory
     },
@@ -19,17 +22,6 @@ use crate::{
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
 use sqlx_core::row::Row;
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
-#[sqlx(rename_all = "snake_case")]
-#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
-pub enum FleetFormation {
-    Left,
-    Center,
-    Right,
-    Rear,
-}
-
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetSquadronID(pub Uuid);
 
@@ -37,7 +29,7 @@ impl From<FleetSquadronID> for Uuid {
     fn from(fsid: FleetSquadronID) -> Self { fsid.0 }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Copy)]
 pub struct FleetSquadron {
     pub id: FleetSquadronID,
     pub fleet: FleetID,
@@ -66,6 +58,10 @@ impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {
 }
 
 impl FleetSquadron {
+    pub fn can_fight(&self) -> bool {
+        self.quantity > 0
+    }
+
     pub async fn find_by_fleets(ids: Vec<FleetID>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM fleet__squadrons WHERE fleet_id = any($1)")
             .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())

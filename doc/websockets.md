@@ -15,7 +15,7 @@ BuildingConstructed
     "built_at": 152325464123
 }
 ```
-CombatEnded
+BattleEnded
 -------------------
 * **Description:** System defenders have repelled an attack
 * **Level:** Game

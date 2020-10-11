@@ -54,7 +54,7 @@ impl AppState {
     }
 
     pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
-        let mut tx =self.db_pool.begin().await?;
+        let mut tx = self.db_pool.begin().await?;
         lobby::Lobby::remove(lobby.id, &mut tx).await?;
         tx.commit().await?;
         self.ws_broadcast(ws::protocol::Message::new(

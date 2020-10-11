@@ -11,8 +11,8 @@ use crate::{
     },
     game::{
         faction::{FactionID},
-        combat::combat,
         fleet::{
+            combat::battle::{Battle, engage},
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadron},
         },
@@ -84,8 +84,7 @@ pub enum FleetArrivalOutcome {
         fleet: Fleet,
     },
     Defended{
-        system: System,
-        fleets: HashMap<FleetID, Fleet>,
+        battle: Battle,
     },
     Arrived{
         fleet: Fleet,
@@ -169,23 +168,36 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 }
 
 impl System {
-    pub async fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
+    pub async fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
         match system_owner {
             Some(system_owner) => {
                 // Both players have the same faction, the arrived fleet just parks here
                 if system_owner.faction == player.faction {
                     fleet.change_system(self);
-                    Fleet::update(fleet.clone(), db_pool).await?;
+                    Fleet::update(fleet.clone(), &mut db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
 
-                let mut fleets = self.retrieve_orbiting_fleets(db_pool).await?;
+                let fleets = self.retrieve_orbiting_fleets(db_pool).await?;
 
-                if fleets.is_empty() || combat::engage(&mut fleet, &mut fleets, db_pool).await? == true {
+                if fleets.is_empty() {
                     return self.conquer(fleet, db_pool).await;
                 }
-                fleets.insert(fleet.id.clone(), fleet.clone());
-                Ok(FleetArrivalOutcome::Defended{ fleets, system: self.clone() })
+                let battle = engage(&self, fleet.clone(), fleets, db_pool).await?;
+                if battle.victor == player.faction {
+                    return self.conquer(fleet, db_pool).await;
+                } else if battle.victor == system_owner.faction {
+                    return Ok(FleetArrivalOutcome::Defended{ battle });
+                }
+                return self.conquer(battle
+                    .fleets
+                    .get(&battle.victor.unwrap())
+                    .unwrap()
+                    .values()
+                    .next()
+                    .cloned()
+                    .unwrap()
+                , db_pool).await;
             },
             None => self.conquer(fleet, db_pool).await
         }
@@ -209,9 +221,9 @@ impl System {
         Ok(fleets)
     }
 
-    pub async fn conquer(&mut self, mut fleet: Fleet, db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
+    pub async fn conquer(&mut self, mut fleet: Fleet, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
         fleet.change_system(self);
-        Fleet::update(fleet.clone(), db_pool).await?;
+        Fleet::update(fleet.clone(), &mut db_pool).await?;
         self.player = Some(fleet.player.clone());
         System::update(self.clone(), db_pool).await?;
         Ok(FleetArrivalOutcome::Conquerred{
@@ -311,12 +323,9 @@ impl From<FleetArrivalOutcome> for protocol::Message {
                 },
                 None,
             ),
-            FleetArrivalOutcome::Defended { system, fleets } => protocol::Message::new(
-                protocol::Action::CombatEnded,
-                combat::CombatData {
-                    system: system.clone(),
-                    fleets: fleets.clone(),
-                },
+            FleetArrivalOutcome::Defended { battle } => protocol::Message::new(
+                protocol::Action::BattleEnded,
+                battle,
                 None,
             ),
             FleetArrivalOutcome::Arrived { fleet } => protocol::Message::new(

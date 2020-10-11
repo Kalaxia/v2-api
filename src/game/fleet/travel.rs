@@ -61,7 +61,7 @@ pub async fn travel(
         destination_system.coordinates,
         get_travel_time_coeff(game.game_speed)
     ).into());
-    Fleet::update(fleet.clone(), &state.db_pool).await?;
+    Fleet::update(fleet.clone(), &mut &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
@@ -103,7 +103,8 @@ mod tests {
         game::{
             game::GameID,
             fleet::{
-                squadron::{FleetSquadron, FleetSquadronID, FleetFormation},
+                formation::{FleetFormation},
+                squadron::{FleetSquadron, FleetSquadronID},
             },
             ship::model::ShipModelCategory,
             system::system::{System, SystemID, SystemKind,  Coordinates},

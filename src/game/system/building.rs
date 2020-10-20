@@ -1,6 +1,5 @@
 use actix_web::{get, post, web, HttpResponse};
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
@@ -10,19 +9,20 @@ use crate::{
         Result,
         auth::Claims,
         error::{ServerError, InternalError},
-        time::Time
+        time::Time,
+        uuid::Uuid,
     },
     game::{
-        game::{Game, GameID, GameBuildingConstructionMessage, GameOptionSpeed},
-        system::system::{System, SystemID},
+        game::{Game, GameBuildingConstructionMessage, GameOptionSpeed},
+        system::system::System,
         player::Player
     }
 };
 
 #[derive(Serialize, Clone)]
 pub struct Building {
-    pub id: BuildingID,
-    pub system: SystemID,
+    pub id: Uuid<Building>,
+    pub system: Uuid<System>,
     pub kind: BuildingKind,
     pub status: BuildingStatus,
     pub created_at: Time,
@@ -48,9 +48,6 @@ pub enum BuildingKind {
     Shipyard
 }
 
-#[derive(Deserialize, Serialize, Clone)]
-pub struct BuildingID(pub Uuid);
-
 #[derive(Serialize, Copy, Clone)]
 pub struct BuildingData {
     pub kind: BuildingKind,
@@ -63,15 +60,11 @@ pub struct BuildingRequest {
     pub kind: BuildingKind,
 }
 
-impl From<BuildingID> for Uuid {
-    fn from(bid: BuildingID) -> Self { bid.0 }
-}
-
 impl<'a> FromRow<'a, PgRow<'a>> for Building {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Building {
-            id: row.try_get("id").map(BuildingID)?,
-            system: row.try_get("system_id").map(SystemID)?,
+            id: row.try_get("id")?,
+            system: row.try_get("system_id")?,
             kind: row.try_get("kind")?,
             status: row.try_get("status")?,
             created_at: row.try_get("created_at")?,
@@ -117,11 +110,11 @@ impl BuildingData {
 }
 
 impl Building {
-    pub fn new(sid: SystemID, kind: BuildingKind, data: BuildingData, game_speed: GameOptionSpeed) -> Building {
+    pub fn new(sid: Uuid<System>, kind: BuildingKind, data: BuildingData, game_speed: GameOptionSpeed) -> Building {
         let now = Time::now();
 
         Building{
-            id: BuildingID(Uuid::new_v4()),
+            id: Uuid::new(),
             system: sid,
             kind: kind,
             status: BuildingStatus::Constructing,
@@ -130,15 +123,15 @@ impl Building {
         }
     }
 
-    pub async fn find(bid: BuildingID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(bid: Uuid<Building>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM map__system_buildings WHERE id = $1")
-            .bind(Uuid::from(bid))
+            .bind(bid)
             .fetch_one(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_system(sid: Uuid<System>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM map__system_buildings WHERE system_id = $1")
-            .bind(Uuid::from(sid))
+            .bind(sid)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
@@ -150,8 +143,8 @@ impl Building {
 
     pub async fn create(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")
-            .bind(Uuid::from(b.id))
-            .bind(Uuid::from(b.system))
+            .bind(b.id)
+            .bind(b.system)
             .bind(b.kind)
             .bind(b.status)
             .bind(b.created_at)
@@ -161,14 +154,14 @@ impl Building {
 
     pub async fn update(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("UPDATE map__system_buildings SET status = $2 WHERE id = $1")
-            .bind(Uuid::from(b.id))
+            .bind(b.id)
             .bind(b.status)
             .execute(tx).await.map_err(ServerError::from)
     }
 }
 
 #[get("/")]
-pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>)
+pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(Uuid<Game>, Uuid<System>)>)
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Building::find_by_system(info.1, &state.db_pool).await?))
@@ -177,7 +170,7 @@ pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(G
 #[post("/")]
 pub async fn create_building(
     state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID)>,
+    info: web::Path<(Uuid<Game>,Uuid<System>)>,
     data: web::Json<BuildingRequest>,
     claims: Claims
 )

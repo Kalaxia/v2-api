@@ -1,4 +1,7 @@
-use crate::game::player::PlayerID;
+use crate::{
+    game::player::Player,
+    lib::uuid::Uuid,
+};
 
 /// Tokens representing the type of WS message sent to notify a player.
 #[derive(serde::Serialize, Clone)]
@@ -35,11 +38,11 @@ pub enum Action {
 pub struct Message {
     pub action: Action,
     pub data: serde_json::Value,
-    pub skip_id: Option<PlayerID>,
+    pub skip_id: Option<Uuid<Player>>,
 }
 
 impl Message {
-  pub fn new<T : serde::Serialize>(action: Action, data: T, skip_id: Option<PlayerID>) -> Self {
+  pub fn new<T : serde::Serialize>(action: Action, data: T, skip_id: Option<Uuid<Player>>) -> Self {
     Self {
       action,
       data: serde_json::value::to_value(data).unwrap(),

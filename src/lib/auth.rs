@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use jsonwebtoken::{errors::Error as JwtError, decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use actix_web::dev::Payload;
 use actix_web::{FromRequest, HttpResponse, HttpRequest, Responder};
-use crate::{lib::error::{ServerError, InternalError}, game::player::PlayerID};
+use crate::{lib::{uuid::Uuid, error::{ServerError, InternalError}}, game::player::Player};
 use futures::future::{ready, Ready};
 use std::default::Default;
 
@@ -12,7 +12,7 @@ const JWT_SECRET: & 'static [u8] = b"secret";
 /// Every route with a `Claim` in its parameters will only allow authentified requests.
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
-    pub pid:PlayerID,
+    pub pid:Uuid<Player>,
 }
 
 impl FromRequest for Claims {

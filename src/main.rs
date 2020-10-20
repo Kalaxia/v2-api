@@ -22,15 +22,15 @@ use game::{
     system::building,
     system::system,
 };
-use lib::Result;
+use lib::{Result, uuid::Uuid};
 
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
     db_pool: PgPool,
-    clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
-    lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
-    games: RwLock<HashMap<g::GameID, actix::Addr<g::GameServer>>>,
+    clients: RwLock<HashMap<Uuid<player::Player>, actix::Addr<ws::client::ClientSession>>>,
+    lobbies: RwLock<HashMap<Uuid<lobby::Lobby>, actix::Addr<lobby::LobbyServer>>>,
+    games: RwLock<HashMap<Uuid<g::Game>, actix::Addr<g::GameServer>>>,
 }
 
 macro_rules! res_access {
@@ -49,7 +49,7 @@ impl AppState {
         self.clients().iter().for_each(|(_, c)| c.do_send(message.clone()));
     }
 
-    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
+    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: Uuid<player::Player>) -> lib::Result<()> {
         let mut tx =self.db_pool.begin().await?;
         lobby::Lobby::remove(lobby.id, &mut tx).await?;
         tx.commit().await?;
@@ -61,7 +61,7 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn clear_game(&self, gid: g::GameID) -> lib::Result<()> {
+    pub async fn clear_game(&self, gid: Uuid<g::Game>) -> lib::Result<()> {
         let game = {
             let mut games = self.games_mut();
             let g = games.get(&gid).unwrap().clone();
@@ -75,24 +75,24 @@ impl AppState {
         Ok(())
     }
 
-    pub fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {
+    pub fn add_client(&self, pid: &Uuid<player::Player>, client: actix::Addr<ws::client::ClientSession>) {
         self.clients_mut().insert(pid.clone(), client);
     }
 
-    pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
+    pub fn retrieve_client(&self, pid: &Uuid<player::Player>) -> Result<actix::Addr<ws::client::ClientSession>> {
         let mut clients = self.clients_mut();
         clients.remove_entry(&pid)
             .ok_or(lib::error::InternalError::PlayerUnknown.into())
             .map(|t| t.1)
     }
 
-    pub fn remove_client(&self, pid: &player::PlayerID) {
+    pub fn remove_client(&self, pid: &Uuid<player::Player>) {
         self.clients_mut().remove(pid);
     }
 
-    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::GameServer>> }
-    res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
-    res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
+    res_access!{ games, games_mut : HashMap<Uuid<g::Game>, actix::Addr<g::GameServer>> }
+    res_access!{ lobbies, lobbies_mut : HashMap<Uuid<lobby::Lobby>, actix::Addr<lobby::LobbyServer>> }
+    res_access!{ clients, clients_mut : HashMap<Uuid<player::Player>, actix::Addr<ws::client::ClientSession>> }
 }
 
 async fn generate_state() -> AppState {

@@ -1,5 +1,4 @@
 use actix_web::{get, web, HttpResponse};
-use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::{
@@ -7,17 +6,18 @@ use crate::{
     lib::{
         Result,
         pagination::{Paginator, new_paginated_response},
-        error::{ServerError, InternalError}
+        error::{ServerError, InternalError},
+        uuid::Uuid,
     },
     game::{
-        faction::{FactionID},
+        faction::FactionID,
         fleet::combat,
         fleet::{
-            fleet::{FleetID, Fleet},
-            ship::{ShipGroup},
+            fleet::Fleet,
+            ship::ShipGroup,
         },
-        game::{GameID, GameOptionMapSize, GameOptionSpeed},
-        player::{PlayerID, Player},
+        game::{Game, GameOptionMapSize, GameOptionSpeed},
+        player::Player,
         system::{
             building::{Building, BuildingStatus, BuildingKind},
         },
@@ -29,14 +29,11 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQuery
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
-#[derive(Debug, Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy)]
-pub struct SystemID(pub Uuid);
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct System {
-    pub id: SystemID,
-    pub game: GameID,
-    pub player: Option<PlayerID>,
+    pub id: Uuid<System>,
+    pub game: Uuid<Game>,
+    pub player: Option<Uuid<Player>>,
     pub kind: SystemKind,
     pub coordinates: Coordinates,
     pub unreachable: bool
@@ -85,7 +82,7 @@ pub enum FleetArrivalOutcome {
     },
     Defended{
         system: System,
-        fleets: HashMap<FleetID, Fleet>,
+        fleets: HashMap<Uuid<Fleet>, Fleet>,
     },
     Arrived{
         fleet: Fleet,
@@ -103,10 +100,6 @@ impl Coordinates {
     pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
         ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
     }
-}
-
-impl From<SystemID> for Uuid {
-    fn from(sid: SystemID) -> Self { sid.0 }
 }
 
 impl From<SystemKind> for i16 {
@@ -129,16 +122,13 @@ impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
 
 impl<'a> FromRow<'a, PgRow<'a>> for System {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-        let game_id : Uuid = row.try_get("game_id")?;
-        let player_id = match row.try_get("player_id") {
-            Ok(pid) => Some(PlayerID(pid)),
-            Err(_) => None
-        };
+        let id = row.try_get("id")?;
+        let game = row.try_get("game_id")?;
+        let player_id = row.try_get("player_id").ok();
 
         Ok(System {
-            id: SystemID(id),
-            game: GameID(game_id),
+            id,
+            game,
             player: player_id,
             kind: SystemKind::from_row(row)?,
             coordinates: Coordinates::from_row(row)?,
@@ -191,10 +181,10 @@ impl System {
         }
     }
 
-    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<Uuid<Fleet>, Fleet>> {
         let mut ids = vec![];
         // Conquest of the system by the arrived fleet
-        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
+        let mut fleets: HashMap<Uuid<Fleet>, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
             .into_iter()
             .map(|f| {
                 ids.push(f.id.clone());
@@ -220,56 +210,56 @@ impl System {
         })
     }
 
-    pub async fn find(sid: SystemID, db_pool: &PgPool) -> Result<System> {
+    pub async fn find(sid: Uuid<System>, db_pool: &PgPool) -> Result<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE id = $1")
-            .bind(Uuid::from(sid))
+            .bind(sid)
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::SystemUnknown))
     }
 
-    pub async fn find_possessed(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
+    pub async fn find_possessed(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND player_id IS NOT NULL")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_possessed_victory_systems(gid: GameID, db_pool: &PgPool) -> Result<Vec<System>> {
+    pub async fn find_possessed_victory_systems(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 AND kind = $2 AND player_id IS NOT NULL")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .bind(i16::from(SystemKind::VictorySystem))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_all(gid: &GameID, limit: i64, offset: i64, db_pool: &PgPool) -> Result<Vec<System>> {
+    pub async fn find_all(gid: &Uuid<Game>, limit: i64, offset: i64, db_pool: &PgPool) -> Result<Vec<System>> {
         sqlx::query_as("SELECT * FROM map__systems WHERE game_id = $1 LIMIT $2 OFFSET $3")
-            .bind(Uuid::from(gid.clone()))
+            .bind(*gid)
             .bind(limit)
             .bind(offset)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count_by_faction(gid: GameID, db_pool: &PgPool) -> Result<Vec<SystemDominion>> {
+    pub async fn count_by_faction(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Vec<SystemDominion>> {
         sqlx::query_as(
             "SELECT f.id as faction_id, COUNT(s.*) as nb_systems FROM map__systems s
             INNER JOIN player__players p ON s.player_id = p.id
             INNER JOIN faction__factions f ON p.faction_id = f.id
             WHERE s.game_id = $1
             GROUP BY f.id")
-        .bind(Uuid::from(gid))
+        .bind(gid)
         .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count(gid: GameID, db_pool: &PgPool) -> u32 {
+    pub async fn count(gid: Uuid<Game>, db_pool: &PgPool) -> u32 {
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM map__systems WHERE game_id = $1")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .fetch_one(db_pool).await.expect("Could not retrieve systems");
         count.0 as u32
     }
 
     pub async fn create(s: System,  tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, kind, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6, $7)")
-            .bind(Uuid::from(s.id))
-            .bind(Uuid::from(s.game))
-            .bind(s.player.map(Uuid::from))
+            .bind(s.id)
+            .bind(s.game)
+            .bind(s.player)
             .bind(i16::from(s.kind))
             .bind(s.coordinates.x)
             .bind(s.coordinates.y)
@@ -279,9 +269,9 @@ impl System {
 
     pub async fn update(s: System, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("UPDATE map__systems SET player_id = $1, is_unreachable = $2 WHERE id = $3")
-            .bind(s.player.map(Uuid::from))
+            .bind(s.player)
             .bind(s.unreachable)
-            .bind(Uuid::from(s.id))
+            .bind(s.id)
             .execute(db_pool).await.map_err(ServerError::from)
     }
 
@@ -328,7 +318,7 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<Vec<System>> {
+pub async fn generate_systems(gid: Uuid<Game>, map_size: GameOptionMapSize) -> Result<Vec<System>> {
     let graph = map_size.to_galaxy_builder().build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
@@ -340,10 +330,10 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
     }).collect())
 }
 
-fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {
+fn generate_system(gid: &Uuid<Game>, x: f64, y: f64, probability: f64) -> (System, f64) {
     let (kind, prob) = generate_system_kind(x, y, probability);
     (System{
-        id: SystemID(Uuid::new_v4()),
+        id: Uuid::new(),
         game: gid.clone(),
         player: None,
         kind: kind,
@@ -447,7 +437,7 @@ async fn find_place<'a>(
 }
 
 #[get("/")]
-pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
+pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(Uuid<Game>,)>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>
 {
     Ok(new_paginated_response(

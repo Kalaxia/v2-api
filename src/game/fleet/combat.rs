@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use crate::{
-    lib::Result,
+    lib::{Result, uuid::Uuid},
     game::{
         fleet::{
             ship::ShipGroup,
-            fleet::{Fleet, FleetID},
+            fleet::Fleet,
         },
         system::system::{System}
     }
@@ -15,10 +15,10 @@ use rand::prelude::*;
 #[derive(serde::Serialize, Clone)]
 pub struct CombatData {
     pub system: System,
-    pub fleets: HashMap<FleetID, Fleet>,
+    pub fleets: HashMap<Uuid<Fleet>, Fleet>,
 }
 
-pub async fn engage(mut attacker: &mut Fleet, mut defenders: &mut HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<bool> {
+pub async fn engage(mut attacker: &mut Fleet, mut defenders: &mut HashMap<Uuid<Fleet>, Fleet>, db_pool: &PgPool) -> Result<bool> {
     loop {
         if !fight_round(attacker, defenders) || is_fight_over(&attacker, &defenders) {
             break;
@@ -28,11 +28,11 @@ pub async fn engage(mut attacker: &mut Fleet, mut defenders: &mut HashMap<FleetI
     Ok(!attacker.ship_groups.is_empty())
 }
 
-fn is_fight_over(attacker: &Fleet, defenders: &HashMap<FleetID, Fleet>) -> bool {
+fn is_fight_over(attacker: &Fleet, defenders: &HashMap<Uuid<Fleet>, Fleet>) -> bool {
     !attacker.can_fight() || !defenders.iter().any(|(_, f)| f.can_fight())
 }
 
-fn fight_round(mut attacker: &mut Fleet, defenders: &mut HashMap<FleetID, Fleet>) -> bool {
+fn fight_round(mut attacker: &mut Fleet, defenders: &mut HashMap<Uuid<Fleet>, Fleet>) -> bool {
     let def_id = pick_target_fleet(defenders);
     if def_id.is_none() {
         return false;
@@ -60,8 +60,8 @@ fn attack_fleet(attacker: &Fleet, defender: &mut Fleet) {
     );
 }
 
-fn pick_target_fleet(fleets: &HashMap<FleetID, Fleet>) -> Option<FleetID> {
-    let fighting_fleets: HashMap::<FleetID, Fleet> = fleets
+fn pick_target_fleet(fleets: &HashMap<Uuid<Fleet>, Fleet>) -> Option<Uuid<Fleet>> {
+    let fighting_fleets: HashMap::<Uuid<Fleet>, Fleet> = fleets
         .iter()
         .filter(|(_, f)| f.can_fight())
         .map(|(fid, fleet)| (fid.clone(), fleet.clone()))
@@ -73,7 +73,7 @@ fn pick_target_fleet(fleets: &HashMap<FleetID, Fleet>) -> Option<FleetID> {
     let mut rng = thread_rng();
     let index = rng.gen_range(0, fighting_fleets.len());
 
-    Some(fighting_fleets.keys().collect::<Vec<&FleetID>>()[index].clone())
+    Some(fighting_fleets.keys().collect::<Vec<&Uuid<Fleet>>>()[index].clone())
 }
 
 fn pick_target_ship_group(fleet: &Fleet) -> usize {
@@ -107,7 +107,7 @@ fn fire(attacker: &ShipGroup, defender: &ShipGroup) -> u16 {
     remaining_ships as u16
 }
 
-async fn update_fleets(mut attacker: &mut Fleet, defenders: &mut HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<()> {
+async fn update_fleets(mut attacker: &mut Fleet, defenders: &mut HashMap<Uuid<Fleet>, Fleet>, db_pool: &PgPool) -> Result<()> {
     let mut tx = db_pool.begin().await?;
 
     update_fleet(&mut attacker, &mut tx).await?;
@@ -142,16 +142,16 @@ async fn update_fleet(fleet: &mut Fleet, mut tx: &mut Transaction<PoolConnection
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::{
         game::{
             fleet::{
-                fleet::{Fleet, FleetID},
+                fleet::Fleet,
                 ship::{ShipGroup, ShipGroupID, ShipModelCategory},
             },
             system::system::{SystemID},
             player::{PlayerID}
-        }
+        },
+        lib::uuid::Uuid,
     };
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
         let mut attacker = get_fleet_mock();
 
         let mut defenders = HashMap::new();
-        defenders.insert(FleetID(Uuid::new_v4()), get_fleet_mock());
+        defenders.insert(Uuid::new(), get_fleet_mock());
 
         assert!(!is_fight_over(&attacker, &defenders));
 
@@ -170,15 +170,15 @@ mod tests {
 
     #[test]
     fn test_pick_target_fleet() {
-        let fighting_fleet_id = FleetID(Uuid::new_v4());
+        let fighting_fleet_id = Uuid::new();
 
         let mut empty_fleet = get_fleet_mock();
         empty_fleet.ship_groups = vec![];
 
         let mut defenders = HashMap::new();
-        defenders.insert(FleetID(Uuid::new_v4()), empty_fleet.clone());
+        defenders.insert(Uuid::new(), empty_fleet.clone());
         defenders.insert(fighting_fleet_id, get_fleet_mock());
-        defenders.insert(FleetID(Uuid::new_v4()), empty_fleet.clone());
+        defenders.insert(Uuid::new(), empty_fleet.clone());
 
         assert!(Some(fighting_fleet_id.clone()) == pick_target_fleet(&defenders));
 
@@ -212,7 +212,7 @@ mod tests {
 
     fn get_fleet_mock() -> Fleet {
         Fleet{
-            id: FleetID(Uuid::new_v4()),
+            id: Uuid::new(),
             player: PlayerID(Uuid::new_v4()),
             system: SystemID(Uuid::new_v4()),
             destination_system: None,
@@ -223,8 +223,8 @@ mod tests {
 
     fn get_ship_group_mock(category: ShipModelCategory, quantity: u16) -> ShipGroup {
         ShipGroup{
-            id: ShipGroupID(Uuid::new_v4()),
-            fleet: Some(FleetID(Uuid::new_v4())),
+            id: Uuid::new(),
+            fleet: Some(Uuid::new()),
             system: None,
             category,
             quantity,

@@ -4,11 +4,11 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, auth::Claims},
+    lib::{Result, auth::Claims, uuid::Uuid},
     game::{
         lobby::{ Lobby, LobbyRemoveClientMessage },
         game::{GameRemovePlayerMessage},
-        player::{Player, PlayerID},
+        player::Player,
     },
     ws::protocol,
     AppState,
@@ -48,7 +48,7 @@ pub async fn entrypoint(
 pub struct ClientSession {
     hb: Instant,
     state: web::Data<AppState>,
-    pid: PlayerID
+    pid: Uuid<Player>, 
 }
 
 impl ClientSession {

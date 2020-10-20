@@ -1,15 +1,15 @@
 use actix_web::{delete, get, patch, post, web, HttpResponse};
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use crate::{
     lib::{
         Result,
         error::{ServerError, InternalError},
-        auth::Claims
+        auth::Claims,
+        uuid::Uuid,
     },
     game::game::{create_game, GameOptionMapSize, GameOptionSpeed},
-    game::player::{PlayerID, Player},
+    game::player::Player,
     ws::{ client::ClientSession, protocol},
     AppState,
 };
@@ -18,22 +18,15 @@ use std::collections::{HashMap};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub struct LobbyID(pub Uuid);
-
-impl From<LobbyID> for Uuid {
-    fn from(lid: LobbyID) -> Self { lid.0 }
-}
-
 pub struct LobbyServer {
-    pub id: LobbyID,
-    pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub id: Uuid<Lobby>,
+    pub clients: RwLock<HashMap<Uuid<Player>, actix::Addr<ClientSession>>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Lobby {
-    pub id: LobbyID,
-    pub owner: PlayerID,
+    pub id: Uuid<Lobby>,
+    pub owner: Uuid<Player>,
     pub game_speed: GameOptionSpeed, 
     pub map_size: GameOptionMapSize 
 }
@@ -46,12 +39,12 @@ pub struct LobbyOptionsPatch {
 
 impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-        let owner_id : Uuid = row.try_get("owner_id")?;
+        let id = row.try_get("id")?;
+        let owner = row.try_get("owner_id")?;
 
         Ok(Lobby {
-            id: LobbyID(id),
-            owner: PlayerID(owner_id),
+            id,
+            owner,
             game_speed: row.try_get("game_speed")?,
             map_size: row.try_get("map_size")?
         })
@@ -72,13 +65,13 @@ impl LobbyServer {
         clients.len() == 0
     }
 
-    pub fn add_player(&mut self, pid: PlayerID, client: actix::Addr<ClientSession>) {
+    pub fn add_player(&mut self, pid: Uuid<Player>, client: actix::Addr<ClientSession>) {
         let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
 
         clients.insert(pid, client);
     }
 
-    pub fn remove_player(&mut self, pid: PlayerID) -> actix::Addr<ClientSession> {
+    pub fn remove_player(&mut self, pid: Uuid<Player>) -> actix::Addr<ClientSession> {
         let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
         let client = clients.get(&pid).unwrap().clone();
         // Remove the player from the lobby's list and notify all remaining players
@@ -108,16 +101,16 @@ impl Lobby {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find(lid: LobbyID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(lid: Uuid<Lobby>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM lobby__lobbies WHERE id = $1")
-            .bind(Uuid::from(lid))
+            .bind(lid)
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
     }
 
     pub async fn create(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id, game_speed, map_size) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(l.id))
-            .bind(Uuid::from(l.owner))
+            .bind(l.id)
+            .bind(l.owner)
             .bind(l.game_speed)
             .bind(l.map_size)
             .execute(tx).await.map_err(ServerError::from)
@@ -125,16 +118,16 @@ impl Lobby {
 
     pub async fn update(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $2, game_speed = $3, map_size = $4 WHERE id = $1")
-            .bind(Uuid::from(l.id))
-            .bind(Uuid::from(l.owner))
+            .bind(l.id)
+            .bind(l.owner)
             .bind(l.game_speed)
             .bind(l.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(lid: LobbyID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove(lid: Uuid<Lobby>, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
-            .bind(Uuid::from(lid))
+            .bind(lid)
             .execute(tx).await.map_err(ServerError::from)
     }
 }
@@ -145,14 +138,14 @@ impl Actor for LobbyServer {
 
 #[derive(actix::Message, Clone)]
 #[rtype(result="()")]
-pub struct LobbyAddClientMessage(pub PlayerID, pub actix::Addr<ClientSession>);
+pub struct LobbyAddClientMessage(pub Uuid<Player>, pub actix::Addr<ClientSession>);
 
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
-pub struct LobbyRemoveClientMessage(pub PlayerID);
+pub struct LobbyRemoveClientMessage(pub Uuid<Player>);
 
 #[derive(actix::Message, Clone)]
-#[rtype(result="Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>")]
+#[rtype(result="Arc<HashMap<Uuid<Player>, actix::Addr<ClientSession>>>")]
 pub struct LobbyGetClientsMessage();
 
 impl Handler<LobbyAddClientMessage> for LobbyServer {
@@ -178,7 +171,7 @@ impl Handler<LobbyRemoveClientMessage> for LobbyServer {
 }
 
 impl Handler<LobbyGetClientsMessage> for LobbyServer {
-    type Result = Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>;
+    type Result = Arc<HashMap<Uuid<Player>, actix::Addr<ClientSession>>>;
 
     fn handle(&mut self, _msg: LobbyGetClientsMessage, _ctx: &mut Self::Context) -> Self::Result {
         let clients = self.clients.read().expect("Poisoned lock on lobby players");
@@ -199,7 +192,7 @@ impl Handler<protocol::Message> for LobbyServer {
 pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
     #[derive(Serialize)]
     struct LobbyData{
-        id: LobbyID,
+        id: Uuid<Lobby>,
         owner: Player,
         nb_players: i16
     }
@@ -229,12 +222,12 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
 }
 
 #[get("/{id}")]
-pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
+pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(Uuid<Lobby>,)>) -> Result<HttpResponse> {
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     #[derive(Serialize)]
     struct LobbyData{
-        id: LobbyID,
+        id: Uuid<Lobby>,
         owner: Player,
         players: Vec<Player>,
         game_speed: GameOptionSpeed,
@@ -263,7 +256,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
     // Else, create a lobby
     let new_lobby = Lobby {
-        id: LobbyID(Uuid::new_v4()),
+        id: Uuid::new(),
         owner: player.id.clone(),
         game_speed: GameOptionSpeed::Medium,
         map_size: GameOptionMapSize::Medium,
@@ -295,7 +288,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 #[patch("/{id}/")]
 pub async fn update_lobby_options(
     state: web::Data<AppState>,
-    info: web::Path<(LobbyID,)>,
+    info: web::Path<(Uuid<Lobby>,)>,
     data: web::Json<LobbyOptionsPatch>,
     claims: Claims
 ) -> Result<HttpResponse>
@@ -327,7 +320,7 @@ pub async fn update_lobby_options(
 }
 
 #[post("/{id}/launch/")]
-pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(LobbyID,)>)
+pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(Uuid<Lobby>,)>)
     -> Result<HttpResponse>
 {
     let mut games = state.games_mut();
@@ -359,7 +352,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
+pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(Uuid<Lobby>,)>)
     -> Result<HttpResponse>
 {
     let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
@@ -388,7 +381,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 }
 
 #[post("/{id}/players/")]
-pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
+pub async fn join_lobby(info: web::Path<(Uuid<Lobby>,)>, state: web::Data<AppState>, claims: Claims)
     -> Result<HttpResponse>
 {
     let lobby = Lobby::find(info.0, &state.db_pool).await?;

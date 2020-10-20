@@ -1,32 +1,28 @@
 use actix_web::{web, get, patch, post, HttpResponse};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
-    game::game::{GameID, GAME_START_WALLET, GameNotifyPlayerMessage},
-    game::lobby::{LobbyID, Lobby},
-    game::faction::FactionID,
-    game::system::system::SystemID,
-    lib::{Result, error::{InternalError, ServerError}, auth},
+    game::game::{Game, GAME_START_WALLET, GameNotifyPlayerMessage},
+    game::lobby::Lobby,
+    game::faction::{FactionID, Faction},
+    game::system::system::System,
+    lib::{Result, error::{InternalError, ServerError}, auth, uuid::Uuid},
     ws::protocol,
 };
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct Player {
-    pub id: PlayerID,
+    pub id: Uuid<Player>,
     pub username: String,
-    pub game: Option<GameID>,
-    pub lobby: Option<LobbyID>,
+    pub game: Option<Uuid<Game>>,
+    pub lobby: Option<Uuid<Lobby>>,
     pub faction: Option<FactionID>,
     pub ready: bool,
     pub wallet: usize,
     pub is_connected: bool,
 }
-
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct PlayerID(pub Uuid);
 
 #[derive(Deserialize)]
 pub struct PlayerUpdateData{
@@ -40,18 +36,14 @@ pub struct PlayerMoneyTransferRequest{
     pub amount: usize
 }
 
-impl From<PlayerID> for Uuid {
-    fn from(pid: PlayerID) -> Self { pid.0 }
-}
-
 impl<'a> FromRow<'a, PgRow<'a>> for Player {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Player {
-            id: row.try_get::<Uuid, _>("id").ok().map(PlayerID).unwrap(),
+            id: row.try_get("id").ok().unwrap(),
             username: row.try_get("username")?,
             faction: row.try_get::<i32, _>("faction_id").ok().map(|id| FactionID(id as u8)),
-            game: row.try_get::<Uuid, _>("game_id").ok().map(GameID),
-            lobby: row.try_get::<Uuid, _>("lobby_id").ok().map(LobbyID),
+            game: row.try_get("game_id").ok(),
+            lobby: row.try_get("lobby_id").ok(),
             wallet: row.try_get::<i32, _>("wallet").map(|w| w as usize)?,
             ready: row.try_get("is_ready")?,
             is_connected: row.try_get("is_connected")?,
@@ -80,21 +72,21 @@ impl Player {
         Ok(())
     }
 
-    pub async fn find(pid: PlayerID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(pid: Uuid<Player>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = $1")
-            .bind(Uuid::from(pid))
+            .bind(pid)
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
     }
 
-    pub async fn find_system_owner(sid: SystemID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find_system_owner(sid: Uuid<System>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT p.* FROM map__systems s INNER JOIN player__players p ON p.id = s.player_id WHERE s.id = $1")
-            .bind(Uuid::from(sid))
+            .bind(sid)
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::PlayerUnknown))
     }
 
-    pub async fn find_by_ids(ids: Vec<PlayerID>, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_ids(ids: Vec<Uuid<Player>>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE id = any($1)")
-            .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
+            .bind(ids.into_iter().map(uuid::Uuid::from).collect::<Vec<uuid::Uuid>>())
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
@@ -104,53 +96,53 @@ impl Player {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_game_and_faction(gid: Uuid<Game>, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1 AND faction_id = $2")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .bind(i32::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_game(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_lobby(lid: Uuid<Lobby>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE lobby_id = $1")
-            .bind(Uuid::from(lid))
+            .bind(lid)
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Result<i16> {
+    pub async fn count_by_lobby(lid: Uuid<Lobby>, db_pool: &PgPool) -> Result<i16> {
         sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1")
-            .bind(Uuid::from(lid))
+            .bind(lid)
             .fetch_one(db_pool).await
             .map(|count: (i64,)| count.0 as i16)
             .map_err(ServerError::from)
     }
 
-    pub async fn check_username_exists(pid: PlayerID, lid: LobbyID, username: String, db_pool: &PgPool) -> Result<bool> {
+    pub async fn check_username_exists(pid: Uuid<Player>, lid: Uuid<Lobby>, username: String, db_pool: &PgPool) -> Result<bool> {
         sqlx::query_as("SELECT COUNT(*) FROM player__players WHERE lobby_id = $1 AND username = $2 AND id != $3")
-            .bind(Uuid::from(lid))
+            .bind(lid)
             .bind(username)
-            .bind(Uuid::from(pid))
+            .bind(pid)
             .fetch_one(db_pool).await
             .map(|count: (i64,)| count.0 > 0)
             .map_err(ServerError::from)
     }
 
-    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn transfer_from_lobby_to_game(lid: &Uuid<Lobby>, gid: &Uuid<Game>, db_pool: &PgPool) -> std::result::Result<u64, Error> {
         sqlx::query("UPDATE player__players SET lobby_id = NULL, game_id = $1 WHERE lobby_id = $2")
-            .bind(Uuid::from(gid.clone()))
-            .bind(Uuid::from(lid.clone()))
+            .bind(gid.clone())
+            .bind(lid.clone())
             .execute(db_pool).await
     }
 
     pub async fn create(p: Player, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(p.id))
+            .bind(p.id)
             .bind(p.wallet as i32)
             .bind(p.ready)
             .bind(p.is_connected)
@@ -167,13 +159,13 @@ impl Player {
             is_connected = $7
             WHERE id = $8")
             .bind(p.username)
-            .bind(p.game.map(Uuid::from))
-            .bind(p.lobby.map(Uuid::from))
+            .bind(p.game)
+            .bind(p.lobby)
             .bind(p.faction.map(i32::from))
             .bind(p.wallet as i32)
             .bind(p.ready)
             .bind(p.is_connected)
-            .bind(Uuid::from(p.id))
+            .bind(p.id)
             .execute(tx).await.map_err(ServerError::from)
     }
 }
@@ -193,7 +185,7 @@ pub async fn login(state:web::Data<AppState>)
     -> Result<auth::Claims>
 {
     let player = Player {
-        id: PlayerID(Uuid::new_v4()),
+        id: Uuid::new(),
         username: String::from(""),
         lobby: None,
         game: None,
@@ -259,7 +251,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     if lobby.owner == player.id {
         #[derive(Serialize, Clone)]
         struct LobbyName{
-            id: LobbyID,
+            id: Uuid<Lobby>,
             name: String
         };
         state.ws_broadcast(protocol::Message::new(
@@ -273,14 +265,14 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
 }
 
 #[get("/players/")]
-pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(GameID, FactionID)>)
+pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(Uuid<Game>, FactionID)>)
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(info.0, info.1, &state.db_pool).await?))
 }
 
 #[patch("/players/{player_id}/money/")]
-pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID, FactionID, PlayerID)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
+pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(Uuid<Game>, Uuid<Faction>, Uuid<Player>)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
     let mut current_player = Player::find(claims.pid, &state.db_pool).await?;
@@ -305,7 +297,7 @@ pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID,
     #[derive(Serialize)]
     pub struct PlayerMoneyTransferData{
         pub amount: usize,
-        pub player_id: PlayerID,
+        pub player_id: Uuid<Player>,
     }
     
     let games = state.games();

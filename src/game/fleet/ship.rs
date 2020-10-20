@@ -3,48 +3,42 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 use crate::{
     lib::{
         Result,
         auth::Claims,
         error::{ServerError, InternalError},
         time::Time,
+        uuid::Uuid,
     },
     game::{
-        player::{Player},
-        game::{Game, GameID, GameShipQueueMessage, GameOptionSpeed},
-        fleet::fleet::{FleetID, Fleet},
-        system::system::{SystemID, System},
+        player::Player,
+        game::{Game, GameShipQueueMessage, GameOptionSpeed},
+        fleet::fleet::Fleet,
+        system::system::System,
     },
     AppState,
 };
 
 #[derive(Serialize, Clone)]
 pub struct ShipGroup {
-    pub id: ShipGroupID,
-    pub system: Option<SystemID>,
-    pub fleet: Option<FleetID>,
+    pub id: Uuid<ShipGroup>,
+    pub system: Option<Uuid<System>>,
+    pub fleet: Option<Uuid<Fleet>>,
     pub category: ShipModelCategory,
     pub quantity: u16,
 }
 
-#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
-pub struct ShipGroupID(pub Uuid);
-
 #[derive(Debug, Serialize, Clone)]
 pub struct ShipQueue {
-    pub id: ShipQueueID,
-    pub system: SystemID,
+    pub id: Uuid<ShipQueue>,
+    pub system: Uuid<System>,
     pub category: ShipModelCategory,
     pub quantity: u16,
     pub created_at: Time,
     pub started_at: Time,
     pub finished_at: Time,
 }
-
-#[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
-pub struct ShipQueueID(pub Uuid);
 
 #[derive(Serialize, Copy, Clone)]
 pub struct ShipModel {
@@ -73,20 +67,12 @@ pub struct ShipQuantityData {
     pub quantity: usize
 }
 
-impl From<ShipGroupID> for Uuid {
-    fn from(sgid: ShipGroupID) -> Self { sgid.0 }
-}
-
-impl From<ShipQueueID> for Uuid {
-    fn from(sqid: ShipQueueID) -> Self { sqid.0 }
-}
-
 impl<'a> FromRow<'a, PgRow<'a>> for ShipGroup {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(ShipGroup {
-            id: row.try_get("id").map(ShipGroupID)?,
-            system: row.try_get("system_id").ok().map(SystemID),
-            fleet: row.try_get("fleet_id").ok().map(FleetID),
+            id: row.try_get("id")?,
+            system: row.try_get("system_id").ok(),
+            fleet: row.try_get("fleet_id").ok(),
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
         })
@@ -96,8 +82,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for ShipGroup {
 impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(ShipQueue {
-            id: row.try_get("id").map(ShipQueueID)?,
-            system: row.try_get("system_id").map(SystemID)?,
+            id: row.try_get("id")?,
+            system: row.try_get("system_id")?,
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
             created_at: row.try_get("created_at")?,
@@ -161,32 +147,32 @@ impl ShipModel {
 }
 
 impl ShipGroup {
-    pub async fn find_by_fleets(ids: Vec<FleetID>, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_fleets(ids: Vec<Uuid<Fleet>>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = any($1)")
-            .bind(ids.into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
+            .bind(ids.into_iter().map(uuid::Uuid::from).collect::<Vec<uuid::Uuid>>())
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_fleet(fid: FleetID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_fleet(fid: Uuid<Fleet>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = $1")
             .bind(Uuid::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_system(sid: Uuid<System>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE system_id = $1")
             .bind(Uuid::from(sid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_fleet_and_category(fid: FleetID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
+    pub async fn find_by_fleet_and_category(fid: Uuid<Fleet>, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE fleet_id = $1 AND category = $2")
             .bind(Uuid::from(fid))
             .bind(category)
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_system_and_category(sid: SystemID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
+    pub async fn find_by_system_and_category(sid: Uuid<System>, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
         sqlx::query_as("SELECT * FROM fleet__ship_groups WHERE system_id = $1 AND category = $2")
             .bind(Uuid::from(sid))
             .bind(category)
@@ -217,7 +203,7 @@ impl ShipGroup {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
     
-    pub async fn remove(sgid: ShipGroupID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove(sgid: Uuid<ShipGroup>, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM fleet__ship_groups WHERE id = $1")
             .bind(Uuid::from(sgid))
             .execute(tx).await.map_err(ServerError::from)
@@ -225,19 +211,19 @@ impl ShipGroup {
 }
 
 impl ShipQueue {
-    pub async fn find(sqid: ShipQueueID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(sqid: Uuid<ShipQueue>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM system__ship_queues WHERE id = $1")
             .bind(Uuid::from(sqid))
             .fetch_one(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_by_system(sid: Uuid<System>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM system__ship_queues WHERE system_id = $1 ORDER BY finished_at DESC")
             .bind(Uuid::from(sid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_last(sid: SystemID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find_last(sid: Uuid<System>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM system__ship_queues WHERE system_id = $1 ORDER BY finished_at DESC LIMIT 1")
             .bind(Uuid::from(sid))
             .fetch_one(db_pool).await.map_err(ServerError::from)
@@ -255,7 +241,7 @@ impl ShipQueue {
             .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(sqid: ShipQueueID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove(sqid: Uuid<ShipQueue>, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM system__ship_queues WHERE id = $1")
             .bind(Uuid::from(sqid))
             .execute(tx).await.map_err(ServerError::from)
@@ -264,7 +250,7 @@ impl ShipQueue {
 
 
 #[get("/")]
-pub async fn get_system_ship_groups(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>, claims: Claims)
+pub async fn get_system_ship_groups(state: web::Data<AppState>, info: web::Path<(Uuid<Game>, Uuid<System>)>, claims: Claims)
     -> Result<HttpResponse>
 {
     let (s, p) = futures::join!(
@@ -283,7 +269,7 @@ pub async fn get_system_ship_groups(state: web::Data<AppState>, info: web::Path<
 #[post("/")]
 pub async fn add_ship_queue(
     state: web::Data<AppState>,
-    info: web::Path<(GameID, SystemID)>,
+    info: web::Path<(Uuid<Game>, Uuid<System>)>,
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
@@ -305,7 +291,7 @@ pub async fn add_ship_queue(
     let starts_at = ShipQueue::find_last(system.id.clone(), &state.db_pool).await.ok().map_or(Time::now(), |sq| sq.finished_at);
 
     let ship_queue = ShipQueue{
-        id: ShipQueueID(Uuid::new_v4()),
+        id: Uuid::new(),
         system: system.id,
         category: ship_model.category.clone(),
         quantity: json_data.quantity as u16,
@@ -325,7 +311,7 @@ pub async fn add_ship_queue(
 }
 
 #[get("/")]
-pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>, claims: Claims)
+pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(Uuid<Game>, Uuid<System>)>, claims: Claims)
     -> Result<HttpResponse>
 {
     let (s, p) = futures::join!(
@@ -344,7 +330,7 @@ pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(GameID
 #[post("/")]
 pub async fn assign_ships(
     state: web::Data<AppState>,
-    info: web::Path<(GameID, SystemID, FleetID)>,
+    info: web::Path<(Uuid<Game>, Uuid<System>, Uuid<Fleet>)>,
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
@@ -382,7 +368,7 @@ pub async fn assign_ships(
     
     if fleet_ship_group.is_none() && json_data.quantity > 0 {
         ShipGroup::create(ShipGroup{
-            id: ShipGroupID(Uuid::new_v4()),
+            id: Uuid::new(),
             system: None,
             fleet: Some(fleet.id.clone()),
             quantity: json_data.quantity as u16,
@@ -400,7 +386,7 @@ pub async fn assign_ships(
 
     if system_ship_group.is_none() && remaining_quantity > 0 {
         ShipGroup::create(ShipGroup{
-            id: ShipGroupID(Uuid::new_v4()),
+            id: Uuid::new(),
             system: Some(system.id.clone()),
             fleet: None,
             quantity: remaining_quantity,

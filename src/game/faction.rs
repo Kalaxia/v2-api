@@ -3,11 +3,10 @@ use serde::{Serialize, Deserialize};
 use crate::{
     AppState,
     game::{
-        game::GameID,
+        game::Game,
     },
-    lib::{Result, error::{ServerError, InternalError}},
+    lib::{Result, error::{ServerError, InternalError}, uuid::Uuid},
 };
-use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
 use sqlx_core::row::Row;
 
@@ -21,7 +20,7 @@ pub struct Faction{
 #[derive(Serialize, Clone)]
 pub struct GameFaction{
     pub faction: FactionID,
-    pub game: GameID,
+    pub game: Uuid<Game>,
     pub victory_points: u16,
 }
 
@@ -39,7 +38,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for GameFaction {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(GameFaction{
             faction: row.try_get::<i32, _>("faction_id").map(|id| FactionID(id as u8))?,
-            game: row.try_get::<Uuid, _>("game_id").map(GameID)?,
+            game: row.try_get("game_id")?,
             victory_points: row.try_get::<i16, _>("victory_points").map(|vp| vp as u16)?,
         })
     }
@@ -85,13 +84,13 @@ impl Faction {
 }
 
 impl GameFaction {
-    pub async fn find_all(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
+    pub async fn find_all(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM game__factions WHERE game_id = $1 ORDER BY faction_id")
             .bind(Uuid::from(gid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(gid: Uuid<Game>, fid: FactionID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM game__factions WHERE game_id = $1 AND faction_id = $2")
             .bind(Uuid::from(gid))
             .bind(i32::from(fid))
@@ -100,7 +99,7 @@ impl GameFaction {
 
     pub async fn create(game_faction: &GameFaction, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO game__factions(game_id, faction_id, victory_points) VALUES($1, $2, $3)")
-            .bind(Uuid::from(game_faction.game))
+            .bind(game_faction.game)
             .bind(i32::from(game_faction.faction))
             .bind(game_faction.victory_points as i16)
             .execute(tx).await.map_err(ServerError::from)
@@ -109,7 +108,7 @@ impl GameFaction {
     pub async fn update(game_faction: &GameFaction, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("UPDATE game__factions SET victory_points = $1 WHERE game_id = $2 AND faction_id = $3")
             .bind(game_faction.victory_points as i16)
-            .bind(Uuid::from(game_faction.game))
+            .bind(game_faction.game)
             .bind(i32::from(game_faction.faction))
             .execute(tx).await.map_err(ServerError::from)
     }
@@ -120,7 +119,7 @@ pub async fn get_factions(state: web::Data<AppState>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(Faction::find_all(&state.db_pool).await?))
 }
 
-pub async fn generate_game_factions(gid: GameID, db_pool: &PgPool) -> Result<()> {
+pub async fn generate_game_factions(gid: Uuid<Game>, db_pool: &PgPool) -> Result<()> {
     let factions = Faction::find_all(db_pool).await?.into_iter().map(|f| GameFaction{
         faction: f.id,
         game: gid.clone(),

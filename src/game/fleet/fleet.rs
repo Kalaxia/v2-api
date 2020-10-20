@@ -1,18 +1,18 @@
 use actix_web::{post, patch, web, HttpResponse};
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
 use crate::{
     lib::{
         Result,
         error::{ServerError, InternalError},
         time::Time,
-        auth::Claims
+        auth::Claims,
+        uuid::Uuid,
     },
     game::{
-        game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
-        player::{Player, PlayerID},
-        system::system::{System, SystemID, Coordinates},
-        fleet::ship::{ShipGroup},
+        game::{Game, GameFleetTravelMessage, GameOptionSpeed},
+        player::Player,
+        system::system::{System, Coordinates},
+        fleet::ship::ShipGroup,
     },
     ws::protocol,
     AppState
@@ -23,36 +23,29 @@ use sqlx_core::row::Row;
 
 pub const FLEET_RANGE: f64 = 20.0; // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
 
-#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
-pub struct FleetID(pub Uuid);
-
 #[derive(Serialize, Clone)]
-pub struct Fleet{
-    pub id: FleetID,
-    pub system: SystemID,
-    pub destination_system: Option<SystemID>,
+pub struct Fleet {
+    pub id: Uuid<Fleet>,
+    pub system: Uuid<System>,
+    pub destination_system: Option<Uuid<System>>,
     pub destination_arrival_date: Option<Time>,
-    pub player: PlayerID,
+    pub player: Uuid<Player>,
     pub ship_groups: Vec<ShipGroup>,
 }
 
 #[derive(Deserialize)]
 pub struct FleetTravelRequest {
-    pub destination_system_id: SystemID,
-}
-
-impl From<FleetID> for Uuid {
-    fn from(fid: FleetID) -> Self { fid.0 }
+    pub destination_system_id: Uuid<System>,
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Fleet {
-            id: row.try_get("id").map(FleetID)?,
-            system: row.try_get("system_id").map(SystemID)?,
-            destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
+            id: row.try_get("id")?,
+            system: row.try_get("system_id")?,
+            destination_system: row.try_get("destination_id").ok(),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
-            player: row.try_get("player_id").map(PlayerID)?,
+            player: row.try_get("player_id")?,
             ship_groups: vec![],
         })
     }
@@ -83,52 +76,52 @@ impl Fleet {
         self.destination_system != None
     }
 
-    pub async fn find(fid: &FleetID, db_pool: &PgPool) -> Result<Fleet> {
+    pub async fn find(fid: &Uuid<Fleet>, db_pool: &PgPool) -> Result<Fleet> {
         sqlx::query_as("SELECT * FROM fleet__fleets WHERE id = $1")
-            .bind(Uuid::from(fid.clone()))
+            .bind(fid.clone())
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FleetUnknown))
     }
 
-    pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Vec<Fleet>> {
+    pub async fn find_stationed_by_system(sid: &Uuid<System>, db_pool: &PgPool) -> Result<Vec<Fleet>> {
         sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
-            .bind(Uuid::from(sid.clone()))
+            .bind(sid.clone())
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn create(f: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
-            .bind(Uuid::from(f.id))
-            .bind(Uuid::from(f.system))
-            .bind(Uuid::from(f.player))
+            .bind(f.id)
+            .bind(f.system)
+            .bind(f.player)
             .execute(tx).await.map_err(ServerError::from)
     }
 
     pub async fn update(f: Fleet, db_pool: &PgPool) -> Result<u64> {
         sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
-            .bind(Uuid::from(f.system))
-            .bind(f.destination_system.map(Uuid::from))
+            .bind(f.system)
+            .bind(f.destination_system)
             .bind(f.destination_arrival_date)
-            .bind(Uuid::from(f.player))
-            .bind(Uuid::from(f.id))
+            .bind(f.player)
+            .bind(f.id)
             .execute(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn remove(f: &Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
-            .bind(Uuid::from(f.id))
+            .bind(f.id)
             .execute(tx).await.map_err(ServerError::from)
     }
 }
 
 #[post("/")]
-pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
+pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(Uuid<Game>,Uuid<System>)>, claims: Claims) -> Result<HttpResponse> {
     let system = System::find(info.1, &state.db_pool).await?;
     
     if system.player != Some(claims.pid) {
         return Err(InternalError::AccessDenied)?;
     }
     let fleet = Fleet{
-        id: FleetID(Uuid::new_v4()),
+        id: Uuid::new(),
         player: claims.pid.clone(),
         system: system.id.clone(),
         destination_system: None,
@@ -152,7 +145,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
 #[patch("/donate/")]
 pub async fn donate(
     state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID,FleetID,)>,
+    info: web::Path<(Uuid<Game>,Uuid<System>,Uuid<Fleet>,)>,
     claims: Claims
 ) -> Result<HttpResponse> {
     let (s, f, sg, p) = futures::join!(
@@ -183,8 +176,8 @@ pub async fn donate(
     #[derive(Serialize)]
     pub struct FleetTransferData{
         pub fleet: Fleet,
-        pub donator_id: PlayerID,
-        pub receiver_id: PlayerID,
+        pub donator_id: Uuid<Player>,
+        pub receiver_id: Uuid<Player>,
     }
 
     let games = state.games();
@@ -201,7 +194,7 @@ pub async fn donate(
 #[post("/travel/")]
 pub async fn travel(
     state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID,FleetID,)>,
+    info: web::Path<(Uuid<Game>,Uuid<System>,Uuid<Fleet>,)>,
     json_data: web::Json<FleetTravelRequest>,
     claims: Claims
 ) -> Result<HttpResponse> {
@@ -264,15 +257,14 @@ fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::{
         game::{
-            game::GameID,
+            game::Game,
             fleet::{
-                ship::{ShipGroup, ShipGroupID, ShipModelCategory},
+                ship::{ShipGroup, ShipModelCategory},
             },
-            system::system::{System, SystemID, SystemKind,  Coordinates},
-            player::{PlayerID}
+            system::system::{System, SystemKind,  Coordinates},
+            player::Player,
         }
     };
 
@@ -297,7 +289,7 @@ mod tests {
 
         assert!(!fleet.is_travelling());
 
-        fleet.destination_system = Some(SystemID(Uuid::new_v4()));
+        fleet.destination_system = Some(Uuid::new());
 
         assert!(fleet.is_travelling());
     }
@@ -342,15 +334,15 @@ mod tests {
 
     fn get_fleet_mock() -> Fleet {
         Fleet{
-            id: FleetID(Uuid::new_v4()),
-            player: PlayerID(Uuid::new_v4()),
-            system: SystemID(Uuid::new_v4()),
+            id: Uuid::new(),
+            player: Uuid::new(),
+            system: Uuid::new(),
             destination_system: None,
             destination_arrival_date: None,
             ship_groups: vec![
                 ShipGroup{
-                    id: ShipGroupID(Uuid::new_v4()),
-                    fleet: Some(FleetID(Uuid::new_v4())),
+                    id: Uuid::new(),
+                    fleet: Some(Uuid::new()),
                     system: None,
                     category: ShipModelCategory::Fighter,
                     quantity: 1,
@@ -361,8 +353,8 @@ mod tests {
 
     fn get_system_mock() -> System {
         System {
-            id: SystemID(Uuid::new_v4()),
-            game: GameID(Uuid::new_v4()),
+            id: Uuid::new(),
+            game: Uuid::new(),
             player: None,
             kind: SystemKind::BaseSystem,
             unreachable: false,

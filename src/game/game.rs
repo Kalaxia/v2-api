@@ -1,6 +1,5 @@
 use actix_web::{get, delete, web, HttpResponse};
 use actix::prelude::*;
-use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
@@ -13,18 +12,19 @@ use crate::{
         Result,
         error::{InternalError, ServerError},
         auth::Claims,
+        uuid::Uuid,
     },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID, FLEET_RANGE},
-            ship::{ShipQueue, ShipQueueID, ShipGroup, ShipGroupID},
+            fleet::{Fleet, FLEET_RANGE},
+            ship::{ShipQueue, ShipGroup},
         },
         lobby::Lobby,
-        player::{PlayerID, Player, init_player_wallets},
+        player::{Player, init_player_wallets},
         system::{
-            building::{Building, BuildingID, BuildingStatus, BuildingKind},
-            system::{System, SystemID, assign_systems, generate_systems, init_player_systems}
+            building::{Building, BuildingStatus, BuildingKind},
+            system::{System, assign_systems, generate_systems, init_player_systems}
         },
     },
     ws::{ client::ClientSession, protocol},
@@ -37,20 +37,17 @@ pub const GAME_START_WALLET: usize = 200;
 pub const VICTORY_POINTS: u16 = 300;
 pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
 
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub struct GameID(pub Uuid);
-
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
-    pub id: GameID,
+    pub id: Uuid<Game>,
     pub game_speed: GameOptionSpeed,
     pub map_size: GameOptionMapSize
 }
 
 pub struct GameServer {
-    pub id: GameID,
+    pub id: Uuid<Game>,
     state: web::Data<AppState>,
-    clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    clients: RwLock<HashMap<Uuid<Player>, actix::Addr<ClientSession>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
@@ -75,16 +72,10 @@ pub enum GameOptionMapSize {
     VeryLarge,
 }
 
-impl From<GameID> for Uuid {
-    fn from(gid: GameID) -> Self { gid.0 }
-}
-
 impl<'a> FromRow<'a, PgRow<'a>> for Game {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-
         Ok(Game {
-            id: GameID(id),
+            id: row.try_get("id")?,
             game_speed: row.try_get("game_speed")?,
             map_size: row.try_get("map_size")?
         })
@@ -157,23 +148,23 @@ impl GameOptionMapSize {
 }
 
 impl Game {
-    pub async fn find(gid: GameID, db_pool: &PgPool) -> Result<Self> {
+    pub async fn find(gid: Uuid<Game>, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM game__games WHERE id = $1")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
     }
 
     pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
-            .bind(Uuid::from(game.id))
+            .bind(game.id)
             .bind(game.game_speed)
             .bind(game.map_size)
             .execute(tx).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(gid: GameID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove(gid: Uuid<Game>, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
-            .bind(Uuid::from(gid))
+            .bind(gid)
             .execute(tx).await.map_err(ServerError::from)
     }
 }
@@ -216,7 +207,7 @@ impl GameServer {
     }
 
     async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
-        let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
+        let ids: Vec<Uuid<Player>> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, c) in clients.iter() {
             if ids.contains(&pid) {
@@ -227,12 +218,12 @@ impl GameServer {
     }
 
     async fn produce_income(&mut self) -> Result<()> {
-        let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await?
+        let mut players: HashMap<Uuid<Player>, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .map(|p| (p.id.clone(), p))
             .collect();
         let mut players_income = HashMap::new();
-        let mines: Vec<SystemID> = Building::find_by_kind(BuildingKind::Mine, &self.state.db_pool).await?
+        let mines: Vec<Uuid<System>> = Building::find_by_kind(BuildingKind::Mine, &self.state.db_pool).await?
             .into_iter()
             .filter(|b| b.status == BuildingStatus::Operational)
             .map(|b| b.system)
@@ -276,7 +267,7 @@ impl GameServer {
         Ok(())
     }
 
-    async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
+    async fn process_fleet_arrival(&mut self, fleet_id: Uuid<Fleet>) -> Result<()> {
         let mut fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
         fleet.ship_groups = ShipGroup::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
         let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
@@ -296,7 +287,7 @@ impl GameServer {
         Ok(())
     }
 
-    async fn process_building_construction(&mut self, bid: BuildingID) -> Result<()> {
+    async fn process_building_construction(&mut self, bid: Uuid<Building>) -> Result<()> {
         let mut building = Building::find(bid, &self.state.db_pool).await?;
         let player = Player::find_system_owner(building.system.clone(), &self.state.db_pool).await?;
 
@@ -315,7 +306,7 @@ impl GameServer {
         Ok(())
     }
 
-    async fn process_ship_queue_production(&mut self, sqid: ShipQueueID) -> Result<()> {
+    async fn process_ship_queue_production(&mut self, sqid: Uuid<ShipQueue>) -> Result<()> {
         let ship_queue = ShipQueue::find(sqid, &self.state.db_pool).await?;
         let ship_group = ShipGroup::find_by_system_and_category(
             ship_queue.system.clone(),
@@ -330,7 +321,7 @@ impl GameServer {
             ShipGroup::update(&sg, &mut tx).await?;
         } else {
             let sg = ShipGroup{
-                id: ShipGroupID(Uuid::new_v4()),
+                id: Uuid::new(),
                 system: Some(ship_queue.system.clone()),
                 fleet: None,
                 quantity: ship_queue.quantity.clone(),
@@ -362,7 +353,7 @@ impl GameServer {
         let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
             .into_iter()
             .map(|p| (p.id.clone(), p))
-            .collect::<HashMap<PlayerID, Player>>();
+            .collect::<HashMap<Uuid<Player>, Player>>();
 
         for system in victory_systems {
             factions.get_mut(
@@ -414,7 +405,7 @@ impl GameServer {
         Ok(())
     }
 
-    pub async fn remove_player(&self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
+    pub async fn remove_player(&self, pid: Uuid<Player>) -> Result<actix::Addr<ClientSession>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
         self.ws_broadcast(protocol::Message::new(
@@ -468,11 +459,11 @@ impl Actor for GameServer {
 
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
-pub struct GameRemovePlayerMessage(pub PlayerID);
+pub struct GameRemovePlayerMessage(pub Uuid<Player>);
 
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="()")]
-pub struct GameNotifyPlayerMessage(pub PlayerID, pub protocol::Message);
+pub struct GameNotifyPlayerMessage(pub Uuid<Player>, pub protocol::Message);
 
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="()")]
@@ -590,8 +581,9 @@ impl Handler<GameEndMessage> for GameServer {
     }
 }
 
-pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
-    let id = GameID(Uuid::new_v4());
+pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<Uuid<Player>, actix::Addr<ClientSession>>) -> Result<(Uuid<Game>, Addr<GameServer>)> {
+    let id = Uuid::new();
+
     
     let game_server = GameServer{
         id: id.clone(),
@@ -614,12 +606,12 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
 }
 
 #[get("/{id}/players/")]
-pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
+pub async fn get_players(state: web::Data<AppState>, info: web::Path<(Uuid<Game>,)>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
+pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(Uuid<Game>,)>)
     -> Result<HttpResponse>
 {
     let game = Game::find(info.0, &state.db_pool).await?;

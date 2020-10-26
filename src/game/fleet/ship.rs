@@ -29,6 +29,12 @@ pub struct ShipGroup {
     pub quantity: u16,
 }
 
+impl ShipGroup {
+    pub fn velocity(&self) -> f64 {
+        self.category.base_velocity() / self.quantity as f64
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipGroupID(pub Uuid);
 
@@ -65,6 +71,13 @@ pub enum ShipModelCategory {
     Corvette,
     Frigate,
     Cruiser,
+}
+
+impl ShipModelCategory {
+    pub fn base_velocity(self) -> f64 {
+        const BASE_VELOCITY : [f64; 4] = [0.25, 1.0, 0.5, 0.5];
+        BASE_VELOCITY[self as usize]
+    }
 }
 
 #[derive(Deserialize)]

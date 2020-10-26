@@ -36,6 +36,18 @@ pub struct Fleet{
     pub ship_groups: Vec<ShipGroup>,
 }
 
+impl Fleet {
+    pub fn travel_time(&self, from: Coordinates, to: Coordinates, game_speed: GameOptionSpeed) -> DateTime<Utc> {
+        let distance = from.as_distance_to(&to);
+        let velocity = game_speed.speed_coefficient()
+            * self.ship_groups.iter().map(ShipGroup::velocity).fold(std::f64::MAX, f64::min);
+
+        let time = distance / velocity;
+
+        Utc::now().checked_add_signed(Duration::seconds(time.ceil() as i64)).expect("Could not add travel time")
+    }
+}
+
 #[derive(Deserialize)]
 pub struct FleetTravelRequest {
     pub destination_system_id: SystemID,
@@ -232,10 +244,10 @@ pub async fn travel(
     }
     fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(
+    fleet.destination_arrival_date = Some(fleet.travel_time(
         system.coordinates,
         destination_system.coordinates,
-        get_travel_time_coeff(game.game_speed)
+        game.game_speed
     ).into());
     Fleet::update(fleet.clone(), &state.db_pool).await?;
 
@@ -244,21 +256,6 @@ pub async fn travel(
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))
-}
-
-fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
-    let distance = from.as_distance_to(&to);
-    let ms = distance / time_coeff;
-
-    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
-}
-
-fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
-    match game_speed {
-        GameOptionSpeed::Slow => 0.4,
-        GameOptionSpeed::Medium => 0.55,
-        GameOptionSpeed::Fast => 0.7,
-    }
 }
 
 #[cfg(test)]

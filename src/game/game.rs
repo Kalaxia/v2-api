@@ -63,6 +63,14 @@ pub enum GameOptionSpeed {
     Fast,
 }
 
+impl GameOptionSpeed {
+    pub fn speed_coefficient(self) -> f64 {
+        // speed coefficients in constructor declaration order (Slow, Medium, Fast)
+        const COEFFICIENTS : [f64; 3] = [0.4, 0.55, 0.7];
+        COEFFICIENTS[self as usize]
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]

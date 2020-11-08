@@ -1,5 +1,5 @@
 use actix_web::{get, web, HttpResponse};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -46,44 +46,45 @@ impl<'a> FromRow<'a, PgRow<'a>> for Squadron {
 
 impl Squadron {
     pub async fn find_by_system(sid: SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM system__squadrons WHERE system_id = $1")
+        sqlx::query_as("SELECT * FROM map__system_squadrons WHERE system_id = $1")
             .bind(Uuid::from(sid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn find_by_system_and_category(sid: SystemID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM system__squadrons WHERE system_id = $1 AND category = $2")
+        sqlx::query_as("SELECT * FROM map__system_squadrons WHERE system_id = $1 AND category = $2")
             .bind(Uuid::from(sid))
             .bind(category)
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn create<E>(s: Squadron, exec: &mut E) -> Result<u64>
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO system__squadrons (id, system_id, category, quantity) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(s.id))
-            .bind(Uuid::from(s.system))
-            .bind(s.category)
-            .bind(s.quantity as i32)
+        sqlx::query("INSERT INTO map__system_squadrons (id, system_id, category, quantity) VALUES($1, $2, $3, $4)")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(self.category)
+            .bind(self.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(s: &Squadron, exec: &mut E) -> Result<u64>
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE system__squadrons SET system_id = $2, category = $3, quantity = $4 WHERE id = $1")
-            .bind(Uuid::from(s.id))
-            .bind(Uuid::from(s.system))
-            .bind(s.category)
-            .bind(s.quantity as i32)
+        sqlx::query("UPDATE map__system_squadrons SET system_id = $2, category = $3, quantity = $4 WHERE id = $1")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(self.category)
+            .bind(self.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
     
-    pub async fn remove(sid: SquadronID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("DELETE FROM system__squadrons WHERE id = $1")
-            .bind(Uuid::from(sid))
-            .execute(tx).await.map_err(ServerError::from)
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
+        sqlx::query("DELETE FROM map__system_squadrons WHERE id = $1")
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 

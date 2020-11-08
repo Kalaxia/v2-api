@@ -61,7 +61,7 @@ pub async fn travel(
         destination_system.coordinates,
         get_travel_time_coeff(game.game_speed)
     ).into());
-    Fleet::update(fleet.clone(), &mut &state.db_pool).await?;
+    fleet.update(&mut &state.db_pool).await?;
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
@@ -98,17 +98,9 @@ fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
     use crate::{
         game::{
-            game::GameID,
-            fleet::{
-                formation::{FleetFormation},
-                squadron::{FleetSquadron, FleetSquadronID},
-            },
-            ship::model::ShipModelCategory,
-            system::system::{System, SystemID, SystemKind,  Coordinates},
-            player::{PlayerID}
+            system::system::Coordinates
         }
     };
     

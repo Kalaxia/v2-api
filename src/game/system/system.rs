@@ -25,7 +25,7 @@ use crate::{
     ws::protocol
 };
 use galaxy_rs::{Point, DataPoint};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
@@ -53,7 +53,7 @@ struct MapSizeData {
     arm_width_factor: f64
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum SystemKind {
     BaseSystem,
     VictorySystem,
@@ -174,7 +174,7 @@ impl System {
                 // Both players have the same faction, the arrived fleet just parks here
                 if system_owner.faction == player.faction {
                     fleet.change_system(self);
-                    Fleet::update(fleet.clone(), &mut db_pool).await?;
+                    fleet.update(&mut db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
 
@@ -223,9 +223,9 @@ impl System {
 
     pub async fn conquer(&mut self, mut fleet: Fleet, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
         fleet.change_system(self);
-        Fleet::update(fleet.clone(), &mut db_pool).await?;
+        fleet.update(&mut db_pool).await?;
         self.player = Some(fleet.player.clone());
-        System::update(self.clone(), db_pool).await?;
+        self.update(&mut db_pool).await?;
         Ok(FleetArrivalOutcome::Conquerred{
             system: self.clone(),
             fleet: fleet,
@@ -277,24 +277,26 @@ impl System {
         count.0 as u32
     }
 
-    pub async fn create(s: System,  tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, kind, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6, $7)")
-            .bind(Uuid::from(s.id))
-            .bind(Uuid::from(s.game))
-            .bind(s.player.map(Uuid::from))
-            .bind(i16::from(s.kind))
-            .bind(s.coordinates.x)
-            .bind(s.coordinates.y)
-            .bind(s.unreachable)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.game))
+            .bind(self.player.map(Uuid::from))
+            .bind(i16::from(self.kind))
+            .bind(self.coordinates.x)
+            .bind(self.coordinates.y)
+            .bind(self.unreachable)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(s: System, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE map__systems SET player_id = $1, is_unreachable = $2 WHERE id = $3")
-            .bind(s.player.map(Uuid::from))
-            .bind(s.unreachable)
-            .bind(Uuid::from(s.id))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .bind(self.player.map(Uuid::from))
+            .bind(self.unreachable)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
     pub async fn insert_all<I>(systems:I, pool:&PgPool) -> Result<u64>
@@ -304,7 +306,7 @@ impl System {
         let mut nb_inserted = 0;
         for sys in systems {
             nb_inserted += 1;
-            System::create(sys.clone(), &mut tx).await?;
+            sys.insert(&mut tx).await?;
         }
 
         tx.commit().await?;
@@ -480,7 +482,7 @@ pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSp
         building.status = BuildingStatus::Operational;
         building.built_at = building.created_at;
 
-        Building::create(building, &mut tx).await?;
+        building.insert(&mut tx).await?;
     }
     tx.commit().await?;
     Ok(())

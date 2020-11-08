@@ -8,7 +8,7 @@ use crate::{
     lib::{Result, error::{ServerError, InternalError}},
 };
 use uuid::Uuid;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -98,20 +98,22 @@ impl GameFaction {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
     }
 
-    pub async fn create(game_faction: &GameFaction, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO game__factions(game_id, faction_id, victory_points) VALUES($1, $2, $3)")
-            .bind(Uuid::from(game_faction.game))
-            .bind(i32::from(game_faction.faction))
-            .bind(game_faction.victory_points as i16)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.game))
+            .bind(i32::from(self.faction))
+            .bind(self.victory_points as i16)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(game_faction: &GameFaction, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE game__factions SET victory_points = $1 WHERE game_id = $2 AND faction_id = $3")
-            .bind(game_faction.victory_points as i16)
-            .bind(Uuid::from(game_faction.game))
-            .bind(i32::from(game_faction.faction))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(self.victory_points as i16)
+            .bind(Uuid::from(self.game))
+            .bind(i32::from(self.faction))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -129,7 +131,7 @@ pub async fn generate_game_factions(gid: GameID, db_pool: &PgPool) -> Result<()>
 
     let mut tx = db_pool.begin().await?;
     for faction in factions {
-        GameFaction::create(&faction, &mut tx).await?;
+        faction.insert(&mut tx).await?;
     }
     tx.commit().await?;
     Ok(())

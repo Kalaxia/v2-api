@@ -19,7 +19,7 @@ use crate::{
     },
     AppState
 };
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
@@ -88,32 +88,35 @@ impl FleetSquadron {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn create<E>(fs: FleetSquadron, exec: &mut E) -> Result<u64>
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO fleet__squadrons (id, fleet_id, category, quantity) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(fs.id))
-            .bind(Uuid::from(fs.fleet))
-            .bind(fs.category)
-            .bind(fs.quantity as i32)
+        sqlx::query("INSERT INTO fleet__squadrons (id, fleet_id, category, formation, quantity) VALUES($1, $2, $3, $4, $5)")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.fleet))
+            .bind(self.category)
+            .bind(self.formation)
+            .bind(self.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(fs: &FleetSquadron, exec: &mut E) -> Result<u64>
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__squadrons SET fleet_id = $2, category = $3, quantity = $4 WHERE id = $1")
-            .bind(Uuid::from(fs.id))
-            .bind(Uuid::from(fs.fleet))
-            .bind(fs.category)
-            .bind(fs.quantity as i32)
+        sqlx::query("UPDATE fleet__squadrons SET fleet_id = $2, category = $3, formation = $4, quantity = $5 WHERE id = $1")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.fleet))
+            .bind(self.category)
+            .bind(self.formation)
+            .bind(self.quantity as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
     
-    pub async fn remove(fsid: FleetSquadronID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM fleet__squadrons WHERE id = $1")
-            .bind(Uuid::from(fsid))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -157,39 +160,41 @@ pub async fn assign_ships(
     let mut tx = state.db_pool.begin().await?;
     
     if fleet_squadron.is_none() && json_data.quantity > 0 {
-        FleetSquadron::create(FleetSquadron{
+        let fs = FleetSquadron{
             id: FleetSquadronID(Uuid::new_v4()),
             fleet: fleet.id.clone(),
             formation: json_data.formation.clone(),
             quantity: json_data.quantity as u16,
             category: json_data.category.clone(),
-        }, &mut tx).await?;
+        };
+        fs.insert(&mut tx).await?;
     } else if fleet_squadron.is_some() && json_data.quantity > 0 {
         let mut fs = fleet_squadron.unwrap();
         if fs.category != json_data.category {
             return Err(InternalError::Conflict)?;
         }
         fs.quantity = json_data.quantity as u16;
-        FleetSquadron::update(&fs, &mut tx).await?;
+        fs.update(&mut tx).await?;
     } else if fleet_squadron.is_some() {
-        FleetSquadron::remove(fleet_squadron.unwrap().id, &mut tx).await?;
+        fleet_squadron.unwrap().remove(&mut tx).await?;
     }
 
     let remaining_quantity = available_quantity - json_data.quantity as u16;
 
     if squadron.is_none() && remaining_quantity > 0 {
-        Squadron::create(Squadron{
+        let s = Squadron{
             id: SquadronID(Uuid::new_v4()),
             system: system.id.clone(),
             quantity: remaining_quantity,
             category: json_data.category.clone(),
-        }, &mut tx).await?;
+        };
+        s.insert(&mut tx).await?;
     } else if squadron.is_some() && remaining_quantity > 0 {
         let mut s = squadron.unwrap();
         s.quantity = remaining_quantity;
-        Squadron::update(&s, &mut tx).await?;
+        s.update(&mut tx).await?;
     } else if squadron.is_some() {
-        Squadron::remove(squadron.unwrap().id, &mut tx).await?;
+        squadron.unwrap().remove(&mut tx).await?;
     }
     tx.commit().await?;
     Ok(HttpResponse::NoContent().finish())

@@ -1,5 +1,5 @@
 use actix_web::{get, post, web, HttpResponse};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, Executor, postgres::{PgRow, PgQueryAs}, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -76,22 +76,24 @@ impl ShipQueue {
             .fetch_one(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn create(sq: ShipQueue, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO system__ship_queues (id, system_id, category, quantity, created_at, started_at, finished_at) VALUES($1, $2, $3, $4, $5, $6, $7)")
-            .bind(Uuid::from(sq.id))
-            .bind(Uuid::from(sq.system))
-            .bind(sq.category)
-            .bind(sq.quantity as i32)
-            .bind(sq.created_at)
-            .bind(sq.started_at)
-            .bind(sq.finished_at)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(self.category)
+            .bind(self.quantity as i32)
+            .bind(self.created_at)
+            .bind(self.started_at)
+            .bind(self.finished_at)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(sqid: ShipQueueID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM system__ship_queues WHERE id = $1")
-            .bind(Uuid::from(sqid))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -131,8 +133,8 @@ pub async fn add_ship_queue(
     };
 
     let mut tx = state.db_pool.begin().await?;
-    Player::update(player, &mut tx).await?;
-    ShipQueue::create(ship_queue.clone(), &mut tx).await?;
+    player.update(&mut tx).await?;
+    ship_queue.insert(&mut tx).await?;
     tx.commit().await?;
 
     state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });

@@ -17,7 +17,7 @@ use crate::{
     ws::protocol,
     AppState
 };
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 pub const FLEET_RANGE: f64 = 20.0;
@@ -81,29 +81,31 @@ impl Fleet {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn create(f: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
-        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
-            .bind(Uuid::from(f.id))
-            .bind(Uuid::from(f.system))
-            .bind(Uuid::from(f.player))
-            .execute(tx).await.map_err(ServerError::from)
-    }
-
-    pub async fn update<E>(f: Fleet, exec: &mut E) -> Result<u64>
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
-            .bind(Uuid::from(f.system))
-            .bind(f.destination_system.map(Uuid::from))
-            .bind(f.destination_arrival_date)
-            .bind(Uuid::from(f.player))
-            .bind(Uuid::from(f.id))
+        sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(Uuid::from(self.player))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(f: &Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
+            .bind(Uuid::from(self.system))
+            .bind(self.destination_system.map(Uuid::from))
+            .bind(self.destination_arrival_date)
+            .bind(Uuid::from(self.player))
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
-            .bind(Uuid::from(f.id))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -124,7 +126,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         is_destroyed: false,
     };
     let mut tx = state.db_pool.begin().await?;
-    Fleet::create(fleet.clone(), &mut tx).await?;
+    fleet.insert(&mut tx).await?;
     tx.commit().await?;
 
     let games = state.games();
@@ -166,7 +168,7 @@ pub async fn donate(
 
     fleet.player = other_player.id;
 
-    Fleet::update(fleet.clone(), &mut &state.db_pool).await?;
+    fleet.update(&mut &state.db_pool).await?;
 
     #[derive(Serialize)]
     pub struct FleetTransferData{

@@ -2,26 +2,21 @@ use std::collections::HashMap;
 use crate::{
     lib::{
         Result,
-        error::{ServerError, InternalError},
-        time::Time,
-        auth::Claims
+        error::InternalError
     },
     game::{
         faction::{FactionID},
         fleet::{
-            formation::{FleetFormation},
             combat::{
                 battle::{BattleID, Battle},
             },
-            fleet::{FleetID},
+            fleet::{FleetID, Fleet},
             squadron::{FleetSquadronID, FleetSquadron},
         }
     }
 };
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
 use rand::prelude::*;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
-use uuid::Uuid;
 
 #[derive(Serialize, Clone)]
 pub struct Round {
@@ -32,11 +27,7 @@ pub struct Round {
 }
 
 #[derive(Serialize, Clone)]
-pub struct ActionID(pub Uuid);
-
-#[derive(Serialize, Clone)]
 pub struct FleetAction {
-    id: ActionID,
     fleet: FleetID,
     battle: BattleID,
     kind: FleetActionKind,
@@ -55,7 +46,6 @@ pub enum FleetActionKind {
 
 #[derive(Serialize, Clone)]
 pub struct SquadronAction {
-    id: ActionID,
     squadron: FleetSquadronID,
     battle: BattleID,
     kind: SquadronActionKind,
@@ -67,47 +57,7 @@ pub enum SquadronActionKind {
     Attack { target: FleetSquadronID, loss: u16 }
 }
 
-impl From<ActionID> for Uuid {
-    fn from(aid: ActionID) -> Self { aid.0 }
-}
-
-impl FleetAction{
-    pub async fn create<E>(fa: FleetAction, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres>
-    {
-        sqlx::query("INSERT INTO fleet__combat__fleet_actions(id, fleet_id, battle_id, action, round_number) VALUES($1, $2, $3, $4, $5)")
-            .bind(Uuid::from(fa.id))
-            .bind(Uuid::from(fa.fleet))
-            .bind(Uuid::from(fa.battle))
-            .bind(fa.kind)
-            .bind(i32::from(fa.round_number))
-            .execute(&mut *exec).await.map_err(ServerError::from)
-    }
-}
-
-impl SquadronAction{
-    pub async fn create<E>(sa: SquadronAction, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres>
-    {
-        let (kind, fields, parameters): (String, String, Vec<String>) = match sa.kind {
-            SquadronActionKind::Attack { target, loss } => ("attack".to_owned(), "target_id, loss".to_owned(), vec![Uuid::from(target).to_string(), loss.to_string()] )
-        };
-        let query_string = "INSERT INTO fleet__combat__squadron_actions(id, squadron_id, battle_id, action, ".to_owned() + &fields + ") VALUES($1, $2, $3, $4, $5)";
-        let mut query = sqlx::query(&query_string)
-            .bind(Uuid::from(sa.id))
-            .bind(Uuid::from(sa.squadron))
-            .bind(Uuid::from(sa.battle))
-            .bind(kind)
-            .bind(i32::from(sa.round_number));
-        for parameter in parameters {
-            query = query.bind(parameter);
-        }
-        query.execute(&mut *exec).await.map_err(ServerError::from)
-    }
-}
-
-pub async fn fight_round(mut battle: &mut Battle, number: u16, db_pool: &PgPool) -> Result<Round> {
-    let mut tx = db_pool.begin().await?;
+pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashMap<FleetID, Fleet>) -> Result<Round> {
     let mut round = Round{
         battle: battle.id.clone(),
         fleet_actions: vec![],
@@ -116,23 +66,18 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, db_pool: &PgPool)
     };
 
     // fleets actions
-    for fleet in battle.get_joined_fleets(&db_pool).await? {
-        let fa = FleetAction{
-            id: ActionID(Uuid::new_v4()),
+    for (_, fleet) in new_fleets.iter() {
+        round.fleet_actions.push(FleetAction{
             battle: battle.id,
             fleet: fleet.id,
             kind: FleetActionKind::Join,
             round_number: number,
-        };
-        round.fleet_actions.push(fa.clone());
-        FleetAction::create(fa, &mut tx).await?;
+        });
     }
 
     // squadrons actions
     for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
-        let sa = attack(&mut battle, fid, &squadron, number)?;
-        round.squadron_actions.push(sa.clone());
-        SquadronAction::create(sa, &mut tx).await?;
+        round.squadron_actions.push(attack(&mut battle, fid, &squadron, number)?);
     }
     Ok(round)
 }
@@ -141,17 +86,13 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
     let (target, attack_coeff) = pick_target_squadron(&battle, fid, &attacker)?;
     let (remaining_ships, loss) = fire(&attacker, &target, attack_coeff);
 
-    battle.fleets.get_mut(&fid).unwrap()
-        .get_mut(&target.fleet).unwrap()
-        .squadrons.iter_mut().map(|mut fs| {
-            if fs.id == target.id {
-                fs.quantity = remaining_ships;
-            }
-            fs
-        });
+    for fs in battle.fleets.get_mut(&fid).unwrap().get_mut(&target.fleet).unwrap().squadrons.iter_mut() {
+        if fs.id == target.id {
+            fs.quantity = remaining_ships;
+        }
+    }
 
     Ok(SquadronAction{
-        id: ActionID(Uuid::new_v4()),
         battle: battle.id,
         squadron: attacker.id,
         kind: SquadronActionKind::Attack{ target: target.id, loss },

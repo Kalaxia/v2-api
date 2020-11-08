@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
@@ -48,7 +48,7 @@ pub enum BuildingKind {
     Shipyard
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Copy)]
 pub struct BuildingID(pub Uuid);
 
 #[derive(Serialize, Copy, Clone)]
@@ -148,22 +148,24 @@ impl Building {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn create(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")
-            .bind(Uuid::from(b.id))
-            .bind(Uuid::from(b.system))
-            .bind(b.kind)
-            .bind(b.status)
-            .bind(b.created_at)
-            .bind(b.built_at)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(self.kind)
+            .bind(self.status)
+            .bind(self.created_at)
+            .bind(self.built_at)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(b: Building, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE map__system_buildings SET status = $2 WHERE id = $1")
-            .bind(Uuid::from(b.id))
-            .bind(b.status)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(self.status)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -202,8 +204,8 @@ pub async fn create_building(
     let building = Building::new(info.1.clone(), data.kind, building_data, game.game_speed);
 
     let mut tx = state.db_pool.begin().await?;
-    Player::update(player, &mut tx).await?;
-    Building::create(building.clone(), &mut tx).await?;
+    player.update(&mut tx).await?;
+    building.insert(&mut tx).await?;
     tx.commit().await?;
 
     state.games().get(&info.0).unwrap().do_send(GameBuildingConstructionMessage{ building: building.clone() });

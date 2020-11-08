@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashSet, HashMap};
 use crate::{
     lib::{
         error::{ServerError, InternalError},
@@ -6,13 +6,12 @@ use crate::{
         Result
     },
     game::{
-        faction::{FactionID, Faction},
+        faction::FactionID,
         fleet::{
             combat::{
                 round::{Round, fight_round},
             },
-            formation::{FleetFormation},
-            squadron::{FleetSquadron, FleetSquadronID},
+            squadron::FleetSquadron,
             fleet::{Fleet, FleetID},
         },
         system::system::{System, SystemID},
@@ -32,8 +31,8 @@ pub struct Battle{
     pub id: BattleID,
     pub system: SystemID,
     pub fleets: HashMap<FactionID, HashMap<FleetID, Fleet>>,
-    pub victor: Option<FactionID>,
     pub rounds: Vec<Round>,
+    pub victor: Option<FactionID>,
     pub begun_at: Time,
     pub ended_at: Option<Time>,
 }
@@ -49,43 +48,53 @@ impl From<BattleID> for Uuid {
 }
 
 impl Battle {
-    pub async fn create<E>(b: Battle, exec: &mut E) -> Result<u64>
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO fleet__combat__battles(id, system_id, fleets, begun_at, ended_at) VALUES($1, $2, $3, $4, $5)")
-            .bind(Uuid::from(b.id))
-            .bind(Uuid::from(b.system))
-            .bind(serde_json::to_string(&b.fleets).unwrap())
-            .bind(b.begun_at)
-            .bind(b.ended_at)
+        sqlx::query("INSERT INTO fleet__combat__battles(id, system_id, fleets, rounds, begun_at, ended_at) VALUES($1, $2, $3, $4, $5, $6)")
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(serde_json::to_string(&self.fleets).unwrap())
+            .bind(serde_json::to_string(&self.rounds).unwrap())
+            .bind(self.begun_at)
+            .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(b: Battle, exec: &mut E) -> Result<u64>
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__combat__battles SET fleets = $2 ended_at = $3 WHERE id = $1")
-            .bind(Uuid::from(b.id))
-            .bind(serde_json::to_string(&b.fleets).unwrap())
-            .bind(b.ended_at)
+        sqlx::query("UPDATE fleet__combat__battles SET fleets = $2, rounds = $3, victor_id = $4, ended_at = $5 WHERE id = $1")
+            .bind(Uuid::from(self.id))
+            .bind(serde_json::to_string(&self.fleets).unwrap())
+            .bind(serde_json::to_string(&self.rounds).unwrap())
+            .bind(self.victor.map(i32::from))
+            .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+
+    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
+        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_system_id IS NULL AND id != any($2))")
+            .bind(Uuid::from(self.id))
+            .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
+            .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn generate_reports<E>(&self, exec: &mut E) -> Result<()>
     where
         E: Executor<Database = Postgres> {
-        let mut players: Vec<PlayerID> = vec![];
+        let mut players: HashSet<PlayerID> = HashSet::new();
 
         for (_, fleets) in self.fleets.iter() {
             for (_, fleet) in fleets {
-                if players.contains(&fleet.player) {
+                if !players.insert(fleet.player.clone()) {
                     continue;
                 }
-                players.push(fleet.player.clone());
-                Report::create(Report{
+                let report = Report{
                     player: fleet.player.clone(),
                     battle: self.id.clone(),
-                }, exec).await?;
+                };
+                report.insert(exec).await?;
             }
         }
         Ok(())
@@ -101,10 +110,9 @@ impl Battle {
                     if squadron.quantity > 0 {
                         let initiative = (f64::from(squadron.category.as_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
 
-                        if !squadrons.contains_key(&initiative) {
-                            squadrons.insert(initiative, vec![]);
-                        }
-                        squadrons.get_mut(&initiative).unwrap().push((fid.clone(), squadron.clone()));
+                        squadrons.entry(initiative)
+                            .or_default()
+                            .push((fid.clone(), squadron.clone()));
                     }
                 }
             }
@@ -113,21 +121,11 @@ impl Battle {
     }
 
     pub fn get_fleet_ids(&self) -> Vec<FleetID> {
-        let mut ids = vec![];
-
-        for (_, fleets) in self.fleets.iter() {
-            for (fid, _) in fleets {
-                ids.push(fid.clone());
-            }
-        }
-        ids
-    }
-
-    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_system_id IS NULL AND id != any($2))")
-            .bind(Uuid::from(self.id))
-            .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
-            .fetch_all(db_pool).await.map_err(ServerError::from)
+        self.fleets
+            .iter()
+            .flat_map(|t| t.1)
+            .map(|t| t.0.clone())
+            .collect()
     }
 
     fn process_victor(&self) -> Result<FactionID> {
@@ -140,25 +138,22 @@ impl Battle {
         }
         Err(InternalError::NotFound)?
     }
-
-    fn is_fight_over(&self) -> bool {
-        true
-    }
 }
 
 impl Report {
-    pub async fn create<E>(r: Report, exec: &mut E) -> Result<u64>
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres>  {
-        sqlx::query("INSERT INTO fleet__battle_reports(battle_id, player_id) VALUES($1, $2)")
-            .bind(Uuid::from(r.battle))
-            .bind(Uuid::from(r.player))
+        sqlx::query("INSERT INTO fleet__combat__reports(battle_id, player_id) VALUES($1, $2)")
+            .bind(Uuid::from(self.battle))
+            .bind(Uuid::from(self.player))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
 async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
-    let players: HashMap<PlayerID, Player> = Player::find_by_ids(fleets.iter().map(|(_, f)| f.player.clone()).collect(), &db_pool).await?
+    let player_ids = fleets.iter().map(|(_, f)| f.player.clone()).collect();
+    let players: HashMap<PlayerID, Player> = Player::find_by_ids(player_ids, &db_pool).await?
         .iter()
         .map(|p| (p.id, p.clone()))
         .collect();
@@ -167,10 +162,10 @@ async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) 
     for (fid, fleet) in fleets {
         let player = players.get(&fleet.player).unwrap();
         let faction = player.faction.unwrap();
-        if !faction_parties.contains_key(&faction) {
-            faction_parties.insert(faction, HashMap::new());
-        }
-        faction_parties.get_mut(&faction).unwrap().insert(fid, fleet);
+
+        faction_parties.entry(faction)
+            .or_default()
+            .insert(fid, fleet);
     }
     Ok(faction_parties)
 }
@@ -183,17 +178,23 @@ pub async fn engage(system: &System, arriver: Fleet, orbiting_fleets: HashMap<Fl
     let mut round_number: u16 = 1;
 
     loop {
-        let round = fight_round(&mut battle, round_number, &db_pool).await;
+        let new_fleets = battle.get_joined_fleets(&db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
+        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &db_pool).await? {
+            battle.fleets.get_mut(&fid).unwrap().extend(fleets);
+        }
+
+        let round = fight_round(&mut battle, round_number, new_fleets).await;
         if round.is_err() {
             break;
         }
         battle.rounds.push(round.unwrap());
+        battle.update(&mut db_pool).await?;
         round_number += 1;
     }
     update_fleets(&battle, db_pool).await?;
     battle.victor = Some(battle.process_victor()?);
     battle.ended_at = Some(Time::now());
-    Battle::update(battle.clone(), &mut db_pool);
+    battle.update(&mut db_pool).await?;
     Ok(battle)
 }
 
@@ -209,7 +210,7 @@ async fn init_battle(system: &System, fleets: HashMap<FleetID, Fleet>, db_pool: 
     };
     // let mut players: HashMap<PlayerID, Player> = HashMap::new();
     let mut tx = db_pool.begin().await?;
-    Battle::create(battle.clone(), &mut tx).await?;
+    battle.insert(&mut tx).await?;
     // for fleet in battle.fleets.iter() {
     //     if !players.contains_key(&fleet.player) {
     //         players.insert(fleet.player, Player::find(fleet.player, &db_pool).await?);
@@ -238,12 +239,20 @@ async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<()> {
 }
 
 async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<()> {
+    for s in fleet.squadrons.iter() {
+        if s.quantity > 0 {
+            s.update(tx).await?;
+        } else {
+            s.remove(tx).await?;
+        }
+    }
+    
     fleet.squadrons.retain(|s| s.quantity > 0);
 
     if fleet.squadrons.is_empty() {
         fleet.is_destroyed = true;
     }
-    Fleet::update(fleet, tx).await?;
+    fleet.update(tx).await?;
 
     Ok(())
 }

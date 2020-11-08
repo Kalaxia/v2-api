@@ -1,26 +1,5 @@
-use actix_web::{post, patch, web, HttpResponse};
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
-use crate::{
-    lib::{
-        Result,
-        error::{ServerError, InternalError},
-        time::Time,
-        auth::Claims
-    },
-    game::{
-        game::GameID,
-        player::{Player, PlayerID},
-        system::system::{System, SystemID},
-        fleet::squadron::{FleetSquadron},
-    },
-    ws::protocol,
-    AppState
-};
 use std::collections::HashMap;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
-use sqlx_core::row::Row;
-
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, Eq, PartialEq, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
@@ -69,16 +48,15 @@ impl FleetFormation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uuid::Uuid;
-    use crate::{
-        game::{
-            game::GameID,
-            fleet::{
-                squadron::{FleetSquadron, FleetSquadronID},
-            },
-            ship::model::ShipModelCategory,
-            system::system::{System, SystemID, SystemKind,  Coordinates},
-            player::{PlayerID}
-        }
-    };
+
+    #[test]
+    fn test_get_attack_formation() {
+        let formation = FleetFormation::Center;
+
+        let attack_matrix = formation.get_attack_matrix();
+
+        assert_eq!(attack_matrix.len(), 4);
+        assert_eq!(Some(&FleetFormation::Center), attack_matrix.keys().next());
+        assert_eq!(Some(&0.85), attack_matrix.values().next());
+    }
 }

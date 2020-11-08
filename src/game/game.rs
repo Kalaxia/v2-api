@@ -32,7 +32,7 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postgres};
 use sqlx_core::row::Row;
 
 pub const GAME_START_WALLET: usize = 200;
@@ -165,18 +165,20 @@ impl Game {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
     }
 
-    pub async fn create(game: Game, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
-            .bind(Uuid::from(game.id))
-            .bind(game.game_speed)
-            .bind(game.map_size)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(self.game_speed)
+            .bind(self.map_size)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(gid: GameID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
-            .bind(Uuid::from(gid))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -272,7 +274,7 @@ impl GameServer {
         }
         let mut tx =self.state.db_pool.begin().await?;
         for (_, p) in players {
-            Player::update(p, &mut tx).await?;
+            p.update(&mut tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -305,7 +307,7 @@ impl GameServer {
         building.status = BuildingStatus::Operational;
 
         let mut tx = self.state.db_pool.begin().await?;
-        Building::update(building.clone(), &mut tx).await?;
+        building.update(&mut tx).await?;
         tx.commit().await?;
 
         self.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
@@ -329,7 +331,7 @@ impl GameServer {
 
         if let Some(mut s) = squadron {
             s.quantity += ship_queue.quantity;
-            Squadron::update(&s, &mut tx).await?;
+            s.update(&mut tx).await?;
         } else {
             let s = Squadron{
                 id: SquadronID(Uuid::new_v4()),
@@ -337,10 +339,10 @@ impl GameServer {
                 quantity: ship_queue.quantity.clone(),
                 category: ship_queue.category.clone(),
             };
-            Squadron::create(s, &mut tx).await?;
+            s.insert(&mut tx).await?;
         }
         
-        ShipQueue::remove(ship_queue.id, &mut tx).await?;
+        ship_queue.remove(&mut tx).await?;
 
         tx.commit().await?;
 
@@ -411,7 +413,9 @@ impl GameServer {
             },
             None,
         ));
-        self.state.clear_game(self.id).await?;
+
+        let game = Game::find(self.id, &self.state.db_pool).await?;
+        self.state.clear_game(&game).await?;
         Ok(())
     }
 
@@ -606,7 +610,7 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
     };
 
     let mut tx = state.db_pool.begin().await?;
-    Game::create(game, &mut tx).await?;
+    game.insert(&mut tx).await?;
     tx.commit().await?;
 
     Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await?;
@@ -637,7 +641,7 @@ pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Pa
     state.add_client(&player.id, client.clone());
     if is_empty {
         drop(games);
-        state.clear_game(game.id.clone()).await?;
+        state.clear_game(&game).await?;
     }
     Ok(HttpResponse::NoContent().finish())
 }

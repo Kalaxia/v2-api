@@ -109,6 +109,14 @@ impl GameOptionSpeed {
             GameOptionSpeed::Fast => 0.8,
         }
     }
+
+    pub fn into_travel_speed(self) -> f64 {
+        match self  {
+            GameOptionSpeed::Slow => 0.4,
+            GameOptionSpeed::Medium => 0.55,
+            GameOptionSpeed::Fast => 0.7,
+        }
+    }
 }
 
 impl GameOptionMapSize {
@@ -272,7 +280,7 @@ impl GameServer {
                 });
             });
         }
-        let mut tx =self.state.db_pool.begin().await?;
+        let mut tx = self.state.db_pool.begin().await?;
         for (_, p) in players {
             p.update(&mut tx).await?;
         }
@@ -670,5 +678,12 @@ mod tests {
         assert_eq!(1.2, GameOptionSpeed::Slow.into_coeff());
         assert_eq!(1.0, GameOptionSpeed::Medium.into_coeff());
         assert_eq!(0.8, GameOptionSpeed::Fast.into_coeff());
+    }
+
+    #[test]
+    fn test_get_travel_speed() {
+        assert_eq!(0.4, GameOptionSpeed::Slow.into_travel_speed());
+        assert_eq!(0.55, GameOptionSpeed::Medium.into_travel_speed());
+        assert_eq!(0.7, GameOptionSpeed::Fast.into_travel_speed());
     }
 }

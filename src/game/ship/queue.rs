@@ -113,7 +113,7 @@ pub async fn add_ship_queue(
     let game = g?;
     let system = s?;
     let mut player = p?;
-    let ship_model = json_data.category.as_data();
+    let ship_model = json_data.category.to_data();
 
     if system.player.clone() != Some(player.id.clone()) {
         return Err(InternalError::AccessDenied)?;

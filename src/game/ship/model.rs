@@ -32,7 +32,7 @@ pub enum ShipModelCategory {
 }
 
 impl ShipModelCategory {
-    pub fn as_data(&self) -> ShipModel {
+    pub fn to_data(&self) -> ShipModel {
         match self {
             ShipModelCategory::Fighter => ShipModel{
                 category: ShipModelCategory::Fighter,
@@ -93,10 +93,10 @@ impl ShipModel {
 #[get("/ship-models/")]
 pub async fn get_ship_models() -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(vec![
-        ShipModelCategory::Fighter.as_data(),
-        ShipModelCategory::Corvette.as_data(),
-        ShipModelCategory::Frigate.as_data(),
-        ShipModelCategory::Cruiser.as_data(),
+        ShipModelCategory::Fighter.to_data(),
+        ShipModelCategory::Corvette.to_data(),
+        ShipModelCategory::Frigate.to_data(),
+        ShipModelCategory::Cruiser.to_data(),
     ]))
 }
 
@@ -106,11 +106,11 @@ mod tests {
 
     #[test]
     fn test_ship_model_data() {
-        let fighter = ShipModelCategory::Fighter.as_data();
+        let fighter = ShipModelCategory::Fighter.to_data();
 
         assert_eq!(fighter.category, ShipModelCategory::Fighter);
 
-        let cruiser = ShipModelCategory::Cruiser.as_data();
+        let cruiser = ShipModelCategory::Cruiser.to_data();
 
         assert_eq!(cruiser.category, ShipModelCategory::Cruiser);
 
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_ship_model_construction_milliseconds() {
-        let fighter_model = ShipModelCategory::Fighter.as_data();
+        let fighter_model = ShipModelCategory::Fighter.to_data();
 
         assert_eq!(960, fighter_model.into_duration(2, GameOptionSpeed::Slow).num_milliseconds());
         assert_eq!(800, fighter_model.into_duration(2, GameOptionSpeed::Medium).num_milliseconds());

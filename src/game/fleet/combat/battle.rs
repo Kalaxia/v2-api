@@ -19,7 +19,7 @@ use crate::{
     }
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
 use rand::prelude::*;
 use uuid::Uuid;
 
@@ -54,8 +54,8 @@ impl Battle {
         sqlx::query("INSERT INTO fleet__combat__battles(id, system_id, fleets, rounds, begun_at, ended_at) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
-            .bind(serde_json::to_string(&self.fleets).unwrap())
-            .bind(serde_json::to_string(&self.rounds).unwrap())
+            .bind(Json(&self.fleets))
+            .bind(Json(&self.rounds))
             .bind(self.begun_at)
             .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
@@ -66,15 +66,15 @@ impl Battle {
         E: Executor<Database = Postgres> {
         sqlx::query("UPDATE fleet__combat__battles SET fleets = $2, rounds = $3, victor_id = $4, ended_at = $5 WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .bind(serde_json::to_string(&self.fleets).unwrap())
-            .bind(serde_json::to_string(&self.rounds).unwrap())
+            .bind(Json(&self.fleets))
+            .bind(Json(&self.rounds))
             .bind(self.victor.map(i32::from))
             .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
     pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_system_id IS NULL AND id != any($2))")
+        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND id != any($2)")
             .bind(Uuid::from(self.id))
             .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
             .fetch_all(db_pool).await.map_err(ServerError::from)
@@ -108,7 +108,7 @@ impl Battle {
             for (_, fleet) in fleets {
                 for squadron in fleet.squadrons.iter() {
                     if squadron.quantity > 0 {
-                        let initiative = (f64::from(squadron.category.as_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
+                        let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
 
                         squadrons.entry(initiative)
                             .or_default()

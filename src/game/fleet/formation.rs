@@ -1,5 +1,4 @@
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, Eq, PartialEq, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
@@ -13,35 +12,33 @@ pub enum FleetFormation {
 }
 
 impl FleetFormation {
-    pub fn get_attack_matrix(&self) -> HashMap<Self, f64> {
-        let mut formation_attack_matrix = HashMap::new();
+    pub fn get_attack_matrix(&self) -> Vec<(Self, f64)> {
         match self {
-            FleetFormation::Left => {
-                formation_attack_matrix.insert(FleetFormation::Right, 1.);
-                formation_attack_matrix.insert(FleetFormation::Center, 1.25);
-                formation_attack_matrix.insert(FleetFormation::Rear, 1.10);
-                formation_attack_matrix.insert(FleetFormation::Left, 1.15);
-            },
-            FleetFormation::Center => {
-                formation_attack_matrix.insert(FleetFormation::Center, 0.85);
-                formation_attack_matrix.insert(FleetFormation::Rear, 1.10);
-                formation_attack_matrix.insert(FleetFormation::Left, 1.);
-                formation_attack_matrix.insert(FleetFormation::Right, 1.);
-            },
-            FleetFormation::Right => {
-                formation_attack_matrix.insert(FleetFormation::Left, 1.);
-                formation_attack_matrix.insert(FleetFormation::Center, 1.25);
-                formation_attack_matrix.insert(FleetFormation::Rear, 1.10);
-                formation_attack_matrix.insert(FleetFormation::Right, 1.15);
-            },
-            FleetFormation::Rear => {
-                formation_attack_matrix.insert(FleetFormation::Left, 1.);
-                formation_attack_matrix.insert(FleetFormation::Center, 1.25);
-                formation_attack_matrix.insert(FleetFormation::Rear, 1.10);
-                formation_attack_matrix.insert(FleetFormation::Right, 1.);
-            }
+            FleetFormation::Left => vec![
+                (FleetFormation::Right, 1.),
+                (FleetFormation::Center, 1.25),
+                (FleetFormation::Rear, 1.10),
+                (FleetFormation::Left, 1.15),
+            ],
+            FleetFormation::Center => vec![
+                (FleetFormation::Center, 0.85),
+                (FleetFormation::Rear, 1.10),
+                (FleetFormation::Left, 1.),
+                (FleetFormation::Right, 1.),
+            ],
+            FleetFormation::Right => vec![
+                (FleetFormation::Left, 1.),
+                (FleetFormation::Center, 1.25),
+                (FleetFormation::Rear, 1.10),
+                (FleetFormation::Right, 1.15),
+            ],
+            FleetFormation::Rear => vec![
+                (FleetFormation::Left, 1.),
+                (FleetFormation::Center, 1.25),
+                (FleetFormation::Rear, 1.10),
+                (FleetFormation::Right, 1.),
+            ]
         }
-        formation_attack_matrix
     }
 }
 
@@ -56,7 +53,6 @@ mod tests {
         let attack_matrix = formation.get_attack_matrix();
 
         assert_eq!(attack_matrix.len(), 4);
-        assert_eq!(Some(&FleetFormation::Center), attack_matrix.keys().next());
-        assert_eq!(Some(&0.85), attack_matrix.values().next());
+        assert_eq!((FleetFormation::Center, 0.85), attack_matrix[0]);
     }
 }

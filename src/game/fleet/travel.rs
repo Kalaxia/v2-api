@@ -59,7 +59,7 @@ pub async fn travel(
     fleet.destination_arrival_date = Some(get_travel_time(
         system.coordinates,
         destination_system.coordinates,
-        get_travel_time_coeff(game.game_speed)
+        game.game_speed.into_travel_speed()
     ).into());
     fleet.update(&mut &state.db_pool).await?;
 
@@ -87,14 +87,6 @@ fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateT
     Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
 }
 
-fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
-    match game_speed {
-        GameOptionSpeed::Slow => 0.4,
-        GameOptionSpeed::Medium => 0.55,
-        GameOptionSpeed::Fast => 0.7,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,12 +111,5 @@ mod tests {
             0.55,
         );
         assert_eq!(19, time.signed_duration_since(Utc::now()).num_seconds());
-    }
-
-    #[test]
-    fn test_get_travel_time_coeff() {
-        assert_eq!(0.4, get_travel_time_coeff(GameOptionSpeed::Slow));
-        assert_eq!(0.55, get_travel_time_coeff(GameOptionSpeed::Medium));
-        assert_eq!(0.7, get_travel_time_coeff(GameOptionSpeed::Fast));
     }
 }

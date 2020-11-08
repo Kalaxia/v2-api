@@ -26,7 +26,7 @@ pub struct Round {
     pub squadron_actions: Vec<SquadronAction>,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Copy)]
 pub struct FleetAction {
     fleet: FleetID,
     battle: BattleID,
@@ -34,9 +34,7 @@ pub struct FleetAction {
     round_number: u16
 }
 
-#[derive(Serialize, Clone, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
-#[sqlx(rename_all = "snake_case")]
+#[derive(Serialize, Clone, Copy, sqlx::Type)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum FleetActionKind {
     Join,
@@ -44,7 +42,7 @@ pub enum FleetActionKind {
     Surrender
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Copy)]
 pub struct SquadronAction {
     squadron: FleetSquadronID,
     battle: BattleID,
@@ -52,7 +50,8 @@ pub struct SquadronAction {
     round_number: u16
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum SquadronActionKind {
     Attack { target: FleetSquadronID, loss: u16 }
 }
@@ -83,10 +82,10 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
 }
 
 fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Result<SquadronAction> {
-    let (target, attack_coeff) = pick_target_squadron(&battle, fid, &attacker)?;
+    let (target_faction, target, attack_coeff) = pick_target_squadron(&battle, fid, &attacker)?;
     let (remaining_ships, loss) = fire(&attacker, &target, attack_coeff);
 
-    for fs in battle.fleets.get_mut(&fid).unwrap().get_mut(&target.fleet).unwrap().squadrons.iter_mut() {
+    for fs in battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons.iter_mut() {
         if fs.id == target.id {
             fs.quantity = remaining_ships;
         }
@@ -100,15 +99,19 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
     })
 }
 
-fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Result<(FleetSquadron, f64)> {
-    let (opponent_squadrons, attack_coeff) = || -> Result<(Vec<FleetSquadron>, f64)> {
+fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Result<(FactionID, FleetSquadron, f64)> {
+    let (opponent_squadrons, attack_coeff) = || -> Result<(Vec<(FactionID, FleetSquadron)>, f64)> {
         for (target_formation, attack_coeff) in attacker.formation.get_attack_matrix() {
-            let opponent_squadrons: Vec<FleetSquadron> = battle.fleets
+            let opponent_squadrons: Vec<(FactionID, FleetSquadron)> = battle.fleets
                 .iter()
                 .filter(|(&fid, _)| fid != faction_id)
-                .flat_map(|(_, fleets)| fleets)
-                .flat_map(|(_, fleet)| fleet.squadrons.clone())
-                .filter(|squadron| squadron.formation == target_formation && squadron.quantity > 0)
+                .flat_map(|(fid, fleets)| fleets
+                    .iter()
+                    .flat_map(|(_, fleet)| fleet.squadrons.clone())
+                    .map(|fs| (fid.clone(), fs))
+                    .collect::<Vec<(FactionID, FleetSquadron)>>()
+                )
+                .filter(|(_, squadron)| squadron.formation == target_formation && squadron.quantity > 0)
                 .collect();
 
             if opponent_squadrons.len() > 0 {
@@ -121,12 +124,12 @@ fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &Fleet
     let mut rng = thread_rng();
     let idx = rng.gen_range(0, opponent_squadrons.len());
 
-    Ok((opponent_squadrons[idx], attack_coeff))
+    Ok((opponent_squadrons[idx].0, opponent_squadrons[idx].1, attack_coeff))
 }
 
 fn fire(attacker: &FleetSquadron, defender: &FleetSquadron, attack_coeff: f64) -> (u16, u16) {
-    let attacker_model = attacker.category.as_data();
-    let defender_model = defender.category.as_data();
+    let attacker_model = attacker.category.to_data();
+    let defender_model = defender.category.to_data();
 
     let mut rng = thread_rng();
     let percent = rng.gen_range(attacker_model.precision as f64 / 2.0, attacker_model.precision as f64);

@@ -25,7 +25,7 @@ impl FleetFormation {
                 [ 1.0,  1.25,  1.0, 1.10], // Rear
             ];
 
-        COEFFS[self as usize][self as usize]
+        COEFFS[self as usize][target as usize]
     }
 
 

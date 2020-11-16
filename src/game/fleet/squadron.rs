@@ -29,7 +29,7 @@ impl From<FleetSquadronID> for Uuid {
     fn from(fsid: FleetSquadronID) -> Self { fsid.0 }
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Serialize, Clone)]
 pub struct FleetSquadron {
     pub id: FleetSquadronID,
     pub fleet: FleetID,

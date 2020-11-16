@@ -113,8 +113,7 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
 /// Also, when attacking, it is not fleet vs fleet but squadron vs squadron. Because of this, each
 /// squadron of a fleet can attack a different fleet each turn.
 fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Option<(FactionID, FleetSquadron)> {
-
-    let mut potential_targets = Vec::new();
+    let mut potential_targets : Vec<(FactionID, &FleetSquadron)> = Vec::new();
 
     // c.f. game::fleet::formation::FleetFormation::attack_order()
     for target_formation in attacker.formation.attack_order() {
@@ -123,7 +122,7 @@ fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &Fleet
             .filter(|(fid, _)| **fid != faction_id)
             .flat_map(|(fid, fleets)| fleets
                 .iter()
-                .flat_map(|(_, fleet)| fleet.squadrons.clone())
+                .flat_map(|(_, fleet)| &fleet.squadrons)
                 .map(move |fs| (*fid, fs))
             )
             .filter(|(_, squadron)| squadron.formation == *target_formation && squadron.quantity > 0)
@@ -135,9 +134,8 @@ fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &Fleet
     if potential_targets.is_empty() { return None }
 
     let mut rng = thread_rng();
-    let idx = rng.gen_range(0, potential_targets.len());
 
-    Some(potential_targets[idx])
+    potential_targets.choose(&mut rng).map(|(fid, fs)| (*fid, (*fs).clone()))
 }
 
 fn fire(attacker: &FleetSquadron, defender: &FleetSquadron, attack_coeff: f64) -> (u16, u16) {

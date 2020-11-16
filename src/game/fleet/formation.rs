@@ -33,10 +33,13 @@ impl FleetFormation {
     /// exist in the first attacked position, it searches for opponents in the next position and so
     /// on...
     pub fn attack_order(self) -> & 'static [Self] {
+
+        // I added every possible formation to each attack order to prevent battles to get stuck
+        // (opponents still facing but no one can attack)
         match self {
-            FleetFormation::Left => & [FleetFormation::Left, FleetFormation::Center, FleetFormation::Rear],
-            FleetFormation::Center => & [FleetFormation::Center, FleetFormation::Rear],
-            FleetFormation::Right => & [FleetFormation::Right, FleetFormation::Center, FleetFormation::Rear],
+            FleetFormation::Left => & [FleetFormation::Left, FleetFormation::Center, FleetFormation::Rear, FleetFormation::Right],
+            FleetFormation::Center => & [FleetFormation::Center, FleetFormation::Rear, FleetFormation::Left, FleetFormation::Right],
+            FleetFormation::Right => & [FleetFormation::Right, FleetFormation::Center, FleetFormation::Rear, FleetFormation::Left],
             FleetFormation::Rear => & [FleetFormation::Left, FleetFormation::Right, FleetFormation::Center, FleetFormation::Rear],
         }
     }

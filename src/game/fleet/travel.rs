@@ -7,7 +7,10 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
+        game::{
+            game::{Game, GameID},
+            server::GameFleetTravelMessage
+        },
         player::Player,
         fleet::fleet::{Fleet, FleetID, FLEET_RANGE},
         system::system::{System, SystemID, Coordinates},

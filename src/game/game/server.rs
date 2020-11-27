@@ -1,28 +1,26 @@
-use actix_web::{get, delete, web, HttpResponse};
+use actix_web::web;
 use actix::prelude::*;
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
-use galaxy_rs::GalaxyBuilder;
 use crate::{
     lib::{
         Result,
-        error::{InternalError, ServerError},
-        auth::Claims,
+        error::ServerError,
     },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID, FLEET_RANGE},
+            fleet::{Fleet, FleetID},
             squadron::{FleetSquadron},
         },
+        game::game::{Game, GameID, VICTORY_POINTS, VICTORY_POINTS_PER_MINUTE},
         ship::queue::{ShipQueue, ShipQueueID},
         ship::squadron::{Squadron, SquadronID},
-        lobby::Lobby,
         player::{PlayerID, Player, init_player_wallets},
         system::{
             building::{Building, BuildingID, BuildingStatus, BuildingKind},
@@ -32,65 +30,11 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postgres};
-use sqlx_core::row::Row;
-
-pub const GAME_START_WALLET: usize = 200;
-pub const VICTORY_POINTS: u16 = 300;
-pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
-
-#[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
-pub struct GameID(pub Uuid);
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Game {
-    pub id: GameID,
-    pub game_speed: GameOptionSpeed,
-    pub map_size: GameOptionMapSize
-}
 
 pub struct GameServer {
     pub id: GameID,
-    state: web::Data<AppState>,
-    clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
-#[sqlx(rename_all = "snake_case")]
-#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
-pub enum GameOptionSpeed {
-    Slow,
-    Medium,
-    Fast,
-}
-
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
-#[sqlx(rename_all = "snake_case")]
-#[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
-pub enum GameOptionMapSize {
-    VerySmall,
-    Small,
-    Medium,
-    Large,
-    VeryLarge,
-}
-
-impl From<GameID> for Uuid {
-    fn from(gid: GameID) -> Self { gid.0 }
-}
-
-impl<'a> FromRow<'a, PgRow<'a>> for Game {
-    fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let id : Uuid = row.try_get("id")?;
-
-        Ok(Game {
-            id: GameID(id),
-            game_speed: row.try_get("game_speed")?,
-            map_size: row.try_get("map_size")?
-        })
-    }
+    pub state: web::Data<AppState>,
+    pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
 }
 
 impl Handler<protocol::Message> for GameServer {
@@ -101,92 +45,34 @@ impl Handler<protocol::Message> for GameServer {
     }
 }
 
-impl GameOptionSpeed {
-    pub fn into_coeff(self) -> f64 {
-        match self {
-            GameOptionSpeed::Slow => 1.2,
-            GameOptionSpeed::Medium => 1.0,
-            GameOptionSpeed::Fast => 0.8,
-        }
-    }
-
-    pub fn into_travel_speed(self) -> f64 {
-        match self  {
-            GameOptionSpeed::Slow => 0.4,
-            GameOptionSpeed::Medium => 0.55,
-            GameOptionSpeed::Fast => 0.7,
-        }
-    }
-}
-
-impl GameOptionMapSize {
-    pub fn to_galaxy_builder(&self) -> GalaxyBuilder {
-        match self {
-            GameOptionMapSize::VerySmall => GalaxyBuilder::default()
-                .min_distance(Some(1.0))
-                .cloud_population(1)
-                .nb_arms(3)
-                .nb_arm_bones(3)
-                .slope_factor(0.6)
-                .arm_slope(std::f64::consts::PI / 4.0)
-                .arm_width_factor(1.0 / 32.0),
-            GameOptionMapSize::Small => GalaxyBuilder::default()
-                .min_distance(Some(1.0))
-                .cloud_population(2)
-                .nb_arms(3)
-                .nb_arm_bones(5)
-                .slope_factor(0.5)
-                .arm_slope(std::f64::consts::PI / 4.0)
-                .arm_width_factor(1.0 / 28.0),
-            GameOptionMapSize::Medium => GalaxyBuilder::default()
-                .min_distance(Some(1.0))
-                .cloud_population(2)
-                .nb_arms(4)
-                .nb_arm_bones(10)
-                .slope_factor(0.5)
-                .arm_slope(std::f64::consts::PI / 2.0)
-                .arm_width_factor(1.0 / 24.0),
-            GameOptionMapSize::Large => GalaxyBuilder::default()
-                .min_distance(Some(1.0))
-                .cloud_population(2)
-                .nb_arms(5)
-                .nb_arm_bones(15)
-                .slope_factor(0.4)
-                .arm_slope(std::f64::consts::PI / 4.0)
-                .arm_width_factor(1.0 / 20.0),
-            GameOptionMapSize::VeryLarge => GalaxyBuilder::default()
-                .min_distance(Some(1.5))
-                .cloud_population(2)
-                .nb_arms(6)
-                .nb_arm_bones(20)
-                .slope_factor(0.4)
-                .arm_slope(std::f64::consts::PI / 4.0)
-                .arm_width_factor(1.0 / 16.0),
-        }
-    }
-}
-
-impl Game {
-    pub async fn find(gid: GameID, db_pool: &PgPool) -> Result<Self> {
-        sqlx::query_as("SELECT * FROM game__games WHERE id = $1")
-            .bind(Uuid::from(gid))
-            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
-    }
-
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
-            .bind(Uuid::from(self.id))
-            .bind(self.game_speed)
-            .bind(self.map_size)
-            .execute(&mut *exec).await.map_err(ServerError::from)
-    }
-
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
-        sqlx::query("DELETE FROM game__games WHERE id = $1")
-            .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+impl Actor for GameServer {
+    type Context = Context<Self>;
+    
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        self.ws_broadcast(protocol::Message::new(
+            protocol::Action::LobbyLaunched,
+            self.id.clone(),
+            None,
+        ));
+        ctx.run_later(Duration::new(1, 0), |this, _| {
+            let result = block_on(this.init()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
+        ctx.run_later(Duration::new(4, 0), |this, _| this.begin());
+        ctx.run_interval(Duration::new(5, 0), move |this, _| {
+            let result = block_on(this.produce_income()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
+        ctx.run_interval(Duration::new(60, 0), move |this, _| {
+            let result = block_on(this.distribute_victory_points()).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
     }
 }
 
@@ -448,37 +334,6 @@ impl GameServer {
     }
 }
 
-impl Actor for GameServer {
-    type Context = Context<Self>;
-    
-    fn started(&mut self, ctx: &mut Context<Self>) {
-        self.ws_broadcast(protocol::Message::new(
-            protocol::Action::LobbyLaunched,
-            self.id.clone(),
-            None,
-        ));
-        ctx.run_later(Duration::new(1, 0), |this, _| {
-            let result = block_on(this.init()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_later(Duration::new(4, 0), |this, _| this.begin());
-        ctx.run_interval(Duration::new(5, 0), move |this, _| {
-            let result = block_on(this.produce_income()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_interval(Duration::new(60, 0), move |this, _| {
-            let result = block_on(this.distribute_victory_points()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-    }
-}
-
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
 pub struct GameRemovePlayerMessage(pub PlayerID);
@@ -600,90 +455,5 @@ impl Handler<GameEndMessage> for GameServer {
         }
         ctx.stop();
         ctx.terminate();
-    }
-}
-
-pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
-    let id = GameID(Uuid::new_v4());
-    
-    let game_server = GameServer{
-        id: id.clone(),
-        state: state.clone(),
-        clients: RwLock::new(clients),
-    };
-    let game = Game{
-        id: id.clone(),
-        game_speed: lobby.game_speed.clone(),
-        map_size: lobby.map_size.clone(),
-    };
-
-    let mut tx = state.db_pool.begin().await?;
-    game.insert(&mut tx).await?;
-    tx.commit().await?;
-
-    Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await?;
-
-    Ok((id, game_server.start()))
-}
-
-#[get("/{id}/players/")]
-pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
-}
-
-#[delete("/{id}/players/")]
-pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
-    -> Result<HttpResponse>
-{
-    let game = Game::find(info.0, &state.db_pool).await?;
-    let mut player = Player::find(claims.pid, &state.db_pool).await?;
-
-    if player.game != Some(game.id) {
-        Err(InternalError::NotInLobby)?
-    }
-    player.reset(&state.db_pool).await?;
-
-    let games = state.games();
-    let game_server = games.get(&game.id).expect("Game exists in DB but not in HashMap");
-    let (client, is_empty) = Arc::try_unwrap(game_server.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
-    state.add_client(&player.id, client.clone());
-    if is_empty {
-        drop(games);
-        state.clear_game(&game).await?;
-    }
-    Ok(HttpResponse::NoContent().finish())
-}
-
-#[get("/constants/")]
-pub async fn get_game_constants() -> Result<HttpResponse> {
-    #[derive(Serialize, Clone)]
-    pub struct GameConstants {
-        fleet_range: f64,
-        victory_points_per_minute: u16,
-        victory_points: u16,
-    }
-    Ok(HttpResponse::Ok().json(GameConstants{
-        fleet_range: FLEET_RANGE,
-        victory_points_per_minute: VICTORY_POINTS_PER_MINUTE,
-        victory_points: VICTORY_POINTS,
-    }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_get_construction_time_coeff() {
-        assert_eq!(1.2, GameOptionSpeed::Slow.into_coeff());
-        assert_eq!(1.0, GameOptionSpeed::Medium.into_coeff());
-        assert_eq!(0.8, GameOptionSpeed::Fast.into_coeff());
-    }
-
-    #[test]
-    fn test_get_travel_speed() {
-        assert_eq!(0.4, GameOptionSpeed::Slow.into_travel_speed());
-        assert_eq!(0.55, GameOptionSpeed::Medium.into_travel_speed());
-        assert_eq!(0.7, GameOptionSpeed::Fast.into_travel_speed());
     }
 }

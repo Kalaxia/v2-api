@@ -9,7 +9,7 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::GameID,
+        game::game::GameID,
         player::{Player, PlayerID},
         system::system::{System, SystemID},
         fleet::squadron::{FleetSquadron},
@@ -194,7 +194,7 @@ mod tests {
     use uuid::Uuid;
     use crate::{
         game::{
-            game::GameID,
+            game::game::GameID,
             fleet::{
                 formation::{FleetFormation},
                 squadron::{FleetSquadron, FleetSquadronID},

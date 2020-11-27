@@ -16,7 +16,10 @@ use crate::{
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadron},
         },
-        game::{GameID, GameOptionMapSize, GameOptionSpeed},
+        game::{
+            game::GameID,
+            option::{GameOptionMapSize, GameOptionSpeed},
+        },
         player::{PlayerID, Player},
         system::{
             building::{Building, BuildingStatus, BuildingKind},

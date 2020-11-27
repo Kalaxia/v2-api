@@ -12,7 +12,10 @@ use crate::{
     },
     game::{
         player::{Player},
-        game::{Game, GameID, GameShipQueueMessage},
+        game::{
+            game::{Game, GameID},
+            server::GameShipQueueMessage,
+        },
         ship::model::ShipModelCategory,
         system::system::{SystemID, System},
     },

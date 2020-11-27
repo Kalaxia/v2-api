@@ -8,7 +8,10 @@ use crate::{
         error::{ServerError, InternalError},
         auth::Claims
     },
-    game::game::{create_game, GameOptionMapSize, GameOptionSpeed},
+    game::game::{
+        game::create_game,
+        option::{GameOptionMapSize, GameOptionSpeed},
+    },
     game::player::{PlayerID, Player},
     ws::{ client::ClientSession, protocol},
     AppState,

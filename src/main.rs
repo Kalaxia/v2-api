@@ -16,7 +16,10 @@ use game::{
     fleet::fleet,
     fleet::travel,
     fleet::squadron as fleet_squadron,
-    game as g,
+    game::{
+        game as g,
+        server::{GameEndMessage, GameServer},
+    },
     faction,
     player,
     lobby,
@@ -34,7 +37,7 @@ pub struct AppState {
     db_pool: PgPool,
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
-    games: RwLock<HashMap<g::GameID, actix::Addr<g::GameServer>>>,
+    games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
 }
 
 macro_rules! res_access {
@@ -72,7 +75,7 @@ impl AppState {
             games.remove(&game.id);
             g
         };
-        game_server.do_send(g::GameEndMessage{});
+        game_server.do_send(GameEndMessage{});
         let mut tx = self.db_pool.begin().await?;
         game.remove(&mut tx).await?;
         tx.commit().await?;
@@ -94,7 +97,7 @@ impl AppState {
         self.clients_mut().remove(pid);
     }
 
-    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::GameServer>> }
+    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<GameServer>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
     res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
 }

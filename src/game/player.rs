@@ -5,7 +5,10 @@ use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, Executor, FromRow, Error, Postg
 use sqlx_core::row::Row;
 use crate::{
     AppState,
-    game::game::{GameID, GAME_START_WALLET, GameNotifyPlayerMessage},
+    game::game::{
+        game::{GameID, GAME_START_WALLET},
+        server::GameNotifyPlayerMessage,
+    },
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,

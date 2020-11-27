@@ -6,7 +6,7 @@ use crate::{
         Result,
         time::Time,
     },
-    game::game::GameOptionSpeed,
+    game::game::option::GameOptionSpeed,
 };
 
 #[derive(Serialize, Copy, Clone)]

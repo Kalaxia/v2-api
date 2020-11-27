@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use crate::{
     AppState,
     game::{
-        game::GameID,
+        game::game::GameID,
     },
     lib::{Result, error::{ServerError, InternalError}},
 };

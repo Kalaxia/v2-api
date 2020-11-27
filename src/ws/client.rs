@@ -7,7 +7,10 @@ use crate::{
     lib::{Result, auth::Claims},
     game::{
         lobby::{ Lobby, LobbyRemoveClientMessage },
-        game::{Game, GameRemovePlayerMessage},
+        game::{
+            game::Game,
+            server::GameRemovePlayerMessage
+        },
         player::{Player, PlayerID},
     },
     ws::protocol,

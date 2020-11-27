@@ -8,7 +8,7 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::GameID,
+        game::game::GameID,
         system::system::{System, SystemID},
         fleet::{
             formation::{FleetFormation},

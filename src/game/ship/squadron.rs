@@ -11,7 +11,7 @@ use crate::{
     },
     game::{
         player::{Player},
-        game::GameID,
+        game::game::GameID,
         system::system::{SystemID, System},
         ship::model::ShipModelCategory,
     },

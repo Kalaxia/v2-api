@@ -13,7 +13,11 @@ use crate::{
         time::Time
     },
     game::{
-        game::{Game, GameID, GameBuildingConstructionMessage, GameOptionSpeed},
+        game::{
+            game::{Game, GameID},
+            server::GameBuildingConstructionMessage,
+            option::GameOptionSpeed
+        },
         system::system::{System, SystemID},
         player::Player
     }

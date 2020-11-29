@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS system__ship_queues(
     system_id UUID NOT NULL,
     category VARCHAR(25) NOT NULL,
     quantity INT NOT NULL,
+    assigned_fleet VARCHAR(60) DEFAULT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     started_at TIMESTAMPTZ NOT NULL,
     finished_at TIMESTAMPTZ NOT NULL

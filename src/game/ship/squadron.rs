@@ -86,6 +86,42 @@ impl Squadron {
             .bind(Uuid::from(self.id))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
+
+    pub async fn assign<E>(
+        squadron: Option<Squadron>,
+        system: SystemID,
+        category: ShipModelCategory,
+        quantity: i32,
+        exec: &mut E
+    ) -> Result<()>
+        where E: Executor<Database = Postgres> {
+        if let Some(mut s) = squadron {
+            if quantity > 0 {
+                s.quantity = quantity as u16;
+                s.update(&mut *exec).await?;
+            } else {
+                s.remove(&mut *exec).await?;
+            }
+        } else if quantity > 0 {
+            let s = Squadron{
+                id: SquadronID(Uuid::new_v4()),
+                system,
+                quantity: quantity as u16,
+                category,
+            };
+            s.insert(&mut *exec).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn assign_existing(system: SystemID, category: ShipModelCategory, quantity: i32, mut db_pool: &PgPool) -> Result<()> {
+        let squadron = Squadron::find_by_system_and_category(
+            system.clone(),
+            category.clone(),
+            &db_pool
+        ).await?;
+        Squadron::assign(squadron, system, category, quantity, &mut db_pool).await
+    }
 }
 
 #[get("/")]

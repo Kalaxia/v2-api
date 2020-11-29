@@ -1,6 +1,7 @@
 use actix_web::{post, patch, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
+use std::fmt;
 use crate::{
     lib::{
         Result,
@@ -34,6 +35,12 @@ pub struct Fleet{
     pub player: PlayerID,
     pub squadrons: Vec<FleetSquadron>,
     pub is_destroyed: bool,
+}
+
+impl fmt::Display for FleetID {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 impl From<FleetID> for Uuid {

@@ -1,4 +1,7 @@
 use serde::{Serialize, Deserialize};
+use crate::lib::error::InternalError;
+use std::str::FromStr;
+use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, Eq, PartialEq, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
@@ -39,6 +42,26 @@ impl FleetFormation {
                 (FleetFormation::Right, 1.),
             ]
         }
+    }
+}
+
+impl FromStr for FleetFormation {
+    type Err = InternalError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "center" => Ok(FleetFormation::Center),
+            "left" => Ok(FleetFormation::Left),
+            "right" => Ok(FleetFormation::Right),
+            "rear" => Ok(FleetFormation::Rear),
+            _ => Err(InternalError::Conflict)
+        }
+    }
+}
+
+impl fmt::Display for FleetFormation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_lowercase())
     }
 }
 

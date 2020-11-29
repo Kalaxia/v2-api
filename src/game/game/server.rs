@@ -1,6 +1,5 @@
 use actix_web::web;
 use actix::prelude::*;
-use uuid::Uuid;
 use serde::{Serialize};
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
@@ -19,8 +18,7 @@ use crate::{
             squadron::{FleetSquadron},
         },
         game::game::{Game, GameID, VICTORY_POINTS, VICTORY_POINTS_PER_MINUTE},
-        ship::queue::{ShipQueue, ShipQueueID},
-        ship::squadron::{Squadron, SquadronID},
+        ship::queue::ShipQueue,
         player::{PlayerID, Player, init_player_wallets},
         system::{
             building::{Building, BuildingID, BuildingStatus, BuildingKind},
@@ -106,11 +104,16 @@ impl GameServer {
         ));
     }
 
-    fn ws_broadcast(&self, message: protocol::Message) {
+    pub fn ws_broadcast(&self, message: protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (_, c) in clients.iter() {
             c.do_send(message.clone());
         }
+    }
+
+    pub fn ws_send(&self, pid: &PlayerID, message: protocol::Message) {
+        let clients = self.clients.read().expect("Poisoned lock on game clients");
+        clients.get(pid).unwrap().do_send(message);
     }
 
     async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
@@ -209,43 +212,6 @@ impl GameServer {
             building.clone(),
             None,
         )).await?;
-
-        Ok(())
-    }
-
-    async fn process_ship_queue_production(&mut self, sqid: ShipQueueID) -> Result<()> {
-        let ship_queue = ShipQueue::find(sqid, &self.state.db_pool).await?;
-        let squadron = Squadron::find_by_system_and_category(
-            ship_queue.system.clone(),
-            ship_queue.category.clone(),
-            &self.state.db_pool
-        ).await?;
-        let player = Player::find_system_owner(ship_queue.system.clone(), &self.state.db_pool).await?;
-        let mut tx = self.state.db_pool.begin().await?;
-
-        if let Some(mut s) = squadron {
-            s.quantity += ship_queue.quantity;
-            s.update(&mut tx).await?;
-        } else {
-            let s = Squadron{
-                id: SquadronID(Uuid::new_v4()),
-                system: ship_queue.system.clone(),
-                quantity: ship_queue.quantity.clone(),
-                category: ship_queue.category.clone(),
-            };
-            s.insert(&mut tx).await?;
-        }
-        
-        ship_queue.remove(&mut tx).await?;
-
-        tx.commit().await?;
-
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        clients.get(&player.id).unwrap().do_send(protocol::Message::new(
-            protocol::Action::ShipQueueFinished,
-            ship_queue.clone(),
-            None,
-        ));
 
         Ok(())
     }
@@ -423,7 +389,7 @@ impl Handler<GameShipQueueMessage> for GameServer {
     fn handle(&mut self, msg: GameShipQueueMessage, ctx: &mut Self::Context) -> Self::Result {
         let datetime: DateTime<Utc> = msg.ship_queue.finished_at.into();
         ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(this.process_ship_queue_production(msg.ship_queue.id.clone()));
+            let res = block_on(ShipQueue::produce(&this, msg.ship_queue.id.clone()));
             if res.is_err() {
                 println!("Ship queue production failed : {:?}", res.err());
             }

@@ -142,13 +142,13 @@ fn config(cfg: &mut web::ServiceConfig) {
                         .service(fleet::donate)
                         .service(travel::travel)
                         .service(
-                            web::scope("/ship-groups")
+                            web::scope("/squadrons")
                             .service(fleet_squadron::assign_ships)
                         )
                     )
                 )
                 .service(
-                    web::scope("/{system_id}/ship-groups")
+                    web::scope("/{system_id}/squadrons")
                     .service(squadron::get_system_squadrons)
                 )
                 .service(

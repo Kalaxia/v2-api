@@ -12,13 +12,23 @@ use crate::{
     },
     game::{
         player::{Player},
+        fleet::{
+            fleet::FleetID,
+            formation::FleetFormation,
+            squadron::FleetSquadron,
+        },
         game::{
             game::{Game, GameID},
-            server::GameShipQueueMessage,
+            option::GameOptionSpeed,
+            server::{GameServer, GameShipQueueMessage},
         },
-        ship::model::ShipModelCategory,
+        ship::{
+            model::ShipModelCategory,
+            squadron::{Squadron},
+        },
         system::system::{SystemID, System},
     },
+    ws::protocol,
     AppState,
 };
 
@@ -31,6 +41,7 @@ pub struct ShipQueue {
     pub system: SystemID,
     pub category: ShipModelCategory,
     pub quantity: u16,
+    pub assigned_fleet: Option<String>,
     pub created_at: Time,
     pub started_at: Time,
     pub finished_at: Time,
@@ -53,6 +64,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
             system: row.try_get("system_id").map(SystemID)?,
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
+            assigned_fleet: row.try_get("assigned_fleet")?,
             created_at: row.try_get("created_at")?,
             started_at: row.try_get("started_at")?,
             finished_at: row.try_get("finished_at")?,
@@ -81,11 +93,12 @@ impl ShipQueue {
 
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO system__ship_queues (id, system_id, category, quantity, created_at, started_at, finished_at) VALUES($1, $2, $3, $4, $5, $6, $7)")
+        sqlx::query("INSERT INTO system__ship_queues (id, system_id, category, quantity, assigned_fleet, created_at, started_at, finished_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
             .bind(self.category)
             .bind(self.quantity as i32)
+            .bind(self.assigned_fleet.as_ref())
             .bind(self.created_at)
             .bind(self.started_at)
             .bind(self.finished_at)
@@ -97,6 +110,84 @@ impl ShipQueue {
         sqlx::query("DELETE FROM system__ship_queues WHERE id = $1")
             .bind(Uuid::from(self.id))
             .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+
+    pub async fn produce(server: &GameServer, sqid: ShipQueueID) -> Result<()> {
+        let ship_queue = ShipQueue::find(sqid, &server.state.db_pool).await?;
+        let player = Player::find_system_owner(ship_queue.system.clone(), &server.state.db_pool).await?;
+        let mut tx = server.state.db_pool.begin().await?;
+
+        if let Some(assigned_fleet) = ship_queue.assigned_fleet.clone() {
+            let fleet_data: Vec<&str> = assigned_fleet.split(":").collect();
+            let fleet_id = FleetID(Uuid::parse_str(fleet_data[0]).map_err(ServerError::from)?);
+            let formation: FleetFormation = fleet_data[1].parse()?;
+            FleetSquadron::assign_existing(
+                fleet_id,
+                formation,
+                ship_queue.category,
+                ship_queue.quantity,
+                &server.state.db_pool
+            ).await?;
+        } else {
+            Squadron::assign_existing(
+                ship_queue.system,
+                ship_queue.category,
+                ship_queue.quantity as i32,
+                &server.state.db_pool
+            ).await?;
+        }
+        ship_queue.remove(&mut tx).await?;
+
+        tx.commit().await?;
+
+        server.ws_send(&player.id, protocol::Message::new(
+            protocol::Action::ShipQueueFinished,
+            ship_queue.clone(),
+            None,
+        ));
+
+        Ok(())
+    }
+
+    pub async fn schedule(
+        player: &mut Player,
+        sid: SystemID,
+        category: ShipModelCategory,
+        mut quantity: u16,
+        only_affordable: bool,
+        assigned_fleet: Option<String>,
+        game_speed: GameOptionSpeed,
+        db_pool: &PgPool
+    ) -> Result<Option<ShipQueue>> {
+        let ship_model = category.to_data();
+        if only_affordable {
+            let affordable_quantity = (player.wallet / ship_model.cost as usize) as u16;
+            if affordable_quantity < 1 {
+                return Ok(None);
+            } else if affordable_quantity < quantity  {
+                quantity = affordable_quantity;
+            }
+        }
+        player.spend(ship_model.cost as usize * quantity.clone() as usize)?;
+        
+        let starts_at = ShipQueue::find_last(sid.clone(), &db_pool).await.ok().map_or(Time::now(), |sq| sq.finished_at);
+
+        let ship_queue = ShipQueue{
+            id: ShipQueueID(Uuid::new_v4()),
+            system: sid,
+            category: category.clone(),
+            quantity: quantity.clone(),
+            assigned_fleet,
+            created_at: Time::now(),
+            started_at: starts_at.clone(),
+            finished_at: ship_model.compute_construction_deadline(quantity, starts_at, game_speed),
+        };
+        let mut tx = db_pool.begin().await?;
+        ship_queue.insert(&mut tx).await?;
+        player.update(&mut tx).await?;
+        tx.commit().await?;
+
+        Ok(Some(ship_queue))
     }
 }
 
@@ -116,29 +207,20 @@ pub async fn add_ship_queue(
     let game = g?;
     let system = s?;
     let mut player = p?;
-    let ship_model = json_data.category.to_data();
 
     if system.player.clone() != Some(player.id.clone()) {
         return Err(InternalError::AccessDenied)?;
     }
-    player.spend(ship_model.cost as usize * json_data.quantity)?;
-
-    let starts_at = ShipQueue::find_last(system.id.clone(), &state.db_pool).await.ok().map_or(Time::now(), |sq| sq.finished_at);
-
-    let ship_queue = ShipQueue{
-        id: ShipQueueID(Uuid::new_v4()),
-        system: system.id,
-        category: ship_model.category.clone(),
-        quantity: json_data.quantity as u16,
-        created_at: Time::now(),
-        started_at: starts_at.clone(),
-        finished_at: ship_model.compute_construction_deadline(json_data.quantity as u16, starts_at, game.game_speed),
-    };
-
-    let mut tx = state.db_pool.begin().await?;
-    player.update(&mut tx).await?;
-    ship_queue.insert(&mut tx).await?;
-    tx.commit().await?;
+    let ship_queue = ShipQueue::schedule(
+        &mut player,
+        system.id,
+        json_data.category,
+        json_data.quantity as u16,
+        false,
+        None,
+        game.game_speed,
+        &state.db_pool
+    ).await?.unwrap();
 
     state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });
 

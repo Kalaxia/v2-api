@@ -53,7 +53,6 @@ mod tests {
     fn test_get_attack_formation() {
         let formation = FleetFormation::Center;
 
-        let attack_matrix = formation.get_attack_matrix();
         let forms = [
             FleetFormation::Center,
             FleetFormation::Left,
@@ -61,12 +60,12 @@ mod tests {
             FleetFormation::Rear,
         ];
 
-        for form in &forms {
+        for &form in &forms {
             // a formation needs to have something to attack. if it doesnt then why is it there ?
             assert!(form.attack_order().len() > 0);
 
             // make sure we won't heal enemies by dealing negative damage
-            for form2 in &forms {
+            for &form2 in &forms {
                 assert!(form.attack_coeff(form2) > 0.0);
             }
         }

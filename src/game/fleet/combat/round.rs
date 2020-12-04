@@ -64,7 +64,7 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
         number,
     };
 
-    // fleets actions
+    // new fleets arrival
     for (_, fleet) in new_fleets.iter() {
         round.fleet_actions.push(FleetAction{
             battle: battle.id,
@@ -74,15 +74,20 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
         });
     }
 
-    // squadrons actions
+    // make each squadron fight
     for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
-        round.squadron_actions.push(attack(&mut battle, fid, &squadron, number)?);
+        // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
+        attack(&mut battle, fid, &squadron, number)
+        .map(|act| {
+            round.squadron_actions.push(act)
+        });
     }
     Ok(round)
 }
 
-fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Result<SquadronAction> {
-    let (target_faction, target, attack_coeff) = pick_target_squadron(&battle, fid, &attacker)?;
+fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Option<SquadronAction> {
+    let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker)?;
+    let attack_coeff = attacker.formation.attack_coeff(target.formation);
     let (remaining_ships, loss) = fire(&attacker, &target, attack_coeff);
 
     for fs in battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons.iter_mut() {
@@ -91,7 +96,7 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
         }
     }
 
-    Ok(SquadronAction{
+    Some(SquadronAction{
         battle: battle.id,
         squadron: attacker.id,
         kind: SquadronActionKind::Attack{ target: target.id, loss },
@@ -99,32 +104,38 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
     })
 }
 
-fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Result<(FactionID, FleetSquadron, f64)> {
-    let (opponent_squadrons, attack_coeff) = || -> Result<(Vec<(FactionID, FleetSquadron)>, f64)> {
-        for (target_formation, attack_coeff) in attacker.formation.get_attack_matrix() {
-            let opponent_squadrons: Vec<(FactionID, FleetSquadron)> = battle.fleets
+/// This is an adaptation for multiple-fleet battles of Galadruin's battle idea (c.f. backlog
+/// trello card).
+///
+/// In this version, overkill damages of one turn are not propagated to the next targeted
+/// formation.
+///
+/// Also, when attacking, it is not fleet vs fleet but squadron vs squadron. Because of this, each
+/// squadron of a fleet can attack a different fleet each turn.
+fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Option<(FactionID, FleetSquadron)> {
+    let mut potential_targets : Vec<(FactionID, &FleetSquadron)> = Vec::new();
+
+    // c.f. game::fleet::formation::FleetFormation::attack_order()
+    for target_formation in attacker.formation.attack_order() {
+        potential_targets.extend(battle.fleets
+            .iter()
+            .filter(|(fid, _)| **fid != faction_id)
+            .flat_map(|(fid, fleets)| fleets
                 .iter()
-                .filter(|(&fid, _)| fid != faction_id)
-                .flat_map(|(fid, fleets)| fleets
-                    .iter()
-                    .flat_map(|(_, fleet)| fleet.squadrons.clone())
-                    .map(|fs| (fid.clone(), fs))
-                    .collect::<Vec<(FactionID, FleetSquadron)>>()
-                )
-                .filter(|(_, squadron)| squadron.formation == target_formation && squadron.quantity > 0)
-                .collect();
+                .flat_map(|(_, fleet)| &fleet.squadrons)
+                .map(move |fs| (*fid, fs))
+            )
+            .filter(|(_, squadron)| squadron.formation == *target_formation && squadron.quantity > 0)
+        );
 
-            if opponent_squadrons.len() > 0 {
-                return Ok((opponent_squadrons, attack_coeff));
-            }
-        }
-        return Err(InternalError::FleetEmpty)?;
-    }()?;
-    
+        if !potential_targets.is_empty() { break }
+    }
+
+    if potential_targets.is_empty() { return None }
+
     let mut rng = thread_rng();
-    let idx = rng.gen_range(0, opponent_squadrons.len());
 
-    Ok((opponent_squadrons[idx].0, opponent_squadrons[idx].1, attack_coeff))
+    potential_targets.choose(&mut rng).map(|(fid, fs)| (*fid, (*fs).clone()))
 }
 
 fn fire(attacker: &FleetSquadron, defender: &FleetSquadron, attack_coeff: f64) -> (u16, u16) {

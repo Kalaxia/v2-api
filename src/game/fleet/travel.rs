@@ -18,7 +18,7 @@ use crate::{
     },
     AppState
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 
 #[derive(Deserialize)]
 pub struct FleetTravelRequest {
@@ -59,11 +59,13 @@ pub async fn travel(
     }
     check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(
-        system.coordinates,
-        destination_system.coordinates,
-        game.game_speed.into_travel_speed()
-    ).into());
+    fleet.destination_arrival_date = Some(
+        (Utc::now() + get_travel_time(
+            system.coordinates,
+            destination_system.coordinates,
+            game.game_speed.into_travel_speed()
+        )).into()
+    );
     fleet.update(&mut &state.db_pool).await?;
 
     let games = state.games();
@@ -83,11 +85,11 @@ fn check_travel_destination(origin_coords: Coordinates, dest_coords: Coordinates
     Ok(())
 }
 
-fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
+fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> Duration {
     let distance = from.as_distance_to(&to);
     let ms = distance / time_coeff;
 
-    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
+    Duration::seconds(ms.ceil() as i64)
 }
 
 #[cfg(test)]
@@ -106,13 +108,13 @@ mod tests {
             Coordinates{ x: 4.0, y: 4.0 },
             0.4,
         );
-        assert_eq!(10, time.signed_duration_since(Utc::now()).num_seconds());
+        assert_eq!(10, time.num_seconds());
 
         let time = get_travel_time(
             Coordinates{ x: 6.0, y: 2.0 },
             Coordinates{ x: 4.0, y: 12.0 },
             0.55,
         );
-        assert_eq!(19, time.signed_duration_since(Utc::now()).num_seconds());
+        assert_eq!(19, time.num_seconds());
     }
 }

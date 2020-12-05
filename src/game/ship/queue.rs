@@ -26,7 +26,10 @@ use crate::{
             model::ShipModelCategory,
             squadron::{Squadron},
         },
-        system::system::{SystemID, System},
+        system::{
+            building::{Building, BuildingKind},
+            system::{SystemID, System},
+        },
     },
     ws::protocol,
     AppState,
@@ -89,6 +92,14 @@ impl ShipQueue {
         sqlx::query_as("SELECT * FROM system__ship_queues WHERE system_id = $1 ORDER BY finished_at DESC LIMIT 1")
             .bind(Uuid::from(sid))
             .fetch_one(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn count_assigned_ships(assigned_fleet: &str, category: &ShipModelCategory, db_pool: &PgPool) -> Result<u32> {
+        let count: (i64,) = sqlx::query_as("SELECT COALESCE(SUM(quantity), 0) FROM system__ship_queues WHERE assigned_fleet = $1 AND category = $2")
+            .bind(assigned_fleet)
+            .bind(category)
+            .fetch_one(db_pool).await.map_err(ServerError::from)?;
+        Ok(count.0 as u32)
     }
 
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
@@ -159,6 +170,11 @@ impl ShipQueue {
         game_speed: GameOptionSpeed,
         db_pool: &PgPool
     ) -> Result<Option<ShipQueue>> {
+        let has_shipyard = Building::count_by_kind_and_system(BuildingKind::Shipyard, sid, &db_pool).await? > 0;
+        if !has_shipyard {
+            return Err(InternalError::Conflict)?;
+        }
+
         let ship_model = category.to_data();
         if only_affordable {
             let affordable_quantity = (player.wallet / ship_model.cost as usize) as u16;

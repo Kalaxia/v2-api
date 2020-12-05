@@ -152,6 +152,14 @@ impl Building {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn count_by_kind_and_system(kind: BuildingKind, sid: SystemID, db_pool: &PgPool) -> Result<u32> {
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM map__system_buildings WHERE kind = $1 AND system_id = $2")
+            .bind(kind)
+            .bind(Uuid::from(sid))
+            .fetch_one(db_pool).await.map_err(ServerError::from)?;
+        Ok(count.0 as u32)
+    }
+
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")

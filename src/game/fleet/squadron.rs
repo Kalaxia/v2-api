@@ -19,7 +19,7 @@ use crate::{
         },
         ship::{
             queue::{ShipQueue},
-            squadron::{Squadron, SquadronID},
+            squadron::Squadron,
             model::ShipModelCategory,
         },
         player::Player,
@@ -89,7 +89,7 @@ impl FleetSquadron {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_fleet_and_formation(fid: FleetID, formation: FleetFormation, db_pool: &PgPool) -> Result<Option<Self>> {
+    pub async fn find_by_fleet_and_formation(fid: FleetID, formation: &FleetFormation, db_pool: &PgPool) -> Result<Option<Self>> {
         sqlx::query_as("SELECT * FROM fleet__squadrons WHERE fleet_id = $1 AND formation = $2")
             .bind(Uuid::from(fid))
             .bind(formation)
@@ -160,8 +160,8 @@ impl FleetSquadron {
 
     pub async fn assign_existing(fid: FleetID, formation: FleetFormation, category: ShipModelCategory, quantity: u16, mut db_pool: &PgPool) -> Result<()> {
         let fleet_squadron = FleetSquadron::find_by_fleet_and_formation(
-            fid.clone(),
-            formation.clone(),
+            fid,
+            &formation,
             &db_pool
         ).await?;
         FleetSquadron::assign(fleet_squadron, fid, formation, category, quantity, &mut db_pool).await
@@ -175,45 +175,63 @@ pub async fn assign_ships(
     json_data: web::Json<SquadronAssignmentData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let game = Game::find(info.0, &state.db_pool).await?;
-    let system = System::find(info.1, &state.db_pool).await?;
-    let fleet = Fleet::find(&info.2, &state.db_pool).await?;
-    let mut player = Player::find(claims.pid.clone(), &state.db_pool).await?;
-    
-    let squadron = Squadron::find_by_system_and_category(
-        system.id.clone(),
-        json_data.category.clone(),
-        &state.db_pool
-    ).await?;
-    let fleet_squadron = FleetSquadron::find_by_fleet_and_formation(
-        fleet.id.clone(),
-        json_data.formation.clone(),
-        &state.db_pool
-    ).await?;
+    let (g, s, f, p, sq, fs) = futures::join!(
+        Game::find(info.0, &state.db_pool),
+        System::find(info.1, &state.db_pool),
+        Fleet::find(&info.2, &state.db_pool),
+        Player::find(claims.pid.clone(), &state.db_pool),
+        Squadron::find_by_system_and_category(
+            info.1,
+            &json_data.category,
+            &state.db_pool
+        ),
+        FleetSquadron::find_by_fleet_and_formation(
+            info.2,
+            &json_data.formation,
+            &state.db_pool
+        )
+    );
+    let game = g?;
+    let system = s?;
+    let fleet = f?;
+    let mut player = p?;
+    let squadron = sq?;
+    let fleet_squadron = fs?;
 
     if system.player != Some(claims.pid.clone()) || fleet.player != claims.pid {
         return Err(InternalError::AccessDenied)?;
     }
-    
+
     let available_quantity = get_available_ship_quantity(&squadron, &fleet_squadron);
+    let required_quantity = json_data.quantity.clone() as u16;
+    let mut assigned_quantity = required_quantity;
+    let remaining_quantity: u16;
     let mut ship_queue: Option<ShipQueue> = None;
 
-    if json_data.quantity > available_quantity as usize {
+    if required_quantity > available_quantity {
         if !json_data.force_construction {
             return Err(InternalError::Conflict)?;
         } else {
-            let needed_quantity = json_data.quantity as u16 - available_quantity;
-            ship_queue = ShipQueue::schedule(
-                &mut player,
-                system.id,
-                json_data.category,
-                needed_quantity,
-                true,
-                Some(format!("{}:{}", fleet.id, json_data.formation.to_string())),
-                game.game_speed,
-                &state.db_pool
-            ).await?;
+            assigned_quantity = available_quantity as u16;
+            remaining_quantity = 0;
+            let assigned_fleet = format!("{}:{}", fleet.id, json_data.formation.to_string());
+            let producing_ships = ShipQueue::count_assigned_ships(&assigned_fleet, &json_data.category, &state.db_pool).await?;
+            let needed_quantity = get_needed_quantity(required_quantity as i32, available_quantity as i32, producing_ships as i32);
+            if needed_quantity > 0 {
+                ship_queue = ShipQueue::schedule(
+                    &mut player,
+                    system.id,
+                    json_data.category,
+                    needed_quantity,
+                    true,
+                    Some(assigned_fleet),
+                    game.game_speed,
+                    &state.db_pool
+                ).await?;
+            }
         }
+    } else {
+        remaining_quantity = available_quantity - required_quantity;
     }
 
     let mut tx = state.db_pool.begin().await?;
@@ -223,11 +241,9 @@ pub async fn assign_ships(
         fleet.id,
         json_data.formation,
         json_data.category,
-        json_data.quantity as u16,
+        assigned_quantity,
         &mut tx
     ).await?;
-
-    let remaining_quantity = available_quantity - json_data.quantity as u16;
 
     Squadron::assign(
         squadron,
@@ -255,4 +271,12 @@ fn get_available_ship_quantity(squadron: &Option<Squadron>, fleet_squadron: &Opt
         available_quantity += fs.quantity;
     }
     available_quantity
+}
+
+fn get_needed_quantity(required_quantity: i32, available_quantity: i32, producing_ships: i32) -> u16 {
+    let q = available_quantity - producing_ships;
+    if q <= required_quantity {
+        return (required_quantity - q) as u16;
+    }
+    0
 }

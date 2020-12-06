@@ -142,7 +142,9 @@ GameStarted
 * **Description:** Game is ready to be played
 * **Level:** Game
 ```json
-{}
+{
+    "victory_points": 500
+}
 ```
 LobbyCreated
 -------------------

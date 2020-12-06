@@ -17,7 +17,7 @@ use crate::{
             fleet::{Fleet, FleetID},
             squadron::{FleetSquadron},
         },
-        game::game::{Game, GameID, VICTORY_POINTS, VICTORY_POINTS_PER_MINUTE},
+        game::game::{Game, GameID, VICTORY_POINTS_PER_MINUTE},
         ship::queue::ShipQueue,
         player::{PlayerID, Player, init_player_wallets},
         system::{
@@ -58,7 +58,12 @@ impl Actor for GameServer {
                 println!("{:?}", result.err());
             }
         });
-        ctx.run_later(Duration::new(4, 0), |this, _| this.begin());
+        ctx.run_later(Duration::new(4, 0), |this, _| {
+            let result = block_on(this.begin());
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
         ctx.run_interval(Duration::new(5, 0), move |this, _| {
             let result = block_on(this.produce_income()).map_err(ServerError::from);
             if result.is_err() {
@@ -78,9 +83,12 @@ impl GameServer {
     async fn init(&mut self) -> Result<()> {
         generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
 
-        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+        let mut game = Game::find(self.id.clone(), &self.state.db_pool).await?;
 
-        let mut systems = generate_systems(self.id.clone(), game.map_size).await?;
+        let (mut systems, nb_victory_systems) = generate_systems(self.id.clone(), game.map_size).await?;
+        game.victory_points = nb_victory_systems as i16 * 100;
+        Game::update(game.clone(), &self.state.db_pool).await?;
+
         let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
         assign_systems(&players, &mut systems).await?;
         init_player_wallets(&mut players, &self.state.db_pool).await?;
@@ -96,12 +104,20 @@ impl GameServer {
         Ok(())
     }
 
-    fn begin(&self) {
+    async fn begin(&self) -> Result<()> {
+        let mut game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+        #[derive(Serialize)]
+        struct GameData{
+            victory_points: i16
+        }
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::GameStarted,
-            (),
+            GameData{
+                victory_points: game.victory_points
+            },
             None
         ));
+        Ok(())
     }
 
     pub fn ws_broadcast(&self, message: protocol::Message) {
@@ -218,6 +234,7 @@ impl GameServer {
 
     async fn distribute_victory_points(&mut self) -> Result<()> {
         let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
+        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
         let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
             .into_iter()    
             .map(|gf| (gf.faction.clone(), gf))
@@ -240,7 +257,7 @@ impl GameServer {
         let mut tx = self.state.db_pool.begin().await?;
         for (_, f) in factions.clone() {
             GameFaction::update(&f, &mut tx).await?;
-            if f.victory_points >= VICTORY_POINTS {
+            if f.victory_points >= game.victory_points {
                 victorious_faction = Some(f.clone());
             }
         }

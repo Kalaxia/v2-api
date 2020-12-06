@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS player__players(
 CREATE TABLE IF NOT EXISTS game__games(
     id UUID PRIMARY KEY,
     game_speed VARCHAR(15) NOT NULL,
-    map_size VARCHAR(15) NOT NULL
+    map_size VARCHAR(15) NOT NULL,
+    victory_points SMALLINT NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS game__factions(
     faction_id INT NOT NULL,

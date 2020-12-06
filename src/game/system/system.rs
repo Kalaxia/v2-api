@@ -342,16 +342,18 @@ impl From<FleetArrivalOutcome> for protocol::Message {
     }
 }
 
-pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<Vec<System>> {
+pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<(Vec<System>, u8)> {
     let graph = map_size.to_galaxy_builder().build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
+    let mut nb_victory_systems: u8 = 0;
 
-    Ok(graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
+    Ok((graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
         let (system, prob) = generate_system(&gid, x, y, probability);
         probability = prob;
+        nb_victory_systems = nb_victory_systems + 1;
         system
-    }).collect())
+    }).collect(), nb_victory_systems))
 }
 
 fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {

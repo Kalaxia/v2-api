@@ -26,8 +26,7 @@ use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postg
 use sqlx_core::row::Row;
 
 pub const GAME_START_WALLET: usize = 200;
-pub const VICTORY_POINTS: u16 = 300;
-pub const VICTORY_POINTS_PER_MINUTE: u16 = 10;
+pub const VICTORY_POINTS_PER_MINUTE: i16 = 10;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct GameID(pub Uuid);
@@ -35,6 +34,7 @@ pub struct GameID(pub Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
     pub id: GameID,
+    pub victory_points: i16,
     pub game_speed: GameOptionSpeed,
     pub map_size: GameOptionMapSize
 }
@@ -49,6 +49,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
 
         Ok(Game {
             id: GameID(id),
+            victory_points: row.try_get::<i16, _>("victory_points")?,
             game_speed: row.try_get("game_speed")?,
             map_size: row.try_get("map_size")?
         })
@@ -71,6 +72,13 @@ impl Game {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
+    pub async fn update(game: Game, db_pool: &PgPool) -> Result<u64> {
+        sqlx::query("UPDATE game__games SET victory_points = $2 WHERE id = $1")
+            .bind(Uuid::from(game.id))
+            .bind(game.victory_points)
+            .execute(db_pool).await.map_err(ServerError::from)
+    }
+
     pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
@@ -89,6 +97,7 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
     };
     let game = Game{
         id: id.clone(),
+        victory_points: 0,
         game_speed: lobby.game_speed.clone(),
         map_size: lobby.map_size.clone(),
     };
@@ -135,12 +144,10 @@ pub async fn get_game_constants() -> Result<HttpResponse> {
     #[derive(Serialize, Clone)]
     pub struct GameConstants {
         fleet_range: f64,
-        victory_points_per_minute: u16,
-        victory_points: u16,
+        victory_points_per_minute: i16,
     }
     Ok(HttpResponse::Ok().json(GameConstants{
         fleet_range: FLEET_RANGE,
         victory_points_per_minute: VICTORY_POINTS_PER_MINUTE,
-        victory_points: VICTORY_POINTS,
     }))
 }

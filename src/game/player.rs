@@ -1,11 +1,14 @@
 use actix_web::{web, get, patch, post, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, Executor, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
-    game::game::{GameID, GAME_START_WALLET, GameNotifyPlayerMessage},
+    game::game::{
+        game::{GameID, GAME_START_WALLET},
+        server::GameNotifyPlayerMessage,
+    },
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,
@@ -75,7 +78,7 @@ impl Player {
         self.lobby = None;
         self.game = None;
         let mut tx = db_pool.begin().await?;
-        Player::update(self.clone(), &mut tx).await?;
+        self.update(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -148,16 +151,18 @@ impl Player {
             .execute(db_pool).await
     }
 
-    pub async fn create(p: Player, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(p.id))
-            .bind(p.wallet as i32)
-            .bind(p.ready)
-            .bind(p.is_connected)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(self.wallet as i32)
+            .bind(self.ready)
+            .bind(self.is_connected)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(p: Player, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE player__players SET username = $1,
             game_id = $2,
             lobby_id = $3,
@@ -166,15 +171,15 @@ impl Player {
             is_ready = $6,
             is_connected = $7
             WHERE id = $8")
-            .bind(p.username)
-            .bind(p.game.map(Uuid::from))
-            .bind(p.lobby.map(Uuid::from))
-            .bind(p.faction.map(i32::from))
-            .bind(p.wallet as i32)
-            .bind(p.ready)
-            .bind(p.is_connected)
-            .bind(Uuid::from(p.id))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(self.username.clone())
+            .bind(self.game.map(Uuid::from))
+            .bind(self.lobby.map(Uuid::from))
+            .bind(self.faction.map(i32::from))
+            .bind(self.wallet as i32)
+            .bind(self.ready)
+            .bind(self.is_connected)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -182,7 +187,7 @@ pub async fn init_player_wallets(players: &mut Vec<Player>, db_pool: &PgPool) ->
     let mut tx = db_pool.begin().await?;
     for player in players.iter_mut() {
         player.wallet = GAME_START_WALLET;
-        Player::update(player.clone(), &mut tx).await?;
+        player.update(&mut tx).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -202,8 +207,8 @@ pub async fn login(state:web::Data<AppState>)
         wallet: 0,
         is_connected: true,
     };
-    let mut tx =state.db_pool.begin().await?;
-    Player::create(player.clone(), &mut tx).await?;
+    let mut tx = state.db_pool.begin().await?;
+    player.insert(&mut tx).await?;
     tx.commit().await?;
     
     Ok(auth::Claims { pid: player.id })
@@ -245,7 +250,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     player.faction = json_data.faction_id;
     player.ready = json_data.is_ready;
     let mut tx = state.db_pool.begin().await?;
-    Player::update(player.clone(), &mut tx).await?;
+    player.update(&mut tx).await?;
     tx.commit().await?;
 
     let lobbies = state.lobbies();
@@ -298,8 +303,8 @@ pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID,
     current_player.wallet -= data.amount;
 
     let mut tx = state.db_pool.begin().await?;
-    Player::update(current_player.clone(), &mut tx).await?;
-    Player::update(other_player.clone(), &mut tx).await?;
+    current_player.update(&mut tx).await?;
+    other_player.update(&mut tx).await?;
     tx.commit().await?;
 
     #[derive(Serialize)]

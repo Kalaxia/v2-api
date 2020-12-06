@@ -1,6 +1,7 @@
 use actix_web::{post, patch, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
+use std::fmt;
 use crate::{
     lib::{
         Result,
@@ -9,19 +10,18 @@ use crate::{
         auth::Claims
     },
     game::{
-        game::{Game, GameID, GameFleetTravelMessage, GameOptionSpeed},
+        game::game::GameID,
         player::{Player, PlayerID},
-        system::system::{System, SystemID, Coordinates},
-        fleet::ship::{ShipGroup},
+        system::system::{System, SystemID},
+        fleet::squadron::{FleetSquadron},
     },
     ws::protocol,
     AppState
 };
-use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
-pub const FLEET_RANGE: f64 = 20.0; // ici j'ai une hypothétique "range", qu'on peut mettre à 1.0 pour l'instant
+pub const FLEET_RANGE: f64 = 20.0;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
@@ -33,12 +33,14 @@ pub struct Fleet{
     pub destination_system: Option<SystemID>,
     pub destination_arrival_date: Option<Time>,
     pub player: PlayerID,
-    pub ship_groups: Vec<ShipGroup>,
+    pub squadrons: Vec<FleetSquadron>,
+    pub is_destroyed: bool,
 }
 
-#[derive(Deserialize)]
-pub struct FleetTravelRequest {
-    pub destination_system_id: SystemID,
+impl fmt::Display for FleetID {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 impl From<FleetID> for Uuid {
@@ -53,22 +55,13 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
             destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: row.try_get("player_id").map(PlayerID)?,
-            ship_groups: vec![],
+            squadrons: vec![],
+            is_destroyed: row.try_get("is_destroyed")?,
         })
     }
 }
 
 impl Fleet {
-    fn check_travel_destination(&self, origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-        let distance = origin_coords.as_distance_to(&dest_coords);
-
-        if distance > FLEET_RANGE.powi(2) {
-            return Err(InternalError::FleetInvalidDestination.into());
-        }
-
-        Ok(())
-    }
-
     pub fn change_system(&mut self, system: &System) {
         self.system = system.id.clone();
         self.destination_system = None;
@@ -76,7 +69,7 @@ impl Fleet {
     }
 
     pub fn can_fight(&self) -> bool {
-        !self.ship_groups.is_empty() && self.ship_groups.iter().any(|sg| sg.quantity > 0)
+        !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -95,28 +88,31 @@ impl Fleet {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn create(f: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
-            .bind(Uuid::from(f.id))
-            .bind(Uuid::from(f.system))
-            .bind(Uuid::from(f.player))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.system))
+            .bind(Uuid::from(self.player))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(f: Fleet, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
-            .bind(Uuid::from(f.system))
-            .bind(f.destination_system.map(Uuid::from))
-            .bind(f.destination_arrival_date)
-            .bind(Uuid::from(f.player))
-            .bind(Uuid::from(f.id))
-            .execute(db_pool).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.system))
+            .bind(self.destination_system.map(Uuid::from))
+            .bind(self.destination_arrival_date)
+            .bind(Uuid::from(self.player))
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(f: &Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
-            .bind(Uuid::from(f.id))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -133,10 +129,11 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
         system: system.id.clone(),
         destination_system: None,
         destination_arrival_date: None,
-        ship_groups: vec![],
+        squadrons: vec![],
+        is_destroyed: false,
     };
     let mut tx = state.db_pool.begin().await?;
-    Fleet::create(fleet.clone(), &mut tx).await?;
+    fleet.insert(&mut tx).await?;
     tx.commit().await?;
 
     let games = state.games();
@@ -158,12 +155,12 @@ pub async fn donate(
     let (s, f, sg, p) = futures::join!(
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
-        ShipGroup::find_by_fleet(info.2, &state.db_pool),
+        FleetSquadron::find_by_fleet(info.2, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     let system = s?;
     let mut fleet = f?;
-    fleet.ship_groups = sg?;
+    fleet.squadrons = sg?;
     let player = p?;
 
     if fleet.player != player.id || system.player.is_none() || fleet.system != system.id {
@@ -178,7 +175,7 @@ pub async fn donate(
 
     fleet.player = other_player.id;
 
-    Fleet::update(fleet.clone(), &state.db_pool).await?;
+    fleet.update(&mut &state.db_pool).await?;
 
     #[derive(Serialize)]
     pub struct FleetTransferData{
@@ -198,79 +195,18 @@ pub async fn donate(
     Ok(HttpResponse::NoContent().finish())
 }
 
-#[post("/travel/")]
-pub async fn travel(
-    state: web::Data<AppState>,
-    info: web::Path<(GameID,SystemID,FleetID,)>,
-    json_data: web::Json<FleetTravelRequest>,
-    claims: Claims
-) -> Result<HttpResponse> {
-    let (ds, g, s, f, sg, p) = futures::join!(
-        System::find(json_data.destination_system_id, &state.db_pool),
-        Game::find(info.0, &state.db_pool),
-        System::find(info.1, &state.db_pool),
-        Fleet::find(&info.2, &state.db_pool),
-        ShipGroup::find_by_fleet(info.2, &state.db_pool),
-        Player::find(claims.pid, &state.db_pool)
-    );
-    
-    let destination_system = ds?;
-    let game = g?;
-    let system = s?;
-    let mut fleet = f?;
-    fleet.ship_groups = sg?;
-    let player = p?;
-
-    if fleet.player != player.id.clone() {
-        return Err(InternalError::AccessDenied)?;
-    }
-    if fleet.destination_system != None {
-        return Err(InternalError::FleetAlreadyTravelling)?;
-    }
-    if !fleet.can_fight() {
-        return Err(InternalError::FleetEmpty)?;
-    }
-    fleet.check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
-    fleet.destination_system = Some(destination_system.id.clone());
-    fleet.destination_arrival_date = Some(get_travel_time(
-        system.coordinates,
-        destination_system.coordinates,
-        get_travel_time_coeff(game.game_speed)
-    ).into());
-    Fleet::update(fleet.clone(), &state.db_pool).await?;
-
-    let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
-    game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
-
-    Ok(HttpResponse::Ok().json(fleet))
-}
-
-fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> DateTime<Utc> {
-    let distance = from.as_distance_to(&to);
-    let ms = distance / time_coeff;
-
-    Utc::now().checked_add_signed(Duration::seconds(ms.ceil() as i64)).expect("Could not add travel time")
-}
-
-fn get_travel_time_coeff(game_speed: GameOptionSpeed) -> f64 {
-    match game_speed {
-        GameOptionSpeed::Slow => 0.4,
-        GameOptionSpeed::Medium => 0.55,
-        GameOptionSpeed::Fast => 0.7,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use uuid::Uuid;
     use crate::{
         game::{
-            game::GameID,
+            game::game::GameID,
             fleet::{
-                ship::{ShipGroup, ShipGroupID, ShipModelCategory},
+                formation::{FleetFormation},
+                squadron::{FleetSquadron, FleetSquadronID},
             },
+            ship::model::ShipModelCategory,
             system::system::{System, SystemID, SystemKind,  Coordinates},
             player::{PlayerID}
         }
@@ -282,11 +218,11 @@ mod tests {
 
         assert!(fleet.can_fight());
 
-        fleet.ship_groups[0].quantity = 0;
+        fleet.squadrons[0].quantity = 0;
 
         assert!(!fleet.can_fight());
         
-        fleet.ship_groups = vec![];
+        fleet.squadrons = vec![];
 
         assert!(!fleet.can_fight());
     }
@@ -316,30 +252,6 @@ mod tests {
         assert_eq!(fleet.destination_arrival_date, None);
     }
 
-    #[test]
-    fn test_get_travel_time() {
-        let time = get_travel_time(
-            Coordinates{ x: 1.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 4.0 },
-            0.4,
-        );
-        assert_eq!(10, time.signed_duration_since(Utc::now()).num_seconds());
-
-        let time = get_travel_time(
-            Coordinates{ x: 6.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 12.0 },
-            0.55,
-        );
-        assert_eq!(19, time.signed_duration_since(Utc::now()).num_seconds());
-    }
-
-    #[test]
-    fn test_get_travel_time_coeff() {
-        assert_eq!(0.4, get_travel_time_coeff(GameOptionSpeed::Slow));
-        assert_eq!(0.55, get_travel_time_coeff(GameOptionSpeed::Medium));
-        assert_eq!(0.7, get_travel_time_coeff(GameOptionSpeed::Fast));
-    }
-
     fn get_fleet_mock() -> Fleet {
         Fleet{
             id: FleetID(Uuid::new_v4()),
@@ -347,15 +259,16 @@ mod tests {
             system: SystemID(Uuid::new_v4()),
             destination_system: None,
             destination_arrival_date: None,
-            ship_groups: vec![
-                ShipGroup{
-                    id: ShipGroupID(Uuid::new_v4()),
-                    fleet: Some(FleetID(Uuid::new_v4())),
-                    system: None,
+            squadrons: vec![
+                FleetSquadron{
+                    id: FleetSquadronID(Uuid::new_v4()),
+                    fleet: FleetID(Uuid::new_v4()),
+                    formation: FleetFormation::Center,
                     category: ShipModelCategory::Fighter,
                     quantity: 1,
                 }
-            ]
+            ],
+            is_destroyed: false,
         }
     }
 

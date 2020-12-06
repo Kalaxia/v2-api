@@ -7,7 +7,10 @@ use crate::{
     lib::{Result, auth::Claims},
     game::{
         lobby::{ Lobby, LobbyRemoveClientMessage },
-        game::{GameRemovePlayerMessage},
+        game::{
+            game::Game,
+            server::GameRemovePlayerMessage
+        },
         player::{Player, PlayerID},
     },
     ws::protocol,
@@ -82,7 +85,8 @@ impl ClientSession {
             let (_, is_empty) = std::sync::Arc::try_unwrap(game.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
             if is_empty {
                 drop(games);
-                self.state.clear_game(gid).await?;
+                let game = Game::find(gid, &self.state.db_pool).await?;
+                self.state.clear_game(&game).await?;
             }
         }
         self.state.ws_broadcast(protocol::Message::new(

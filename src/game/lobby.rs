@@ -8,14 +8,17 @@ use crate::{
         error::{ServerError, InternalError},
         auth::Claims
     },
-    game::game::{create_game, GameOptionMapSize, GameOptionSpeed},
+    game::game::{
+        game::create_game,
+        option::{GameOptionMapSize, GameOptionSpeed},
+    },
     game::player::{PlayerID, Player},
     ws::{ client::ClientSession, protocol},
     AppState,
 };
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Error, Transaction};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
@@ -98,7 +101,7 @@ impl Lobby {
         let players = Player::find_by_lobby(self.id, db_pool).await?;
         self.owner = players.iter().next().unwrap().id.clone();
         let mut tx = db_pool.begin().await?;
-        Self::update(self.clone(), &mut tx).await?;
+        self.update(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -114,28 +117,31 @@ impl Lobby {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
     }
 
-    pub async fn create(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id, game_speed, map_size) VALUES($1, $2, $3, $4)")
-            .bind(Uuid::from(l.id))
-            .bind(Uuid::from(l.owner))
-            .bind(l.game_speed)
-            .bind(l.map_size)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.owner))
+            .bind(self.game_speed)
+            .bind(self.map_size)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(l: Lobby, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $2, game_speed = $3, map_size = $4 WHERE id = $1")
-            .bind(Uuid::from(l.id))
-            .bind(Uuid::from(l.owner))
-            .bind(l.game_speed)
-            .bind(l.map_size)
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .bind(Uuid::from(self.owner))
+            .bind(self.game_speed)
+            .bind(self.map_size)
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove(lid: LobbyID, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<u64> {
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64> 
+        where E: Executor<Database = Postgres>{
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
-            .bind(Uuid::from(lid))
-            .execute(tx).await.map_err(ServerError::from)
+            .bind(Uuid::from(self.id))
+            .execute(&mut *exec).await.map_err(ServerError::from)
     }
 }
 
@@ -277,10 +283,10 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
     let mut tx = state.db_pool.begin().await?;
-    Lobby::create(new_lobby.clone(), &mut tx).await?;
+    new_lobby.insert(&mut tx).await?;
     // Put the player in the lobby
     player.lobby = Some(new_lobby.id.clone());
-    Player::update(player.clone(), &mut tx).await?;
+    player.update(&mut tx).await?;
     tx.commit().await?;
     // Notify players for lobby creation
     state.ws_broadcast(protocol::Message::new(
@@ -313,7 +319,7 @@ pub async fn update_lobby_options(
     println!("{:?}", lobby.map_size.clone());
 
     let mut tx = state.db_pool.begin().await?;
-    Lobby::update(lobby.clone(), &mut tx).await?;
+    lobby.update(&mut tx).await?;
     tx.commit().await?;
 
     let lobbies = state.lobbies();
@@ -352,7 +358,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     ));
 
     let mut tx = state.db_pool.begin().await?;
-    Lobby::remove(lobby.id, &mut tx).await?;
+    lobby.remove(&mut tx).await?;
     tx.commit().await?;
 
     Ok(HttpResponse::NoContent().finish())
@@ -397,8 +403,8 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
         Err(InternalError::AlreadyInLobby)?
     }
     player.lobby = Some(lobby.id);
-    let mut tx =state.db_pool.begin().await?;
-    Player::update(player.clone(), &mut tx).await?;
+    let mut tx = state.db_pool.begin().await?;
+    player.update(&mut tx).await?;
     tx.commit().await?;
 
     let message = protocol::Message::new(

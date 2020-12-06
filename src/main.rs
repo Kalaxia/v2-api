@@ -13,14 +13,21 @@ mod game;
 mod lib;
 
 use game::{
-    fleet::ship,
     fleet::fleet,
-    game as g,
+    fleet::travel,
+    fleet::squadron as fleet_squadron,
+    game::{
+        game as g,
+        server::{GameEndMessage, GameServer},
+    },
     faction,
     player,
     lobby,
     system::building,
     system::system,
+    ship::model,
+    ship::queue,
+    ship::squadron
 };
 use lib::Result;
 
@@ -30,7 +37,7 @@ pub struct AppState {
     db_pool: PgPool,
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
-    games: RwLock<HashMap<g::GameID, actix::Addr<g::GameServer>>>,
+    games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
 }
 
 macro_rules! res_access {
@@ -50,8 +57,8 @@ impl AppState {
     }
 
     pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
-        let mut tx =self.db_pool.begin().await?;
-        lobby::Lobby::remove(lobby.id, &mut tx).await?;
+        let mut tx = self.db_pool.begin().await?;
+        lobby.remove(&mut tx).await?;
         tx.commit().await?;
         self.ws_broadcast(ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
@@ -61,16 +68,16 @@ impl AppState {
         Ok(())
     }
 
-    pub async fn clear_game(&self, gid: g::GameID) -> lib::Result<()> {
-        let game = {
+    pub async fn clear_game(&self, game: &g::Game) -> lib::Result<()> {
+        let game_server = {
             let mut games = self.games_mut();
-            let g = games.get(&gid).unwrap().clone();
-            games.remove(&gid);
+            let g = games.get(&game.id).unwrap().clone();
+            games.remove(&game.id);
             g
         };
-        game.do_send(g::GameEndMessage{});
+        game_server.do_send(GameEndMessage{});
         let mut tx = self.db_pool.begin().await?;
-        g::Game::remove(gid.clone(), &mut tx).await?;
+        game.remove(&mut tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -90,7 +97,7 @@ impl AppState {
         self.clients_mut().remove(pid);
     }
 
-    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<g::GameServer>> }
+    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<GameServer>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
     res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
 }
@@ -133,21 +140,21 @@ fn config(cfg: &mut web::ServiceConfig) {
                     .service(
                         web::scope("/{fleet_id}")
                         .service(fleet::donate)
-                        .service(fleet::travel)
+                        .service(travel::travel)
                         .service(
-                            web::scope("/ship-groups")
-                            .service(ship::assign_ships)
+                            web::scope("/squadrons")
+                            .service(fleet_squadron::assign_ships)
                         )
                     )
                 )
                 .service(
-                    web::scope("/{system_id}/ship-groups")
-                    .service(ship::get_system_ship_groups)
+                    web::scope("/{system_id}/squadrons")
+                    .service(squadron::get_system_squadrons)
                 )
                 .service(
                     web::scope("/{system_id}/ship-queues")
-                    .service(ship::add_ship_queue)
-                    .service(ship::get_ship_queues)
+                    .service(queue::add_ship_queue)
+                    .service(queue::get_ship_queues)
                 )
                 .service(
                     web::scope("/{system_id}/buildings")
@@ -174,7 +181,7 @@ fn config(cfg: &mut web::ServiceConfig) {
         )
         .service(building::get_buildings_data)
         .service(g::get_game_constants)
-        .service(ship::get_ship_models)
+        .service(model::get_ship_models)
     )
     .service(player::login)
     .service(web::resource("/ws/").to(ws::client::entrypoint));

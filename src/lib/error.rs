@@ -5,6 +5,7 @@ use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use sqlx_core::{Error as SqlxError};
 use serde::Serialize;
+use uuid::{Error as UuidError}; 
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -38,6 +39,10 @@ pub enum ServerError {
     SqlxError(
         #[serde(skip_serializing)]
         SqlxError
+    ),
+    UuidError(
+        #[serde(skip_serializing)]
+        UuidError
     ),
 }
 
@@ -78,6 +83,10 @@ impl From<SqlxError> for ServerError {
     fn from(error:SqlxError) -> Self { Self::SqlxError(error) }
 }
 
+impl From<UuidError> for ServerError {
+    fn from(error:UuidError) -> Self { Self::UuidError(error) }
+}
+
 impl Display for ServerError {
     fn fmt(&self, f: &mut Formatter) -> Result<(), FmtError> {
         write!(f, "{:?}", self)
@@ -108,6 +117,7 @@ impl ResponseError for ServerError {
                 SqlxError::RowNotFound => StatusCode::NOT_FOUND,
                 _ => StatusCode::INTERNAL_SERVER_ERROR,
             },
+            ServerError::UuidError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 

@@ -26,7 +26,7 @@ use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postg
 use sqlx_core::row::Row;
 
 pub const GAME_START_WALLET: usize = 200;
-pub const VICTORY_POINTS_PER_MINUTE: i16 = 10;
+pub const VICTORY_POINTS_PER_MINUTE: i32 = 10;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct GameID(pub Uuid);
@@ -34,7 +34,7 @@ pub struct GameID(pub Uuid);
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Game {
     pub id: GameID,
-    pub victory_points: i16,
+    pub victory_points: i32,
     pub game_speed: GameOptionSpeed,
     pub map_size: GameOptionMapSize
 }
@@ -49,7 +49,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Game {
 
         Ok(Game {
             id: GameID(id),
-            victory_points: row.try_get::<i16, _>("victory_points")?,
+            victory_points: row.try_get::<i32, _>("victory_points")?,
             game_speed: row.try_get("game_speed")?,
             map_size: row.try_get("map_size")?
         })
@@ -144,7 +144,7 @@ pub async fn get_game_constants() -> Result<HttpResponse> {
     #[derive(Serialize, Clone)]
     pub struct GameConstants {
         fleet_range: f64,
-        victory_points_per_minute: i16,
+        victory_points_per_minute: i32,
     }
     Ok(HttpResponse::Ok().json(GameConstants{
         fleet_range: FLEET_RANGE,

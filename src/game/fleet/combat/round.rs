@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use crate::{
-    lib::Result,
     game::{
         faction::{FactionID},
         fleet::{
@@ -53,22 +52,30 @@ pub enum SquadronActionKind {
     Attack { target: FleetSquadronID, loss: u16 }
 }
 
-pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashMap<FleetID, Fleet>) -> Result<Round> {
-    let mut round = Round{
-        battle: battle.id.clone(),
-        fleet_actions: vec![],
-        squadron_actions: vec![],
-        number,
+pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashMap<FleetID, Fleet>) -> Option<Round> {
+    let bid = battle.id;
+    let new_round = move || {
+        Round {
+            battle: bid,
+            fleet_actions: vec![],
+            squadron_actions: vec![],
+            number,
+        }
     };
 
+    let mut round = None;
+
+    println!("PROCESSING ARRIVALS");
     // new fleets arrival
     for (_, fleet) in new_fleets.iter() {
-        round.fleet_actions.push(FleetAction{
-            battle: battle.id,
-            fleet: fleet.id,
-            kind: FleetActionKind::Join,
-            round_number: number,
-        });
+        round
+            .get_or_insert_with(new_round)
+            .fleet_actions.push(FleetAction{
+                battle: battle.id,
+                fleet: fleet.id,
+                kind: FleetActionKind::Join,
+                round_number: number,
+            });
     }
 
     // make each squadron fight
@@ -76,10 +83,13 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
         // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
         attack(&mut battle, fid, &squadron, number)
         .map(|act| {
-            round.squadron_actions.push(act)
+            round
+                .get_or_insert_with(new_round)
+                .squadron_actions.push(act);
         });
     }
-    Ok(round)
+
+    round
 }
 
 fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Option<SquadronAction> {

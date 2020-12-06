@@ -86,7 +86,9 @@ impl GameServer {
         let mut game = Game::find(self.id.clone(), &self.state.db_pool).await?;
 
         let (mut systems, nb_victory_systems) = generate_systems(self.id.clone(), game.map_size).await?;
-        game.victory_points = nb_victory_systems as i16 * 100;
+
+        game.victory_points = nb_victory_systems as i32 * 100;
+
         Game::update(game.clone(), &self.state.db_pool).await?;
 
         let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
@@ -105,10 +107,10 @@ impl GameServer {
     }
 
     async fn begin(&self) -> Result<()> {
-        let mut game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
         #[derive(Serialize)]
         struct GameData{
-            victory_points: i16
+            victory_points: i32
         }
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::GameStarted,

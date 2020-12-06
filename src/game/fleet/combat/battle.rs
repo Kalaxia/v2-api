@@ -183,13 +183,13 @@ pub async fn engage(system: &System, arriver: Fleet, orbiting_fleets: HashMap<Fl
             battle.fleets.get_mut(&fid).unwrap().extend(fleets);
         }
 
-        let round = fight_round(&mut battle, round_number, new_fleets).await;
-        if round.is_err() {
+        if let Some(round) = fight_round(&mut battle, round_number, new_fleets).await {
+            battle.rounds.push(round);
+            battle.update(&mut db_pool).await?;
+            round_number += 1;
+        } else {
             break;
         }
-        battle.rounds.push(round.unwrap());
-        battle.update(&mut db_pool).await?;
-        round_number += 1;
     }
     update_fleets(&battle, db_pool).await?;
     battle.victor = Some(battle.process_victor()?);

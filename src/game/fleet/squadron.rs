@@ -274,9 +274,61 @@ fn get_available_ship_quantity(squadron: &Option<Squadron>, fleet_squadron: &Opt
 }
 
 fn get_needed_quantity(required_quantity: i32, available_quantity: i32, producing_ships: i32) -> u16 {
-    let q = available_quantity - producing_ships;
-    if q <= required_quantity {
-        return (required_quantity - q) as u16;
+    let future_quantity = available_quantity + producing_ships;
+    if future_quantity <= required_quantity {
+        return (required_quantity - future_quantity) as u16;
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::{
+        ship::squadron::SquadronID,
+        fleet::{
+            fleet::FleetID,
+            squadron::{FleetSquadron, FleetSquadronID}
+        }
+    };
+
+    #[test]
+    fn test_get_available_quantity() {
+        let squadron = Some(Squadron{
+            id: SquadronID(Uuid::new_v4()),
+            system: SystemID(Uuid::new_v4()),
+            category: ShipModelCategory::Corvette,
+            quantity: 5,
+        });
+        let fleet_squadron = Some(FleetSquadron{
+            id: FleetSquadronID(Uuid::new_v4()),
+            fleet: FleetID(Uuid::new_v4()),
+            formation: FleetFormation::Center,
+            category: ShipModelCategory::Corvette,
+            quantity: 5,
+        });
+        let none = None;
+        let none_fs = None;
+
+        assert_eq!(10, get_available_ship_quantity(&squadron, &fleet_squadron));
+        assert_eq!(5, get_available_ship_quantity(&none, &fleet_squadron));
+        assert_eq!(5, get_available_ship_quantity(&squadron, &none_fs));
+        assert_eq!(0, get_available_ship_quantity(&none, &none_fs));
+    }
+
+    #[test]
+    fn test_get_needed_quantity() {
+        let data = vec![
+            (10, (10, 0, 0)),
+            (0, (10, 0, 10)),
+            (0, (10, 10, 0)),
+            (3, (20, 10, 7)),
+            (7, (10, 3, 0)),
+            (5, (15, 0, 10)),
+        ];
+
+        for (expected, args) in data {
+            assert_eq!(expected, get_needed_quantity(args.0, args.1, args.2));
+        }
+    }
 }

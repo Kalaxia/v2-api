@@ -56,7 +56,7 @@ struct MapSizeData {
     arm_width_factor: f64
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum SystemKind {
     BaseSystem,
     VictorySystem,
@@ -351,7 +351,9 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
     Ok((graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
         let (system, prob) = generate_system(&gid, x, y, probability);
         probability = prob;
-        nb_victory_systems = nb_victory_systems + 1;
+        if system.kind == SystemKind::VictorySystem {
+            nb_victory_systems = nb_victory_systems + 1;
+        }
         system
     }).collect(), nb_victory_systems))
 }

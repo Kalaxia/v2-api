@@ -114,12 +114,15 @@ impl Squadron {
         Ok(())
     }
 
-    pub async fn assign_existing(system: SystemID, category: ShipModelCategory, quantity: i32, mut db_pool: &PgPool) -> Result<()> {
+    pub async fn assign_existing(system: SystemID, category: ShipModelCategory, mut quantity: i32, mut db_pool: &PgPool) -> Result<()> {
         let squadron = Squadron::find_by_system_and_category(
             system,
             &category,
             &db_pool
         ).await?;
+        if let Some(sq) = squadron.clone() {
+            quantity = quantity + sq.quantity as i32;
+        }
         Squadron::assign(squadron, system, category, quantity, &mut db_pool).await
     }
 }

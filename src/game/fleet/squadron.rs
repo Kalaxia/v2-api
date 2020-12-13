@@ -49,8 +49,7 @@ pub struct FleetSquadron {
 pub struct SquadronAssignmentData {
     pub formation: FleetFormation,
     pub category: ShipModelCategory,
-    pub quantity: usize,
-    pub force_construction: bool
+    pub quantity: usize
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {
@@ -158,12 +157,15 @@ impl FleetSquadron {
         Ok(())
     }
 
-    pub async fn assign_existing(fid: FleetID, formation: FleetFormation, category: ShipModelCategory, quantity: u16, mut db_pool: &PgPool) -> Result<()> {
+    pub async fn assign_existing(fid: FleetID, formation: FleetFormation, category: ShipModelCategory, mut quantity: u16, mut db_pool: &PgPool) -> Result<()> {
         let fleet_squadron = FleetSquadron::find_by_fleet_and_formation(
             fid,
             &formation,
             &db_pool
         ).await?;
+        if let Some(fs) = fleet_squadron.clone() {
+            quantity = quantity + fs.quantity;
+        }
         FleetSquadron::assign(fleet_squadron, fid, formation, category, quantity, &mut db_pool).await
     }
 }
@@ -209,26 +211,23 @@ pub async fn assign_ships(
     let mut ship_queue: Option<ShipQueue> = None;
 
     if required_quantity > available_quantity {
-        if !json_data.force_construction {
-            return Err(InternalError::Conflict)?;
-        } else {
-            assigned_quantity = available_quantity as u16;
-            remaining_quantity = 0;
-            let assigned_fleet = format!("{}:{}", fleet.id, json_data.formation.to_string());
-            let producing_ships = ShipQueue::count_assigned_ships(&assigned_fleet, &json_data.category, &state.db_pool).await?;
-            let needed_quantity = get_needed_quantity(required_quantity as i32, available_quantity as i32, producing_ships as i32);
-            if needed_quantity > 0 {
-                ship_queue = ShipQueue::schedule(
-                    &mut player,
-                    system.id,
-                    json_data.category,
-                    needed_quantity,
-                    true,
-                    Some(assigned_fleet),
-                    game.game_speed,
-                    &state.db_pool
-                ).await?;
-            }
+        assigned_quantity = available_quantity as u16;
+        remaining_quantity = 0;
+        let assigned_fleet = format!("{}:{}", fleet.id, json_data.formation.to_string());
+        let producing_ships = ShipQueue::count_assigned_ships(&assigned_fleet, &json_data.category, &state.db_pool).await?;
+        let needed_quantity = get_needed_quantity(required_quantity as i32, available_quantity as i32, producing_ships as i32);
+
+        if needed_quantity > 0 {
+            ship_queue = ShipQueue::schedule(
+                &mut player,
+                system.id,
+                json_data.category,
+                needed_quantity,
+                true,
+                Some(assigned_fleet),
+                game.game_speed,
+                &state.db_pool
+            ).await?;
         }
     } else {
         remaining_quantity = available_quantity - required_quantity;

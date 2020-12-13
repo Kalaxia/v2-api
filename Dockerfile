@@ -34,6 +34,8 @@ RUN RUSTFLAGS=-Clinker=musl-gcc cargo build --release --target=x86_64-unknown-li
 
 FROM alpine:latest
 
+ARG VERSION
+
 WORKDIR /home/kalaxia/bin/
 
 COPY --from=cargo-build /usr/src/kalaxia-api/target/x86_64-unknown-linux-musl/release/kalaxia-api .
@@ -42,5 +44,7 @@ RUN apk add --no-cache ca-certificates libcap && \
     setcap 'cap_net_bind_service=+ep' /home/kalaxia/bin/kalaxia-api && \
     addgroup -g 1000 kalaxia && \
     adduser -D -s /bin/sh -u 1000 -G kalaxia kalaxia 
+
+ENV API_VERSION $VERSION
 
 CMD ["./kalaxia-api"]

@@ -12,7 +12,18 @@ jobs:
     # This job runs on Linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Find Tag
+        id: tagger
+        uses: jimschubert/query-tag-action@v1
+        with:
+          include: 'v*'
+          exclude: '*-rc*'
+          commit-ish: 'HEAD~'
+          # if you unshallow in a separate step, use the following option:
+          # skip-unshallow: 'true'
 
       - id: image_build
         uses: mr-smithers-excellent/docker-build-push@v3
@@ -20,7 +31,7 @@ jobs:
         with:
           image: kalaxia/api-v2
           registry: docker.io
-          buildArgs: FEATURES=ssl-secure
+          buildArgs: FEATURES=ssl-secure,VERSION=${{steps.tagger.outputs.tag}}
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 

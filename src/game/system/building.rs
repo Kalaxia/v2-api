@@ -153,9 +153,10 @@ impl Building {
     }
 
     pub async fn count_by_kind_and_system(kind: BuildingKind, sid: SystemID, db_pool: &PgPool) -> Result<u32> {
-        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM map__system_buildings WHERE kind = $1 AND system_id = $2")
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM map__system_buildings WHERE kind = $1 AND system_id = $2 AND status = $3")
             .bind(kind)
             .bind(Uuid::from(sid))
+            .bind(BuildingStatus::Operational)
             .fetch_one(db_pool).await.map_err(ServerError::from)?;
         Ok(count.0 as u32)
     }

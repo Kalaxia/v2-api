@@ -4,12 +4,14 @@ use crate::game::player::PlayerID;
 #[derive(serde::Serialize, Clone)]
 pub enum Action {
     BuildingConstructed,
+    BattleStarted,
     BattleEnded,
     FactionPointsUpdated,
     FleetCreated,
     FleetArrived,
     FleetSailed,
     FleetTransfer,
+    FleetJoinedBattle,
     GameStarted,
     LobbyCreated,
     LobbyOptionsUpdated,

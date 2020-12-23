@@ -19,6 +19,7 @@ use crate::{
         game::{
             game::GameID,
             option::{GameOptionMapSize, GameOptionSpeed},
+            server::GameServer,
         },
         player::{PlayerID, Player},
         system::{
@@ -88,6 +89,9 @@ pub enum FleetArrivalOutcome {
     },
     Defended{
         battle: Battle,
+    },
+    JoinedBattle{
+        fleet: Fleet,
     },
     Arrived{
         fleet: Fleet,
@@ -171,13 +175,18 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 }
 
 impl System {
-    pub async fn resolve_fleet_arrival(&mut self, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
+    pub async fn resolve_fleet_arrival(&mut self, server: &GameServer, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
+        fleet.change_system(self);
+        fleet.update(&mut db_pool).await?;
+
         match system_owner {
             Some(system_owner) => {
+                if Battle::count_current_by_system(&self.id, db_pool).await? > 0 {
+                    return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
+                }
+
                 // Both players have the same faction, the arrived fleet just parks here
                 if system_owner.faction == player.faction {
-                    fleet.change_system(self);
-                    fleet.update(&mut db_pool).await?;
                     return Ok(FleetArrivalOutcome::Arrived{ fleet });
                 }
 
@@ -186,7 +195,7 @@ impl System {
                 if fleets.is_empty() {
                     return self.conquer(fleet, db_pool).await;
                 }
-                let battle = engage(&self, fleet.clone(), fleets, db_pool).await?;
+                let battle = engage(&self, &server, fleet.clone(), fleets, db_pool).await?;
                 if battle.victor == player.faction {
                     return self.conquer(fleet, db_pool).await;
                 } else if battle.victor == system_owner.faction {
@@ -331,6 +340,11 @@ impl From<FleetArrivalOutcome> for protocol::Message {
             FleetArrivalOutcome::Defended { battle } => protocol::Message::new(
                 protocol::Action::BattleEnded,
                 battle,
+                None,
+            ),
+            FleetArrivalOutcome::JoinedBattle { fleet } => protocol::Message::new(
+                protocol::Action::FleetJoinedBattle,
+                fleet.clone(),
                 None,
             ),
             FleetArrivalOutcome::Arrived { fleet } => protocol::Message::new(

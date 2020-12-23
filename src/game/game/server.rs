@@ -208,7 +208,7 @@ impl GameServer {
             }
         };
 
-        let result = destination_system.resolve_fleet_arrival(fleet, &player, system_owner, &self.state.db_pool).await?;
+        let result = destination_system.resolve_fleet_arrival(&self, fleet, &player, system_owner, &self.state.db_pool).await?;
         
         self.ws_broadcast(result.into());
         

@@ -7,6 +7,7 @@ use crate::{
     },
     game::{
         faction::FactionID,
+        game::server::GameServer,
         fleet::{
             combat::{
                 round::{Round, fight_round},
@@ -16,12 +17,15 @@ use crate::{
         },
         system::system::{System, SystemID},
         player::{PlayerID, Player},
-    }
+    },
+    ws::protocol,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
 use rand::prelude::*;
 use uuid::Uuid;
+use std::time::Duration;
+use std::thread;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct BattleID(pub Uuid);
@@ -78,6 +82,14 @@ impl Battle {
             .bind(Uuid::from(self.id))
             .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
             .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+
+    pub async fn count_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
+        sqlx::query_as("SELECT COUNT(*) FROM fleet__combat__battles WHERE system_id = $1 AND ended_at IS NULL")
+            .bind(Uuid::from(sid.clone()))
+            .fetch_one(db_pool).await
+            .map(|count: (i64,)| count.0 as i16)
+            .map_err(ServerError::from)
     }
 
     pub async fn generate_reports<E>(&self, exec: &mut E) -> Result<()>
@@ -151,9 +163,12 @@ impl Report {
     }
 }
 
+fn get_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
+    fleets.iter().map(|(_, f)| f.player.clone()).collect()
+}
+
 async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
-    let player_ids = fleets.iter().map(|(_, f)| f.player.clone()).collect();
-    let players: HashMap<PlayerID, Player> = Player::find_by_ids(player_ids, &db_pool).await?
+    let players: HashMap<PlayerID, Player> = Player::find_by_ids(get_player_ids(&fleets), &db_pool).await?
         .iter()
         .map(|p| (p.id, p.clone()))
         .collect();
@@ -170,12 +185,16 @@ async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) 
     Ok(faction_parties)
 }
 
-pub async fn engage(system: &System, arriver: Fleet, orbiting_fleets: HashMap<FleetID, Fleet>, mut db_pool: &PgPool) -> Result<Battle> {
+pub async fn engage(system: &System, server: &GameServer, arriver: Fleet, orbiting_fleets: HashMap<FleetID, Fleet>, mut db_pool: &PgPool) -> Result<Battle> {
     let mut fleets = orbiting_fleets.clone();
     fleets.insert(arriver.id.clone(), arriver.clone());
 
     let mut battle = init_battle(system, fleets, &db_pool).await?;
     let mut round_number: u16 = 1;
+
+    server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
+
+    thread::sleep(Duration::new(3, 0));
 
     loop {
         let new_fleets = battle.get_joined_fleets(&db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
@@ -187,6 +206,8 @@ pub async fn engage(system: &System, arriver: Fleet, orbiting_fleets: HashMap<Fl
             battle.rounds.push(round);
             battle.update(&mut db_pool).await?;
             round_number += 1;
+
+            thread::sleep(Duration::new(1, 0));
         } else {
             break;
         }

@@ -12,21 +12,18 @@ use crate::{
     game::{
         faction::{FactionID},
         fleet::{
-            combat::battle::{Battle, engage},
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadron},
         },
         game::{
             game::GameID,
             option::{GameOptionMapSize, GameOptionSpeed},
-            server::GameServer,
         },
         player::{PlayerID, Player},
         system::{
             building::{Building, BuildingStatus, BuildingKind},
         },
     },
-    ws::protocol
 };
 use galaxy_rs::{Point, DataPoint};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
@@ -73,29 +70,6 @@ pub struct SystemDominion {
 pub struct Coordinates {
     pub x: f64,
     pub y: f64
-}
-
-#[derive(Serialize, Clone)]
-pub struct ConquestData {
-    pub system: System,
-    pub fleet: Fleet,
-}
-
-#[derive(Clone)]
-pub enum FleetArrivalOutcome {
-    Conquerred{
-        system: System,
-        fleet: Fleet,
-    },
-    Defended{
-        battle: Battle,
-    },
-    JoinedBattle{
-        fleet: Fleet,
-    },
-    Arrived{
-        fleet: Fleet,
-    }
 }
 
 impl Coordinates {
@@ -175,75 +149,6 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 }
 
 impl System {
-    pub async fn resolve_fleet_arrival(&mut self, server: &GameServer, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
-        fleet.change_system(self);
-        fleet.update(&mut db_pool).await?;
-
-        match system_owner {
-            Some(system_owner) => {
-                if Battle::count_current_by_system(&self.id, db_pool).await? > 0 {
-                    return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
-                }
-
-                // Both players have the same faction, the arrived fleet just parks here
-                if system_owner.faction == player.faction {
-                    return Ok(FleetArrivalOutcome::Arrived{ fleet });
-                }
-
-                let fleets = self.retrieve_orbiting_fleets(db_pool).await?;
-
-                if fleets.is_empty() {
-                    return self.conquer(fleet, db_pool).await;
-                }
-                let battle = engage(&self, &server, fleet.clone(), fleets, db_pool).await?;
-                if battle.victor == player.faction {
-                    return self.conquer(fleet, db_pool).await;
-                } else if battle.victor == system_owner.faction {
-                    return Ok(FleetArrivalOutcome::Defended{ battle });
-                }
-                return self.conquer(battle
-                    .fleets
-                    .get(&battle.victor.unwrap())
-                    .unwrap()
-                    .values()
-                    .next()
-                    .cloned()
-                    .unwrap()
-                , db_pool).await;
-            },
-            None => self.conquer(fleet, db_pool).await
-        }
-    }
-
-    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
-        let mut ids = vec![];
-        // Conquest of the system by the arrived fleet
-        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
-            .into_iter()
-            .map(|f| {
-                ids.push(f.id.clone());
-                (f.id.clone(), f)
-            })
-            .collect();
-        let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
-
-        for s in squadrons.into_iter() {
-            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
-        }
-        Ok(fleets)
-    }
-
-    pub async fn conquer(&mut self, mut fleet: Fleet, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
-        fleet.change_system(self);
-        fleet.update(&mut db_pool).await?;
-        self.player = Some(fleet.player.clone());
-        self.update(&mut db_pool).await?;
-        Ok(FleetArrivalOutcome::Conquerred{
-            system: self.clone(),
-            fleet: fleet,
-        })
-    }
-
     pub async fn find(sid: SystemID, db_pool: &PgPool) -> Result<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE id = $1")
             .bind(Uuid::from(sid))
@@ -324,35 +229,24 @@ impl System {
         tx.commit().await?;
         Ok(nb_inserted)
     }
-}
 
-impl From<FleetArrivalOutcome> for protocol::Message {
-    fn from(outcome: FleetArrivalOutcome) -> Self {
-        match outcome {
-            FleetArrivalOutcome::Conquerred { system, fleet } => protocol::Message::new(
-                protocol::Action::SystemConquerred,
-                ConquestData{
-                    system: system.clone(),
-                    fleet: fleet.clone(),
-                },
-                None,
-            ),
-            FleetArrivalOutcome::Defended { battle } => protocol::Message::new(
-                protocol::Action::BattleEnded,
-                battle,
-                None,
-            ),
-            FleetArrivalOutcome::JoinedBattle { fleet } => protocol::Message::new(
-                protocol::Action::FleetJoinedBattle,
-                fleet.clone(),
-                None,
-            ),
-            FleetArrivalOutcome::Arrived { fleet } => protocol::Message::new(
-                protocol::Action::FleetArrived,
-                fleet.clone(),
-                None,
-            )
+    
+    pub async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let mut ids = vec![];
+        // Conquest of the system by the arrived fleet
+        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
+            .into_iter()
+            .map(|f| {
+                ids.push(f.id.clone());
+                (f.id.clone(), f)
+            })
+            .collect();
+        let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
+
+        for s in squadrons.into_iter() {
+            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
         }
+        Ok(fleets)
     }
 }
 

@@ -1,5 +1,5 @@
 use actix_web::{post, web, HttpResponse};
-use serde::Deserialize;
+use serde::{Serialize, Deserialize};
 use crate::{
     lib::{
         Result,
@@ -9,20 +9,96 @@ use crate::{
     game::{
         game::{
             game::{Game, GameID},
-            server::GameFleetTravelMessage
+            server::{GameServer, GameFleetTravelMessage},
         },
         player::Player,
-        fleet::fleet::{Fleet, FleetID, FLEET_RANGE},
+        faction::FactionID,
+        fleet::{
+            combat::{
+                battle::Battle,
+                conquest::Conquest,
+            },
+            fleet::{Fleet, FleetID, FLEET_RANGE},
+        },
         system::system::{System, SystemID, Coordinates},
         fleet::squadron::{FleetSquadron},
     },
+    ws::protocol,
     AppState
 };
+use std::collections::HashMap;
 use chrono::{Duration, Utc};
 
 #[derive(Deserialize)]
 pub struct FleetTravelRequest {
     pub destination_system_id: SystemID,
+}
+
+#[derive(Clone)]
+pub enum FleetArrivalOutcome {
+    Arrived{
+        fleet: Fleet,
+    },
+    Battle{
+        defender_faction: FactionID,
+        fleet: Fleet,
+        fleets: HashMap<FleetID, Fleet>,
+        system: System,
+    },
+    Colonize{
+        system: System,
+        fleet: Fleet,
+    },
+    Conquer{
+        system: System,
+        fleet: Fleet,
+    },
+    Defended{
+        battle: Battle,
+    },
+    JoinedBattle{
+        fleet: Fleet,
+    },
+}
+
+#[derive(Serialize, Clone)]
+pub struct BattleData {
+    pub system: System,
+    pub fleet: Fleet,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ConquestData {
+    pub system: System,
+    pub fleet: Fleet,
+}
+
+impl From<FleetArrivalOutcome> for Option<protocol::Message> {
+    fn from(outcome: FleetArrivalOutcome) -> Self {
+        match outcome {
+            FleetArrivalOutcome::Battle { system, fleet, fleets: _, defender_faction: _ } => Some(protocol::Message::new(
+                protocol::Action::BattleStarted,
+                BattleData { system, fleet },
+                None
+            )),
+            FleetArrivalOutcome::Conquer { system, fleet } => Some(protocol::Message::new(
+                protocol::Action::ConquestStarted,
+                ConquestData{ system, fleet },
+                None,
+            )),
+            FleetArrivalOutcome::JoinedBattle { fleet } => Some(protocol::Message::new(
+                protocol::Action::FleetJoinedBattle,
+                fleet.clone(),
+                None,
+            )),
+            FleetArrivalOutcome::Arrived { fleet } => Some(protocol::Message::new(
+                protocol::Action::FleetArrived,
+                fleet.clone(),
+                None,
+            )),
+            _ => None,
+        }
+    }
 }
 
 #[post("/travel/")]
@@ -73,6 +149,61 @@ pub async fn travel(
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))
+}
+
+pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Result<()> {
+    let mut fleet = Fleet::find(&fleet_id, &server.state.db_pool).await?;
+    fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &server.state.db_pool).await?;
+    let destination_system = System::find(fleet.destination_system.unwrap(), &server.state.db_pool).await?;
+    let player = Player::find(fleet.player, &server.state.db_pool).await?;
+
+    let system_owner = {
+        match destination_system.player {
+            Some(owner_id) => Some(Player::find(owner_id, &server.state.db_pool).await?),
+            None => None,
+        }
+    };
+
+    fleet.change_system(&destination_system);
+    fleet.update(&mut &server.state.db_pool).await?;
+
+    let outcome = resolve_arrival_outcome(&destination_system, &server, fleet, &player, system_owner).await?;
+
+    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.ws_broadcast(message));
+
+    process_arrival_outcome(&outcome, &server).await
+}
+
+async fn resolve_arrival_outcome(system: &System, server: &GameServer, mut fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
+    match system_owner {
+        Some(system_owner) => {
+            // First we check if a battle rages in the destination system. No matter the opponents, the fleet joins in
+            if Battle::count_current_by_system(&system.id, &server.state.db_pool).await? > 0 {
+                return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
+            }
+            // Both players have the same faction, the arrived fleet just parks here
+            if system_owner.faction == player.faction {
+                return Ok(FleetArrivalOutcome::Arrived{ fleet });
+            }
+            // The fleet landed in an enemy system. We check if it is defended by some fleets and initiate a battle
+            let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
+            // If there are none, a conquest begins
+            if fleets.is_empty() {
+                return Ok(FleetArrivalOutcome::Conquer{ system: system.clone(), fleet });
+            }
+            return Ok(FleetArrivalOutcome::Battle{ system: system.clone(), fleet, fleets, defender_faction: system_owner.faction.unwrap() })
+        },
+        None => Ok(FleetArrivalOutcome::Colonize{ system: system.clone(), fleet })
+    }
+}
+
+async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &GameServer) -> Result<()> {
+    match outcome {
+        FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::prepare(&fleet, &fleets, &system, defender_faction, &server).await,
+        FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(vec![fleet], &system, &server).await,
+        FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(vec![fleet], &system, &server).await,
+        _ => Ok(())
+    }
 }
 
 fn check_travel_destination(origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {

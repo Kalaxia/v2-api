@@ -9,13 +9,15 @@ use futures::executor::block_on;
 use crate::{
     lib::{
         Result,
+        time::Time,
         error::ServerError,
     },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID},
-            squadron::{FleetSquadron},
+            combat::conquest::Conquest,
+            fleet::Fleet,
+            travel::process_fleet_arrival,
         },
         game::game::{Game, GameID, VICTORY_POINTS_PER_MINUTE},
         ship::queue::ShipQueue,
@@ -195,26 +197,6 @@ impl GameServer {
         Ok(())
     }
 
-    async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
-        let mut fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
-        fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
-        let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
-        let player = Player::find(fleet.player, &self.state.db_pool).await?;
-
-        let system_owner = {
-            match destination_system.player {
-                Some(owner_id) => Some(Player::find(owner_id, &self.state.db_pool).await?),
-                None => None,
-            }
-        };
-
-        let result = destination_system.resolve_fleet_arrival(&self, fleet, &player, system_owner, &self.state.db_pool).await?;
-        
-        self.ws_broadcast(result.into());
-        
-        Ok(())
-    }
-
     async fn process_building_construction(&mut self, bid: BuildingID) -> Result<()> {
         let mut building = Building::find(bid, &self.state.db_pool).await?;
         let player = Player::find_system_owner(building.system.clone(), &self.state.db_pool).await?;
@@ -339,6 +321,12 @@ pub struct GameFleetTravelMessage{
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
+pub struct GameConquestMessage{
+    pub conquest: Conquest,
+}
+
+#[derive(actix::Message)]
+#[rtype(result="()")]
 pub struct GameShipQueueMessage{
     pub ship_queue: ShipQueue
 }
@@ -394,9 +382,23 @@ impl Handler<GameFleetTravelMessage> for GameServer {
         ));
         let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
         ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
+            let res = block_on(process_fleet_arrival(&this, msg.fleet.id));
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());
+            }
+        });
+    }
+}
+
+impl Handler<GameConquestMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameConquestMessage, ctx: &mut Self::Context) -> Self::Result {
+        let datetime: DateTime<Utc> = msg.conquest.ended_at.into();
+        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
+            let res = block_on(msg.conquest.end(&this));
+            if res.is_err() {
+                println!("Conquest failed : {:?}", res.err());
             }
         });
     }

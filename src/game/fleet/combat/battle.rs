@@ -10,6 +10,7 @@ use crate::{
         game::server::GameServer,
         fleet::{
             combat::{
+                conquest::Conquest,
                 round::{Round, fight_round},
             },
             squadron::FleetSquadron,
@@ -150,6 +151,64 @@ impl Battle {
         }
         Err(InternalError::NotFound)?
     }
+
+    pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: &FactionID, server: &GameServer) -> Result<()> {
+        let battle = Battle::engage(&system, &server, &fleet, &fleets).await?;
+
+        server.ws_broadcast(protocol::Message::new(
+            protocol::Action::BattleEnded,
+            battle.clone(),
+            None
+        ));
+
+        if battle.victor == Some(*defender_faction) {
+            return Ok(());
+        }
+
+        Conquest::resume(vec![&battle
+            .fleets
+            .get(&battle.victor.unwrap())
+            .unwrap()
+            .values()
+            .next()
+            .cloned()
+            .unwrap()
+        ], &system, &server).await
+    }
+
+    pub async fn engage(system: &System, server: &GameServer, arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>) -> Result<Battle> {
+        let mut fleets = orbiting_fleets.clone();
+        fleets.insert(arriver.id.clone(), arriver.clone());
+    
+        let mut battle = init_battle(system, fleets, &server.state.db_pool).await?;
+    
+        server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
+    
+        thread::sleep(Duration::new(3, 0));
+    
+        let mut round_number: u16 = 1;
+        loop {
+            let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
+            for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
+                battle.fleets.get_mut(&fid).unwrap().extend(fleets);
+            }
+    
+            if let Some(round) = fight_round(&mut battle, round_number, new_fleets).await {
+                battle.rounds.push(round);
+                battle.update(&mut &server.state.db_pool).await?;
+                round_number += 1;
+    
+                thread::sleep(Duration::new(1, 0));
+            } else {
+                break;
+            }
+        }
+        update_fleets(&battle, &server.state.db_pool).await?;
+        battle.victor = Some(battle.process_victor()?);
+        battle.ended_at = Some(Time::now());
+        battle.update(&mut &server.state.db_pool).await?;
+        Ok(battle)
+    }
 }
 
 impl Report {
@@ -183,40 +242,6 @@ async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) 
             .insert(fid, fleet);
     }
     Ok(faction_parties)
-}
-
-pub async fn engage(system: &System, server: &GameServer, arriver: Fleet, orbiting_fleets: HashMap<FleetID, Fleet>, mut db_pool: &PgPool) -> Result<Battle> {
-    let mut fleets = orbiting_fleets.clone();
-    fleets.insert(arriver.id.clone(), arriver.clone());
-
-    let mut battle = init_battle(system, fleets, &db_pool).await?;
-    let mut round_number: u16 = 1;
-
-    server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
-
-    thread::sleep(Duration::new(3, 0));
-
-    loop {
-        let new_fleets = battle.get_joined_fleets(&db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
-        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &db_pool).await? {
-            battle.fleets.get_mut(&fid).unwrap().extend(fleets);
-        }
-
-        if let Some(round) = fight_round(&mut battle, round_number, new_fleets).await {
-            battle.rounds.push(round);
-            battle.update(&mut db_pool).await?;
-            round_number += 1;
-
-            thread::sleep(Duration::new(1, 0));
-        } else {
-            break;
-        }
-    }
-    update_fleets(&battle, db_pool).await?;
-    battle.victor = Some(battle.process_victor()?);
-    battle.ended_at = Some(Time::now());
-    battle.update(&mut db_pool).await?;
-    Ok(battle)
 }
 
 async fn init_battle(system: &System, fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<Battle> {

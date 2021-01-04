@@ -2,6 +2,7 @@ DROP TABLE IF EXISTS lobby__lobbies CASCADE;
 DROP TABLE IF EXISTS fleet__squadrons CASCADE;
 DROP TABLE IF EXISTS fleet__fleets CASCADE;
 DROP TABLE IF EXISTS fleet__combat__reports CASCADE;
+DROP TABLE IF EXISTS fleet__combat__conquests CASCADE;
 DROP TABLE IF EXISTS fleet__combat__battles CASCADE;
 DROP TABLE IF EXISTS system__ship_queues CASCADE;
 DROP TABLE IF EXISTS map__systems CASCADE;
@@ -84,9 +85,15 @@ CREATE TABLE IF NOT EXISTS fleet__combat__battles(
     begun_at TIMESTAMPTZ NOT NULL,
     ended_at TIMESTAMPTZ DEFAULT NULL
 );
+CREATE TABLE IF NOT EXISTS fleet__combat__conquests(
+    player_id UUID NOT NULL,
+    system_id UUID NOT NULL,
+    started_at TIMESTAMPTZ NOT NULL,
+    ended_at TIMESTAMPTZ NOT NULL
+);
 CREATE TABLE IF NOT EXISTS fleet__combat__reports(
-    battle_id UUID,
-    player_id UUID,
+    battle_id UUID NOT NULL,
+    player_id UUID NOT NULL,
     PRIMARY KEY (battle_id, player_id)
 );
 CREATE TABLE IF NOT EXISTS fleet__squadrons(
@@ -119,6 +126,8 @@ ALTER TABLE fleet__fleets ADD CONSTRAINT destination_fkey FOREIGN KEY (destinati
 ALTER TABLE fleet__fleets ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
 ALTER TABLE fleet__combat__battles ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
 ALTER TABLE fleet__combat__battles ADD CONSTRAINT victor_fkey FOREIGN KEY (victor_id) REFERENCES faction__factions (id) ON DELETE CASCADE;
+ALTER TABLE fleet__combat__conquests ADD CONSTRAINT system_fkey FOREIGN KEY (system_id) REFERENCES map__systems (id) ON DELETE CASCADE;
+ALTER TABLE fleet__combat__conquests ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
 ALTER TABLE fleet__combat__reports ADD CONSTRAINT battle_fkey FOREIGN KEY (battle_id) REFERENCES fleet__combat__battles (id) ON DELETE CASCADE;
 ALTER TABLE fleet__combat__reports ADD CONSTRAINT player_fkey FOREIGN KEY (player_id) REFERENCES player__players (id) ON DELETE CASCADE;
 ALTER TABLE fleet__squadrons ADD CONSTRAINT fleet_fkey FOREIGN KEY (fleet_id) REFERENCES fleet__fleets (id) ON DELETE CASCADE;

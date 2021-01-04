@@ -16,7 +16,7 @@ use crate::{
         fleet::{
             combat::{
                 battle::Battle,
-                conquest::Conquest,
+                conquest::{Conquest, ConquestData},
             },
             fleet::{Fleet, FleetID, FLEET_RANGE},
         },
@@ -67,25 +67,9 @@ pub struct BattleData {
     pub fleet: Fleet,
 }
 
-#[derive(Serialize, Clone)]
-pub struct ConquestData {
-    pub system: System,
-    pub fleet: Fleet,
-}
-
 impl From<FleetArrivalOutcome> for Option<protocol::Message> {
     fn from(outcome: FleetArrivalOutcome) -> Self {
         match outcome {
-            FleetArrivalOutcome::Battle { system, fleet, fleets: _, defender_faction: _ } => Some(protocol::Message::new(
-                protocol::Action::BattleStarted,
-                BattleData { system, fleet },
-                None
-            )),
-            FleetArrivalOutcome::Conquer { system, fleet } => Some(protocol::Message::new(
-                protocol::Action::ConquestStarted,
-                ConquestData{ system, fleet },
-                None,
-            )),
             FleetArrivalOutcome::JoinedBattle { fleet } => Some(protocol::Message::new(
                 protocol::Action::FleetJoinedBattle,
                 fleet.clone(),
@@ -200,8 +184,8 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, mut fleet
 async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &GameServer) -> Result<()> {
     match outcome {
         FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::prepare(&fleet, &fleets, &system, defender_faction, &server).await,
-        FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(vec![fleet], &system, &server).await,
-        FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(vec![fleet], &system, &server).await,
+        FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(fleet, vec![fleet], &system, &server).await,
+        FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(fleet, vec![fleet], &system, &server).await,
         _ => Ok(())
     }
 }

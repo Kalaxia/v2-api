@@ -165,7 +165,7 @@ impl Battle {
             return Ok(());
         }
 
-        Conquest::resume(vec![&battle
+        Conquest::resume(&fleet, vec![&battle
             .fleets
             .get(&battle.victor.unwrap())
             .unwrap()

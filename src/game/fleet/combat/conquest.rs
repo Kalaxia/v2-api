@@ -6,7 +6,7 @@ use crate::{
     },
     game::{
         fleet::{
-            fleet::Fleet,
+            fleet::{FleetID, Fleet},
         },
         game::server::{GameServer, GameConquestMessage},
         player::{Player, PlayerID},
@@ -24,8 +24,16 @@ use sqlx_core::row::Row;
 pub struct Conquest {
     pub player: PlayerID,
     pub system: SystemID,
+    pub fleet: Option<FleetID>,
+    pub fleets: Option<Vec<Fleet>>,
     pub started_at: Time,
     pub ended_at: Time,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ConquestData {
+    pub system: System,
+    pub fleets: Vec<Fleet>,
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
@@ -33,6 +41,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
         Ok(Conquest {
             player: row.try_get("player_id").map(PlayerID)?,
             system: row.try_get("system_id").map(SystemID)?,
+            fleet: None,
+            fleets: None,
             started_at: row.try_get("started_at")?,
             ended_at: row.try_get("ended_at")?,
         })
@@ -73,16 +83,16 @@ impl Conquest {
     }
 
     pub async fn find_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__squadrons WHERE system_id = $1 AND ended_at IS NULL")
+        sqlx::query_as("SELECT * FROM fleet__combat__conquests WHERE system_id = $1 AND ended_at IS NULL")
             .bind(Uuid::from(sid.clone()))
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn resume(fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
+    pub async fn resume(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         
         if c.is_none() {
-            return Self::new(fleets, system, &server).await;
+            return Self::new(fleet, fleets, system, &server).await;
         }
 
         let mut conquest = c.unwrap();
@@ -93,10 +103,12 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn new(fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
+    pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
         let conquest = Conquest{
             player: fleets[0].player.clone(),
             system: system.id,
+            fleet: Some(fleet.id),
+            fleets: Some(fleets.iter().map(|&f| f.clone()).collect()),
             started_at: Time::now(),
             ended_at: get_conquest_time(fleets),
         };
@@ -115,14 +127,14 @@ impl Conquest {
 
     pub async fn end(&self, server: &GameServer) -> Result<()> {
         let mut system = System::find(self.system.clone(), &server.state.db_pool).await?;
-        let fleets = Fleet::find_stationed_by_system(&self.system, &server.state.db_pool).await?;
+        let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?.values().cloned().collect();
 
         system.player = Some(self.player.clone());
         system.update(&mut &server.state.db_pool).await?;
 
         server.ws_broadcast(protocol::Message::new(
             protocol::Action::SystemConquerred,
-            system,
+            ConquestData{ system, fleets },
             None
         ));
 

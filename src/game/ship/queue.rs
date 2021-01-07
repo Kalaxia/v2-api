@@ -155,7 +155,7 @@ impl ShipQueue {
             protocol::Action::ShipQueueFinished,
             ship_queue.clone(),
             None,
-        ));
+        )).await;
 
         Ok(())
     }

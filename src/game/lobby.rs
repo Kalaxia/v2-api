@@ -16,7 +16,9 @@ use crate::{
     ws::{ client::ClientSession, protocol},
     AppState,
 };
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use futures::executor::block_on;
 use std::collections::{HashMap};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
@@ -62,27 +64,27 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
 }
 
 impl LobbyServer {
-    pub fn ws_broadcast(&self, message: protocol::Message) {
-        let clients = self.clients.read().expect("Poisoned lock on lobby clients");
+    pub async fn ws_broadcast(&self, message: protocol::Message) {
+        let clients = self.clients.read().await;
         for (_, c) in clients.iter() {
             c.do_send(message.clone());
         }
     }
     
-    pub fn is_empty(&self) -> bool {
-        let clients = self.clients.read().expect("Poisoned lock on lobby clients");
+    pub async fn is_empty(&self) -> bool {
+        let clients = self.clients.read().await;
 
         clients.len() == 0
     }
 
-    pub fn add_player(&mut self, pid: PlayerID, client: actix::Addr<ClientSession>) {
-        let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
+    pub async fn add_player(&mut self, pid: PlayerID, client: actix::Addr<ClientSession>) {
+        let mut clients = self.clients.write().await;
 
         clients.insert(pid, client);
     }
 
-    pub fn remove_player(&mut self, pid: PlayerID) -> actix::Addr<ClientSession> {
-        let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
+    pub async fn remove_player(&mut self, pid: PlayerID) -> actix::Addr<ClientSession> {
+        let mut clients = self.clients.write().await;
         let client = clients.get(&pid).unwrap().clone();
         // Remove the player from the lobby's list and notify all remaining players
         clients.remove(&pid);
@@ -91,7 +93,7 @@ impl LobbyServer {
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid.clone()),
-        ));
+        )).await;
         client
     }
 }
@@ -165,7 +167,7 @@ impl Handler<LobbyAddClientMessage> for LobbyServer {
     type Result = ();
 
     fn handle(&mut self, LobbyAddClientMessage(pid, client): LobbyAddClientMessage, _ctx: &mut Self::Context) -> Self::Result {
-        self.add_player(pid, client);
+        block_on(self.add_player(pid, client));
     }
 }
 
@@ -173,8 +175,8 @@ impl Handler<LobbyRemoveClientMessage> for LobbyServer {
     type Result = Arc<(actix::Addr<ClientSession>, bool)>;
 
     fn handle(&mut self, LobbyRemoveClientMessage(pid): LobbyRemoveClientMessage, ctx: &mut Self::Context) -> Self::Result {
-        let client = self.remove_player(pid);
-        if self.is_empty() {
+        let client = block_on(self.remove_player(pid));
+        if block_on(self.is_empty()) {
             ctx.stop();
             ctx.terminate();
             return Arc::new((client, true));
@@ -187,7 +189,7 @@ impl Handler<LobbyGetClientsMessage> for LobbyServer {
     type Result = Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>;
 
     fn handle(&mut self, _msg: LobbyGetClientsMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let clients = self.clients.read().expect("Poisoned lock on lobby players");
+        let clients = block_on(self.clients.read());
 
         Arc::new(clients.clone())
     }
@@ -197,7 +199,7 @@ impl Handler<protocol::Message> for LobbyServer {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(msg);
+        block_on(self.ws_broadcast(msg));
     }
 }
 

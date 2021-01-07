@@ -2,7 +2,8 @@ use actix_web::{get, delete, web, HttpResponse};
 use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use std::collections::{HashMap};
 use crate::{
     lib::{

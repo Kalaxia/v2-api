@@ -36,13 +36,13 @@ pub async fn entrypoint(
         pid: player.id.clone()
     }, &req, stream)?;
 
-    state.add_client(&player.id, addr);
+    state.add_client(&player.id, addr).await;
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::PlayerConnected,
         player.clone(),
         Some(player.id.clone()),
-    ));
+    )).await;
 
     Ok(resp)
 }
@@ -56,7 +56,7 @@ pub struct ClientSession {
 
 impl ClientSession {
     async fn logout(&self) -> Result<()> {
-        let mut clients = self.state.clients_mut();
+        let mut clients = self.state.clients_mut().await;
         let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
         if clients.contains_key(&self.pid) {
             clients.remove(&self.pid);
@@ -64,7 +64,7 @@ impl ClientSession {
         drop(clients);
         if player.lobby != None {
             let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
-            let lobbies = self.state.lobbies();
+            let lobbies = self.state.lobbies().await;
             let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
             let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
             if is_empty {
@@ -78,7 +78,7 @@ impl ClientSession {
                 ));
             }
         } else if player.game != None {
-            let mut games = self.state.games_mut();
+            let mut games = self.state.games_mut().await;
             let gid = player.clone().game.unwrap();
             let game = games.get_mut(&gid).expect("Game not found");
 
@@ -93,7 +93,7 @@ impl ClientSession {
             protocol::Action::PlayerDisconnected,
             player.clone(),
             Some(self.pid),
-        ));
+        )).await;
         Ok(())
     }
 }

@@ -136,7 +136,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     fleet.insert(&mut tx).await?;
     tx.commit().await?;
 
-    let games = state.games();
+    let games = state.games().await;
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(protocol::Message::new(
         protocol::Action::FleetCreated,
@@ -184,7 +184,7 @@ pub async fn donate(
         pub receiver_id: PlayerID,
     }
 
-    let games = state.games();
+    let games = state.games().await;
     let game_server = games.get(&other_player.game.clone().unwrap()).expect("Game exists in DB but not in HashMap");
     game_server.do_send(protocol::Message::new(
         protocol::Action::FleetTransfer,

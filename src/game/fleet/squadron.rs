@@ -255,7 +255,7 @@ pub async fn assign_ships(
     tx.commit().await?;
 
     if let Some(sq) = ship_queue {
-        state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: sq.clone() });
+        state.games().await.get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: sq.clone() });
         return Ok(HttpResponse::Created().json(sq));
     }
     Ok(HttpResponse::NoContent().finish())

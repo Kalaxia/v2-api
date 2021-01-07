@@ -238,7 +238,7 @@ pub async fn add_ship_queue(
         &state.db_pool
     ).await?.unwrap();
 
-    state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });
+    state.games().await.get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });
 
     Ok(HttpResponse::Created().json(ship_queue))
 }

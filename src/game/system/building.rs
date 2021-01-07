@@ -221,7 +221,7 @@ pub async fn create_building(
     building.insert(&mut tx).await?;
     tx.commit().await?;
 
-    state.games().get(&info.0).unwrap().do_send(GameBuildingConstructionMessage{ building: building.clone() });
+    state.games().await.get(&info.0).unwrap().do_send(GameBuildingConstructionMessage{ building: building.clone() });
 
     Ok(HttpResponse::Created().json(building))
 }

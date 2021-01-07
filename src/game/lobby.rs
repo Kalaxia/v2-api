@@ -260,7 +260,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<HttpResponse> {
     // Get the requesting player identity
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
-    let mut lobby_servers = state.lobbies_mut();
+    let mut lobby_servers = state.lobbies_mut().await;
 
     // If already in lobby, then error
     if player.lobby.is_some() {
@@ -278,7 +278,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
         id: new_lobby.id.clone(),
         clients: RwLock::new(HashMap::new()),
     }.start();
-    let client = state.retrieve_client(&claims.pid)?;
+    let client = state.retrieve_client(&claims.pid).await?;
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
     lobby_servers.insert(new_lobby.id.clone(), lobby_server);
     // Insert the lobby into the list
@@ -293,7 +293,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
         protocol::Action::LobbyCreated,
         new_lobby.clone(),
         Some(player.id),
-    ));
+    )).await;
 
     Ok(HttpResponse::Created().json(new_lobby))
 }
@@ -322,7 +322,7 @@ pub async fn update_lobby_options(
     lobby.update(&mut tx).await?;
     tx.commit().await?;
 
-    let lobbies = state.lobbies();
+    let lobbies = state.lobbies().await;
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
     lobby_server.do_send(protocol::Message::new(
         protocol::Action::LobbyOptionsUpdated,
@@ -336,7 +336,6 @@ pub async fn update_lobby_options(
 pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(LobbyID,)>)
     -> Result<HttpResponse>
 {
-    let mut games = state.games_mut();
 
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
@@ -344,18 +343,20 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
         Err(InternalError::AccessDenied)?
     }
     let clients = Arc::try_unwrap({
-        let lobbies = state.lobbies();
+        let lobbies = state.lobbies().await;
         let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
         lobby_server.send(LobbyGetClientsMessage{})
     }.await?).ok().unwrap();
+
     let (game_id, game) = create_game(&lobby, state.clone(), clients).await?;
+    let mut games = state.games_mut().await;
     games.insert(game_id, game);
 
     state.ws_broadcast(protocol::Message::new(
         protocol::Action::LobbyLaunched,
         lobby.clone(),
         None,
-    ));
+    )).await;
 
     let mut tx = state.db_pool.begin().await?;
     lobby.remove(&mut tx).await?;
@@ -376,10 +377,10 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     }
     player.reset(&state.db_pool).await?;
 
-    let lobbies = state.lobbies();
+    let lobbies = state.lobbies().await;
     let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");
     let (client, is_empty) = Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
-    state.add_client(&player.id, client.clone());
+    state.add_client(&player.id, client.clone()).await;
     if is_empty {
         state.clear_lobby(lobby, player.id).await?;
     } else if player.id == lobby.owner {
@@ -412,13 +413,13 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
         player,
         Some(claims.pid),
     );
-    let client = state.retrieve_client(&claims.pid)?;
-    let lobbies = state.lobbies();
+    let client = state.retrieve_client(&claims.pid).await?;
+    let lobbies = state.lobbies().await;
     let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
     lobby_server.do_send(LobbyAddClientMessage(claims.pid.clone(), client));
     lobby_server.do_send(message.clone());
 
-    state.ws_broadcast(message);
+    state.ws_broadcast(message).await;
 
     Ok(HttpResponse::NoContent().finish())
 }

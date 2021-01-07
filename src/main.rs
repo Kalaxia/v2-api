@@ -1,7 +1,7 @@
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 use std::env;
 use env_logger;
 #[cfg(feature="ssl-secure")]
@@ -42,18 +42,18 @@ pub struct AppState {
 
 macro_rules! res_access {
     { $name:ident , $name_mut:ident : $t:ty } => {
-        pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
-            self.$name.read().expect(stringify!("AppState::", $name, "() RwLock poisoned"))
+        pub async fn $name<'a>(& 'a self) -> tokio::sync::RwLockReadGuard<'a, $t> {
+            self.$name.read().await
         } 
-        pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
-            self.$name.write().expect(stringify!("AppState::", $name_mut, "() RwLock poisoned"))
+        pub async fn $name_mut<'a>(& 'a self) -> tokio::sync::RwLockWriteGuard<'a, $t> {
+            self.$name.write().await
         } 
     };
 }
 
 impl AppState {
-    pub fn ws_broadcast(&self, message: ws::protocol::Message) {
-        self.clients().iter().for_each(|(_, c)| c.do_send(message.clone()));
+    pub async fn ws_broadcast(&self, message: ws::protocol::Message) {
+        self.clients().await.iter().for_each(|(_, c)| c.do_send(message.clone()));
     }
 
     pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
@@ -64,13 +64,13 @@ impl AppState {
             ws::protocol::Action::LobbyRemoved,
             lobby,
             Some(pid),
-        ));
+        )).await;
         Ok(())
     }
 
     pub async fn clear_game(&self, game: &g::Game) -> lib::Result<()> {
         let game_server = {
-            let mut games = self.games_mut();
+            let mut games = self.games_mut().await;
             let g = games.get(&game.id).unwrap().clone();
             games.remove(&game.id);
             g
@@ -82,19 +82,19 @@ impl AppState {
         Ok(())
     }
 
-    pub fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {
-        self.clients_mut().insert(pid.clone(), client);
+    pub async fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {
+        self.clients_mut().await.insert(pid.clone(), client);
     }
 
-    pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
-        let mut clients = self.clients_mut();
+    pub async fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
+        let mut clients = self.clients_mut().await;
         clients.remove_entry(&pid)
             .ok_or(lib::error::InternalError::PlayerUnknown.into())
             .map(|t| t.1)
     }
 
-    pub fn remove_client(&self, pid: &player::PlayerID) {
-        self.clients_mut().remove(pid);
+    pub async fn remove_client(&self, pid: &player::PlayerID) {
+        self.clients_mut().await.remove(pid);
     }
 
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<GameServer>> }

@@ -436,7 +436,7 @@ impl Handler<GameEndMessage> for GameServer {
     fn handle(&mut self, _msg: GameEndMessage, ctx: &mut Self::Context) -> Self::Result {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, c) in clients.iter() {
-            self.state.add_client(&pid, c.clone());
+            block_on(self.state.add_client(&pid, c.clone()));
         }
         ctx.stop();
         ctx.terminate();

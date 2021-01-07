@@ -223,7 +223,7 @@ pub async fn get_nb_players(state:web::Data<AppState>)
         nb_players: usize
     }
     Some(HttpResponse::Ok().json(PlayersCount{
-        nb_players: (*state.clients()).len()
+        nb_players: state.clients().await.len()
     }))
 }
 
@@ -253,7 +253,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     player.update(&mut tx).await?;
     tx.commit().await?;
 
-    let lobbies = state.lobbies();
+    let lobbies = state.lobbies().await;
     let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");
     lobby_server.do_send(protocol::Message::new(
         protocol::Action::PlayerUpdate,
@@ -271,7 +271,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
             protocol::Action::LobbyNameUpdated,
             LobbyName{ id: lobby.id.clone(), name: player.username.clone() },
             Some(player.id),
-        ));
+        )).await;
     }
 
     Ok(HttpResponse::NoContent().finish())
@@ -313,7 +313,7 @@ pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID,
         pub player_id: PlayerID,
     }
     
-    let games = state.games();
+    let games = state.games().await;
     let game_server = games.get(&other_player.game.clone().unwrap()).expect("Game exists in DB but not in HashMap");
     game_server.do_send(GameNotifyPlayerMessage(
         other_player.id.clone(),

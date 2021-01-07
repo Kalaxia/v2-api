@@ -68,7 +68,7 @@ pub async fn travel(
     );
     fleet.update(&mut &state.db_pool).await?;
 
-    let games = state.games();
+    let games = state.games().await;
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
 

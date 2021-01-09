@@ -88,6 +88,31 @@ impl Conquest {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn remove_fleet(&mut self, system: &System, fleet: &Fleet, db_pool: &PgPool) -> Result<bool> {
+        let mut fleets = system.retrieve_orbiting_fleets(&db_pool).await?;
+        fleets.retain(|&fid, _| fid != fleet.id);
+        // If the current fleet is the only one, the conquest is cancelled
+        if fleets.len() < 1 {
+            return self.cancel(&db_pool).await.map(|_| true);
+        }
+        self.update_time(fleets.values().collect(), &db_pool).await.map(|_| false)
+    }
+
+    pub async fn update_time(&mut self, fleets: Vec<&Fleet>, mut db_pool: &PgPool) -> Result<()> {
+        self.ended_at = get_remaining_conquest_time(fleets);
+
+        self.update(&mut db_pool).await?;
+
+        Ok(())
+    }
+
+    pub async fn cancel(&mut self, mut db_pool: &PgPool) -> Result<()> {
+        self.ended_at = Time::now();
+        self.update(&mut db_pool).await?;
+
+        Ok(())
+    }
+
     pub async fn resume(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         
@@ -96,8 +121,8 @@ impl Conquest {
         }
 
         let mut conquest = c.unwrap();
-        conquest.ended_at = get_remaining_conquest_time(fleets);
-
+        conquest.update_time(fleets, &server.state.db_pool).await?;
+        
         server.state.games().get(&server.id).unwrap().do_send(GameConquestMessage{ conquest });
 
         Ok(())

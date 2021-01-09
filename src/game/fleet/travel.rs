@@ -16,7 +16,7 @@ use crate::{
         fleet::{
             combat::{
                 battle::Battle,
-                conquest::{Conquest, ConquestData},
+                conquest::Conquest,
             },
             fleet::{Fleet, FleetID, FLEET_RANGE},
         },
@@ -117,11 +117,14 @@ pub async fn travel(
     if !fleet.can_fight() {
         return Err(InternalError::FleetEmpty)?;
     }
+    if Battle::count_current_by_system(&system.id, &state.db_pool).await? > 1 {
+        return Err(InternalError::Conflict)?;
+    }
     check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
     fleet.destination_system = Some(destination_system.id.clone());
     fleet.destination_arrival_date = Some(
         (Utc::now() + get_travel_time(
-            system.coordinates,
+            system.coordinates.clone(),
             destination_system.coordinates,
             game.game_speed.into_travel_speed()
         )).into()
@@ -130,7 +133,7 @@ pub async fn travel(
 
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
-    game.do_send(GameFleetTravelMessage{ fleet: fleet.clone() });
+    game.do_send(GameFleetTravelMessage{ system, fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))
 }

@@ -6,6 +6,7 @@ pub enum Action {
     BuildingConstructed,
     BattleStarted,
     BattleEnded,
+    ConquestCancelled,
     ConquestStarted,
     FactionPointsUpdated,
     FleetCreated,

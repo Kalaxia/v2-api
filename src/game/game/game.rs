@@ -94,6 +94,7 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
         id: id.clone(),
         state: state.clone(),
         clients: RwLock::new(clients),
+        tasks: HashMap::new(),
     };
     let game = Game{
         id: id.clone(),

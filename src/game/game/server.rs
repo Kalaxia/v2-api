@@ -5,11 +5,13 @@ use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
-use futures::executor::block_on;
+use futures::{
+    executor::block_on,
+    future::Future,
+};
 use crate::{
     lib::{
         Result,
-        time::Time,
         error::ServerError,
     },
     game::{
@@ -35,6 +37,7 @@ pub struct GameServer {
     pub id: GameID,
     pub state: web::Data<AppState>,
     pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
 impl Handler<protocol::Message> for GameServer {
@@ -54,30 +57,10 @@ impl Actor for GameServer {
             self.id.clone(),
             None,
         ));
-        ctx.run_later(Duration::new(1, 0), |this, _| {
-            let result = block_on(this.init()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_later(Duration::new(4, 0), |this, _| {
-            let result = block_on(this.begin());
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_interval(Duration::new(5, 0), move |this, _| {
-            let result = block_on(this.produce_income()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_interval(Duration::new(60, 0), move |this, _| {
-            let result = block_on(this.distribute_victory_points()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
+        self.add_task(Duration::new(1, 0), |this, _| this.init());
+        self.add_task(Duration::new(4, 0), |this, _| this.begin());
+        self.add_task(Duration::new(5, 0), move |this, _| this.produce_income());
+        self.add_task(Duration::new(60, 0), move |this, _| this.distribute_victory_points());
     }
 }
 
@@ -292,6 +275,30 @@ impl GameServer {
         let client = clients.get(&pid).unwrap().clone();
         clients.remove(&pid);
         Ok(client)
+    }
+
+    pub async fn add_task<F, A>(&mut self, task_name: String, ctx: A::Context, closure: F)
+        where F: FnOnce(&mut A, &mut A::Context) + Future + 'static,
+              A: actix::Actor,
+    {
+        self.tasks.insert(task_name, ctx.run_later(move |this, _| {
+            let result = block_on(closure).map_err(ServerError::from);
+            this.remove_task(task_name);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        }));
+    }
+
+    pub async fn cancel_task(&self, task_name: String) {
+        if let Some(handle) = self.tasks.get(&task_name) {
+            
+            self.remove_task(task_name);
+        }
+    }
+
+    pub async fn remove_task(&self, task_name: String) {
+        self.tasks.remove(&task_name);
     }
 
     pub fn is_empty(&self) -> bool {

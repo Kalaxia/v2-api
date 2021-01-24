@@ -57,10 +57,14 @@ impl Actor for GameServer {
             self.id.clone(),
             None,
         ));
-        self.add_task(Duration::new(1, 0), |this, _| this.init());
-        self.add_task(Duration::new(4, 0), |this, _| this.begin());
-        self.add_task(Duration::new(5, 0), move |this, _| this.produce_income());
-        self.add_task(Duration::new(60, 0), move |this, _| this.distribute_victory_points());
+        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
+        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
+        self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
+            block_on(this.produce_income())
+        });
+        self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
+            block_on(this.distribute_victory_points())
+        });
     }
 }
 
@@ -203,7 +207,7 @@ impl GameServer {
         let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
         let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
         let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
-            .into_iter()    
+            .into_iter()
             .map(|gf| (gf.faction.clone(), gf))
             .collect::<HashMap<FactionID, GameFaction>>();
         let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
@@ -217,7 +221,7 @@ impl GameServer {
                     .unwrap()
                     .faction
                     .unwrap()
-            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE; 
+            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE;
         }
 
         let mut victorious_faction: Option<GameFaction> = None;
@@ -277,27 +281,35 @@ impl GameServer {
         Ok(client)
     }
 
-    pub async fn add_task<F, A>(&mut self, task_name: String, ctx: A::Context, closure: F)
-        where F: FnOnce(&mut A, &mut A::Context) + Future + 'static,
-              A: actix::Actor,
+    pub async fn add_task<F>(
+        &mut self,
+        ctx: &mut <Self as Actor>::Context,
+        task_name: String,
+        duration: Duration,
+        closure: F
+    )
+        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
     {
-        self.tasks.insert(task_name, ctx.run_later(move |this, _| {
-            let result = block_on(closure).map_err(ServerError::from);
-            this.remove_task(task_name);
-            if result.is_err() {
-                println!("{:?}", result.err());
+        self.tasks.insert(task_name.clone(), ctx.run_later(
+            duration,
+            move |this, ctx| {
+                let result = closure(this, ctx).map_err(ServerError::from);
+                this.remove_task(task_name);
+                if result.is_err() {
+                    println!("{:?}", result.err());
+                }
             }
-        }));
+        ));
     }
 
-    pub async fn cancel_task(&self, task_name: String) {
+    pub async fn cancel_task(&mut self, task_name: String) {
         if let Some(handle) = self.tasks.get(&task_name) {
             
             self.remove_task(task_name);
         }
     }
 
-    pub async fn remove_task(&self, task_name: String) {
+    pub async fn remove_task(&mut self, task_name: String) {
         self.tasks.remove(&task_name);
     }
 

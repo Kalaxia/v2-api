@@ -244,7 +244,7 @@ impl System {
         let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
 
         for s in squadrons.into_iter() {
-            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
+            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone());
         }
         Ok(fleets)
     }
@@ -256,14 +256,28 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
     let mut probability: f64 = 0.5;
     let mut nb_victory_systems: u32 = 0;
 
-    Ok((graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
+    let mut system_list = graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
         let (system, prob) = generate_system(&gid, x, y, probability);
         probability = prob;
         if system.kind == SystemKind::VictorySystem {
-            nb_victory_systems = nb_victory_systems + 1;
+            nb_victory_systems += 1;
         }
         system
-    }).collect(), nb_victory_systems))
+    }).collect::<Vec<System>>();
+    if nb_victory_systems == 0 {
+        // We ensure that there is at least on victory system
+        system_list.push(System{
+            id: SystemID(Uuid::new_v4()),
+            game: gid,
+            player: None,
+            kind: SystemKind::VictorySystem,
+            coordinates: Coordinates{x: 0_f64, y: 0_f64 },
+            unreachable: false
+        });
+        nb_victory_systems += 1;
+    }
+    
+    Ok((system_list, nb_victory_systems))
 }
 
 fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {

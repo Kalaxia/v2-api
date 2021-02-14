@@ -7,7 +7,6 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::{
     executor::block_on,
-    future::Future,
 };
 use crate::{
     lib::{
@@ -57,14 +56,15 @@ impl Actor for GameServer {
             self.id.clone(),
             None,
         ));
-        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
-        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
-        self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
+        
+        block_on(self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init())));
+        block_on(self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin())));
+        block_on(self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
             block_on(this.produce_income())
-        });
-        self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
+        }));
+        block_on(self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
             block_on(this.distribute_victory_points())
-        });
+        }));
     }
 }
 
@@ -215,7 +215,7 @@ impl GameServer {
             .map(|p| (p.id.clone(), p))
             .collect::<HashMap<PlayerID, Player>>();
 
-        for system in victory_systems {
+        for system in victory_systems.iter() {
             factions.get_mut(
                 &players.get_mut(&system.player.unwrap())
                     .unwrap()
@@ -224,12 +224,12 @@ impl GameServer {
             ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE;
         }
 
-        let mut victorious_faction: Option<GameFaction> = None;
+        let mut victorious_faction: Option<&GameFaction> = None;
         let mut tx = self.state.db_pool.begin().await?;
-        for (_, f) in factions.clone() {
-            GameFaction::update(&f, &mut tx).await?;
+        for f in factions.values() {
+            GameFaction::update(f, &mut tx).await?;
             if f.victory_points >= game.victory_points {
-                victorious_faction = Some(f.clone());
+                victorious_faction = Some(f);
             }
         }
         tx.commit().await?;
@@ -241,7 +241,7 @@ impl GameServer {
         ));
 
         if let Some(f) = victorious_faction {
-            self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
+            self.process_victory(f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
         }
 
         Ok(())
@@ -294,7 +294,7 @@ impl GameServer {
             duration,
             move |this, ctx| {
                 let result = closure(this, ctx).map_err(ServerError::from);
-                this.remove_task(task_name);
+                block_on(this.remove_task(task_name));
                 if result.is_err() {
                     println!("{:?}", result.err());
                 }
@@ -305,7 +305,7 @@ impl GameServer {
     pub async fn cancel_task(&mut self, task_name: String) {
         if let Some(handle) = self.tasks.get(&task_name) {
             
-            self.remove_task(task_name);
+            self.remove_task(task_name).await;
         }
     }
 

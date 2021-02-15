@@ -1,9 +1,12 @@
+#![allow(clippy::clone_on_copy)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::module_inception)]
+
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::env;
-use env_logger;
 #[cfg(feature="ssl-secure")]
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use sqlx::PgPool;
@@ -44,10 +47,10 @@ macro_rules! res_access {
     { $name:ident , $name_mut:ident : $t:ty } => {
         pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
             self.$name.read().expect(stringify!("AppState::", $name, "() RwLock poisoned"))
-        } 
+        }
         pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
             self.$name.write().expect(stringify!("AppState::", $name_mut, "() RwLock poisoned"))
-        } 
+        }
     };
 }
 
@@ -86,6 +89,7 @@ impl AppState {
         self.clients_mut().insert(pid.clone(), client);
     }
 
+    #[allow(clippy::or_fun_call)]
     pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
         let mut clients = self.clients_mut();
         clients.remove_entry(&pid)

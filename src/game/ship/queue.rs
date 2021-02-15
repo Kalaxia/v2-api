@@ -141,7 +141,7 @@ impl ShipQueue {
         let mut tx = server.state.db_pool.begin().await?;
 
         if let Some(assigned_fleet) = self.assigned_fleet.clone() {
-            let fleet_data: Vec<&str> = assigned_fleet.split(":").collect();
+            let fleet_data: Vec<&str> = assigned_fleet.split(':').collect();
             let fleet_id = FleetID(Uuid::parse_str(fleet_data[0]).map_err(ServerError::from)?);
             let formation: FleetFormation = fleet_data[1].parse()?;
             FleetSquadron::assign_existing(
@@ -184,7 +184,7 @@ impl ShipQueue {
     ) -> Result<Option<ShipQueue>> {
         let has_shipyard = Building::count_by_kind_and_system(BuildingKind::Shipyard, sid, &db_pool).await? > 0;
         if !has_shipyard {
-            return Err(InternalError::Conflict)?;
+            return Err(InternalError::Conflict.into());
         }
 
         let ship_model = category.to_data();
@@ -237,7 +237,7 @@ pub async fn add_ship_queue(
     let mut player = p?;
 
     if system.player.clone() != Some(player.id.clone()) {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
     let ship_queue = ShipQueue::schedule(
         &mut player,
@@ -268,7 +268,7 @@ pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(GameID
     let player = p?;
 
     if system.player.clone() != Some(player.id.clone()) {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
     Ok(HttpResponse::Ok().json(ShipQueue::find_by_system(system.id, &state.db_pool).await?))
 }

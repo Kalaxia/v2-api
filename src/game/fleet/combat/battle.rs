@@ -22,7 +22,7 @@ use crate::{
     ws::protocol,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
+use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::PgQueryAs, Executor, Transaction, Postgres, types::Json};
 use rand::prelude::*;
 use uuid::Uuid;
 use std::time::Duration;
@@ -87,7 +87,7 @@ impl Battle {
 
     pub async fn count_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
         sqlx::query_as("SELECT COUNT(*) FROM fleet__combat__battles WHERE system_id = $1 AND ended_at IS NULL")
-            .bind(Uuid::from(sid.clone()))
+            .bind(Uuid::from(*sid))
             .fetch_one(db_pool).await
             .map(|count: (i64,)| count.0 as i16)
             .map_err(ServerError::from)
@@ -98,14 +98,14 @@ impl Battle {
         E: Executor<Database = Postgres> {
         let mut players: HashSet<PlayerID> = HashSet::new();
 
-        for (_, fleets) in self.fleets.iter() {
-            for (_, fleet) in fleets {
-                if !players.insert(fleet.player.clone()) {
+        for fleets in self.fleets.values() {
+            for fleet in fleets.values() {
+                if !players.insert(fleet.player) {
                     continue;
                 }
                 let report = Report{
-                    player: fleet.player.clone(),
-                    battle: self.id.clone(),
+                    player: fleet.player,
+                    battle: self.id,
                 };
                 report.insert(exec).await?;
             }
@@ -118,14 +118,14 @@ impl Battle {
         let mut rng = thread_rng();
 
         for (fid, fleets) in self.fleets.iter() {
-            for (_, fleet) in fleets {
+            for fleet in fleets.values() {
                 for squadron in fleet.squadrons.iter() {
                     if squadron.quantity > 0 {
                         let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
 
                         squadrons.entry(initiative)
                             .or_default()
-                            .push((fid.clone(), squadron.clone()));
+                            .push((*fid, squadron.clone()));
                     }
                 }
             }
@@ -137,19 +137,19 @@ impl Battle {
         self.fleets
             .iter()
             .flat_map(|t| t.1)
-            .map(|t| t.0.clone())
+            .map(|t| *t.0)
             .collect()
     }
 
     fn process_victor(&self) -> Result<FactionID> {
         for (fid, fleets) in self.fleets.iter() {
-            for (_, fleet) in fleets {
+            for fleet in fleets.values() {
                 if fleet.squadrons.iter().any(|s| s.quantity > 0) {
-                    return Ok(fid.clone());
+                    return Ok(*fid);
                 }
             }
         }
-        Err(InternalError::NotFound)?
+        Err(InternalError::NotFound.into())
     }
 
     pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: &FactionID, server: &GameServer) -> Result<()> {
@@ -225,7 +225,7 @@ impl Report {
 }
 
 fn get_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
-    fleets.iter().map(|(_, f)| f.player.clone()).collect()
+    fleets.iter().map(|(_, f)| f.player).collect()
 }
 
 async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {

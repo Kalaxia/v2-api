@@ -121,7 +121,7 @@ impl Squadron {
             &db_pool
         ).await?;
         if let Some(sq) = squadron.clone() {
-            quantity = quantity + sq.quantity as i32;
+            quantity += sq.quantity as i32;
         }
         Squadron::assign(squadron, system, category, quantity, &mut db_pool).await
     }
@@ -139,7 +139,7 @@ pub async fn get_system_squadrons(state: web::Data<AppState>, info: web::Path<(G
     let player = p?;
 
     if system.player.clone() != Some(player.id.clone()) {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
     Ok(HttpResponse::Ok().json(Squadron::find_by_system(system.id, &state.db_pool).await?))
 }

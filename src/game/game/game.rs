@@ -125,7 +125,7 @@ pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Pa
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.game != Some(game.id) {
-        Err(InternalError::NotInLobby)?
+        return Err(InternalError::NotInLobby.into())
     }
     player.reset(&state.db_pool).await?;
 

@@ -182,16 +182,16 @@ impl GameServer {
         }
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, income) in players_income {
-            players.get_mut(&pid.unwrap()).map(|p| {
+            if let Some(p) = players.get_mut(&pid.unwrap()) {
                 p.wallet += income;
-                clients.get(&pid.unwrap()).map(|c| {
+                if let Some(c) = clients.get(&pid.unwrap()){
                     c.do_send(protocol::Message::new(
                         protocol::Action::PlayerIncome,
                         PlayerIncome{ income },
                         None,
                     ));
-                });
-            });
+                }
+            }
         }
         let mut tx = self.state.db_pool.begin().await?;
         for (_, p) in players {

@@ -2,6 +2,7 @@ use crate::game::player::PlayerID;
 
 /// Tokens representing the type of WS message sent to notify a player.
 #[derive(serde::Serialize, Clone)]
+#[non_exhaustive]
 pub enum Action {
     BuildingConstructed,
     BattleStarted,

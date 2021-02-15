@@ -80,12 +80,11 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
     // make each squadron fight
     for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
         // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
-        attack(&mut battle, fid, &squadron, number)
-        .map(|act| {
+        if let Some(act) = attack(&mut battle, fid, &squadron, number) {
             round
                 .get_or_insert_with(new_round)
                 .squadron_actions.push(act);
-        });
+        }
     }
 
     round

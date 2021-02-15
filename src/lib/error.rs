@@ -5,7 +5,7 @@ use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
 use sqlx_core::{Error as SqlxError};
 use serde::Serialize;
-use uuid::{Error as UuidError}; 
+use uuid::{Error as UuidError};
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -14,6 +14,7 @@ use uuid::{Error as UuidError};
 /// server, as it will be updated to handle more error cases as we add more libraries or more
 /// crate-specific errors.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 #[serde(tag = "type")]
 pub enum ServerError {
     ActixWebError(
@@ -96,6 +97,7 @@ impl Display for ServerError {
 impl std::error::Error for ServerError {}
 
 impl ResponseError for ServerError {
+    #[allow(unreachable_patterns)]
     fn status_code(&self) -> StatusCode {
 
         use InternalError::*;
@@ -129,6 +131,7 @@ impl ResponseError for ServerError {
 
 /// This enum represent all kinds of errors this specific server can encounter.
 #[derive(Debug, Serialize)]
+#[non_exhaustive]
 pub enum InternalError {
     /// A player tried to perform a restricted operation
     AccessDenied,

@@ -6,7 +6,7 @@ use crate::{lib::error::{ServerError, InternalError}, game::player::PlayerID};
 use futures::future::{ready, Ready};
 use std::default::Default;
 
-const JWT_SECRET: & 'static [u8] = b"secret";
+const JWT_SECRET: &[u8] = b"secret";
 
 /// This structure represent an HTTP authentication token.
 /// Every route with a `Claim` in its parameters will only allow authentified requests.
@@ -20,6 +20,7 @@ impl FromRequest for Claims {
     type Future = Ready<Result<Self, ServerError>>;
     type Config = ();
 
+    #[allow(clippy::or_fun_call)]
     fn from_request(req: &HttpRequest, _: &mut Payload) -> <Self as FromRequest>::Future {
         ready(
             req

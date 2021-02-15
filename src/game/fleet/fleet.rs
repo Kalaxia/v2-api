@@ -52,7 +52,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
         Ok(Fleet {
             id: row.try_get("id").map(FleetID)?,
             system: row.try_get("system_id").map(SystemID)?,
-            destination_system: row.try_get("destination_id").ok().map(|sid| SystemID(sid)),
+            destination_system: row.try_get("destination_id").ok().map(SystemID),
             destination_arrival_date: row.try_get("destination_arrival_date")?,
             player: row.try_get("player_id").map(PlayerID)?,
             squadrons: vec![],
@@ -129,7 +129,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     let system = System::find(info.1, &state.db_pool).await?;
     
     if system.player != Some(claims.pid) {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
     let fleet = Fleet{
         id: FleetID(Uuid::new_v4()),
@@ -172,13 +172,13 @@ pub async fn donate(
     let player = p?;
 
     if fleet.player != player.id || system.player.is_none() || fleet.system != system.id {
-        return Err(InternalError::Conflict)?;
+        return Err(InternalError::Conflict.into());
     }
 
     let other_player = Player::find(system.player.unwrap(), &state.db_pool).await?;
 
     if other_player.faction != player.faction || other_player.id == player.id {
-        return Err(InternalError::Conflict)?;
+        return Err(InternalError::Conflict.into());
     }
 
     fleet.player = other_player.id;

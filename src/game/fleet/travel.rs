@@ -110,13 +110,13 @@ pub async fn travel(
     let player = p?;
 
     if fleet.player != player.id.clone() {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
     if fleet.destination_system != None {
-        return Err(InternalError::FleetAlreadyTravelling)?;
+        return Err(InternalError::FleetAlreadyTravelling.into());
     }
     if !fleet.can_fight() {
-        return Err(InternalError::FleetEmpty)?;
+        return Err(InternalError::FleetEmpty.into());
     }
     if Battle::count_current_by_system(&system.id, &state.db_pool).await? > 1 {
         return Err(InternalError::Conflict)?;

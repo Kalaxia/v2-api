@@ -140,7 +140,7 @@ impl Building {
         Building{
             id: BuildingID(Uuid::new_v4()),
             system: sid,
-            kind: kind,
+            kind,
             status: BuildingStatus::Constructing,
             created_at: now.clone(),
             built_at: data.into_construction_time(now, game_speed),
@@ -234,12 +234,12 @@ pub async fn create_building(
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if system.player != Some(player.id) {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
 
     let buildings = Building::find_by_system(system.id.clone(), &state.db_pool).await?;
-    if buildings.len() > 0 {
-        return Err(InternalError::Conflict)?;
+    if ! buildings.is_empty() {
+        return Err(InternalError::Conflict.into());
     }
 
     let building_data = data.kind.to_data();

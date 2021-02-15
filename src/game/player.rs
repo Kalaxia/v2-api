@@ -65,7 +65,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Player {
 impl Player {
     pub fn spend(&mut self, amount: usize) -> Result<()> {
         if amount > self.wallet {
-            return Err(InternalError::NotEnoughMoney)?;
+            return Err(InternalError::NotEnoughMoney.into());
         }
         self.wallet -= amount;
         Ok(())
@@ -241,10 +241,10 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     let lobby = Lobby::find(player.lobby.unwrap(), &state.db_pool).await?;
 
-    if json_data.username.len() > 0
+    if ! json_data.username.is_empty()
     && json_data.username != player.username
     && Player::check_username_exists(player.id.clone(), lobby.id.clone(), json_data.username.clone(), &state.db_pool).await? {
-        return Err(InternalError::PlayerUsernameAlreadyTaken)?;
+        return Err(InternalError::PlayerUsernameAlreadyTaken.into());
     }
     player.username = json_data.username.clone();
     player.faction = json_data.faction_id;
@@ -292,11 +292,11 @@ pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID,
     let mut other_player = Player::find(info.2, &state.db_pool).await?;
 
     if current_player.faction != other_player.faction {
-        return Err(InternalError::Conflict)?;
+        return Err(InternalError::Conflict.into());
     }
 
     if current_player.wallet < data.amount {
-        return Err(InternalError::Conflict)?;
+        return Err(InternalError::Conflict.into());
     }
 
     other_player.wallet += data.amount;

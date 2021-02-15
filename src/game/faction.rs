@@ -56,6 +56,7 @@ impl sqlx::Type<sqlx::Postgres> for FactionColor {
     }
 }
 
+#[allow(clippy::identity_op)] // for lisibility
 impl From<i32> for FactionColor {
     fn from(n:i32) -> Self {
         Self(

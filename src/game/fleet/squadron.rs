@@ -149,7 +149,7 @@ impl FleetSquadron {
         } else if fleet_squadron.is_some() && quantity > 0 {
             let mut fs = fleet_squadron.unwrap();
             if fs.category != category {
-                return Err(InternalError::Conflict)?;
+                return Err(InternalError::Conflict.into());
             }
             fs.quantity = quantity;
             fs.update(&mut *exec).await?;
@@ -166,7 +166,7 @@ impl FleetSquadron {
             &db_pool
         ).await?;
         if let Some(fs) = fleet_squadron.clone() {
-            quantity = quantity + fs.quantity;
+            quantity += fs.quantity;
         }
         FleetSquadron::assign(fleet_squadron, fid, formation, category, quantity, &mut db_pool).await
     }
@@ -203,7 +203,7 @@ pub async fn assign_ships(
     let fleet_squadron = fs?;
 
     if system.player != Some(claims.pid.clone()) || fleet.player != claims.pid {
-        return Err(InternalError::AccessDenied)?;
+        return Err(InternalError::AccessDenied.into());
     }
 
     let available_quantity = get_available_ship_quantity(&squadron, &fleet_squadron);

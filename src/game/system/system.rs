@@ -296,7 +296,7 @@ fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64, rng: &mut imp
         id: SystemID(Uuid::new_v4()),
         game: gid.clone(),
         player: None,
-        kind: kind,
+        kind,
         coordinates: Coordinates{ x, y },
         unreachable: false
     }, prob)
@@ -311,7 +311,9 @@ fn generate_system_kind(x: f64, y: f64, probability: f64, rng: &mut impl rand::R
     (SystemKind::BaseSystem, probability + 0.1)
 }
 
-pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
+#[allow(clippy::ptr_arg)]
+#[allow(clippy::needless_range_loop)]
+pub async fn assign_systems(players: &Vec<Player>, galaxy:&mut Vec<System>) -> Result<()> {
 
     const GRID_SIZE : usize = 16;
     const EXCLUSION : usize = 1;
@@ -334,7 +336,7 @@ pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Re
     let cell_w = (max.x - min.x) / GRID_SIZE as f64;
     let cell_h = (max.y - min.y) / GRID_SIZE as f64;
 
-    for player in players {
+    for player in players.iter() {
         // Take the zone assigned to the player's faction
         // Assigning a new zone when encountering a new faction
         let (cell_min, cell_max) = faction_cell
@@ -370,10 +372,11 @@ pub async fn assign_systems(players:&Vec<Player>, galaxy:&mut Vec<System>) -> Re
     Ok(())
 }
 
+#[allow(clippy::needless_lifetimes)] // false positive
 async fn find_place<'a>(
     Coordinates { x:xmin, y:ymin }: &Coordinates,
     Coordinates { x:xmax, y:ymax }: &Coordinates,
-    galaxy:& 'a mut Vec<System>
+    galaxy: & 'a mut Vec<System>
 )
     -> Option<& 'a mut System>
 {
@@ -395,6 +398,7 @@ async fn find_place<'a>(
     idx.map(move |id| &mut galaxy[id])
 }
 
+#[allow(clippy::eval_order_dependence)] // false positive ?
 #[get("/")]
 pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>
@@ -407,6 +411,7 @@ pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>,
     ))
 }
 
+#[allow(clippy::ptr_arg)]
 pub async fn init_player_systems(systems: &Vec<System>, game_speed: GameOptionSpeed, db_pool: &PgPool) -> Result<()> {
     let building_data = BuildingKind::Shipyard.to_data();
     let mut tx = db_pool.begin().await?;

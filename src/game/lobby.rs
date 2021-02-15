@@ -37,14 +37,14 @@ pub struct LobbyServer {
 pub struct Lobby {
     pub id: LobbyID,
     pub owner: PlayerID,
-    pub game_speed: GameOptionSpeed, 
-    pub map_size: GameOptionMapSize 
+    pub game_speed: GameOptionSpeed,
+    pub map_size: GameOptionMapSize
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LobbyOptionsPatch {
-    pub map_size: Option<GameOptionMapSize>, 
-    pub game_speed: Option<GameOptionSpeed>, 
+    pub map_size: Option<GameOptionMapSize>,
+    pub game_speed: Option<GameOptionSpeed>,
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
@@ -99,7 +99,7 @@ impl LobbyServer {
 impl Lobby {
     pub async fn update_owner(&mut self, db_pool: &PgPool) -> Result<()> {
         let players = Player::find_by_lobby(self.id, db_pool).await?;
-        self.owner = players.iter().next().unwrap().id.clone();
+        self.owner = players.first().unwrap().id.clone();
         let mut tx = db_pool.begin().await?;
         self.update(&mut tx).await?;
         tx.commit().await?;
@@ -137,7 +137,7 @@ impl Lobby {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64> 
+    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres>{
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(self.id))
@@ -234,6 +234,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(datas))
 }
 
+#[allow(clippy::eval_order_dependence)]
 #[get("/{id}")]
 pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
@@ -264,7 +265,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
     // If already in lobby, then error
     if player.lobby.is_some() {
-        Err(InternalError::AlreadyInLobby)?
+        return Err(InternalError::AlreadyInLobby.into())
     }
 
     // Else, create a lobby
@@ -309,7 +310,7 @@ pub async fn update_lobby_options(
     let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
-        Err(InternalError::AccessDenied)?
+        return Err(InternalError::AccessDenied.into())
     }
     println!("{:?}", data);
     lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
@@ -341,7 +342,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
-        Err(InternalError::AccessDenied)?
+        return Err(InternalError::AccessDenied.into())
     }
     let clients = Arc::try_unwrap({
         let lobbies = state.lobbies();
@@ -372,7 +373,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.lobby != Some(lobby.id) {
-        Err(InternalError::NotInLobby)?
+        return Err(InternalError::NotInLobby.into())
     }
     player.reset(&state.db_pool).await?;
 
@@ -400,7 +401,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     if player.lobby.is_some() {
-        Err(InternalError::AlreadyInLobby)?
+        return Err(InternalError::AlreadyInLobby.into())
     }
     player.lobby = Some(lobby.id);
     let mut tx = state.db_pool.begin().await?;

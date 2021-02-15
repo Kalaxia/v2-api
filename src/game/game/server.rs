@@ -57,14 +57,14 @@ impl Actor for GameServer {
             None,
         ));
         
-        block_on(self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init())));
-        block_on(self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin())));
-        block_on(self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
+        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
+        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
+        self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
             block_on(this.produce_income())
-        }));
-        block_on(self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
+        });
+        self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
             block_on(this.distribute_victory_points())
-        }));
+        });
     }
 }
 
@@ -281,7 +281,7 @@ impl GameServer {
         Ok(client)
     }
 
-    pub async fn add_task<F>(
+    pub fn add_task<F>(
         &mut self,
         ctx: &mut <Self as Actor>::Context,
         task_name: String,
@@ -294,7 +294,7 @@ impl GameServer {
             duration,
             move |this, ctx| {
                 let result = closure(this, ctx).map_err(ServerError::from);
-                block_on(this.remove_task(task_name));
+                this.remove_task(task_name);
                 if result.is_err() {
                     println!("{:?}", result.err());
                 }
@@ -302,14 +302,13 @@ impl GameServer {
         ));
     }
 
-    pub async fn cancel_task(&mut self, task_name: String) {
-        if let Some(handle) = self.tasks.get(&task_name) {
-            
-            self.remove_task(task_name).await;
+    pub fn cancel_task(&mut self, task_name: String) {
+        if self.tasks.get(&task_name).is_some(  ) {
+            self.remove_task(task_name);
         }
     }
 
-    pub async fn remove_task(&mut self, task_name: String) {
+    pub fn remove_task(&mut self, task_name: String) {
         self.tasks.remove(&task_name);
     }
 

@@ -275,8 +275,8 @@ async fn init_battle(system: &System, fleets: HashMap<FleetID, Fleet>, db_pool: 
 async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<()> {
     let mut tx = db_pool.begin().await?;
 
-    for (_, fleets) in battle.fleets.iter() {
-        for (_, fleet) in fleets.iter() {
+    for fleets in battle.fleets.values() {
+        for fleet in fleets.values() {
             update_fleet(fleet.clone(), &mut tx).await?;
         }
     }

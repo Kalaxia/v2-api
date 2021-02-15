@@ -100,7 +100,7 @@ impl GameServer {
         let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
         assign_systems(&players, &mut systems).await?;
         init_player_wallets(&mut players, &self.state.db_pool).await?;
-        System::insert_all(systems.clone(), &self.state.db_pool).await?;
+        System::insert_all(systems.iter(), &self.state.db_pool).await?;
         init_player_systems(&systems, game.game_speed, &self.state.db_pool).await?;
         
         self.ws_broadcast(protocol::Message::new(
@@ -130,7 +130,7 @@ impl GameServer {
 
     pub fn ws_broadcast(&self, message: protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for (_, c) in clients.iter() {
+        for c in clients.values() {
             c.do_send(message.clone());
         }
     }
@@ -168,9 +168,12 @@ impl GameServer {
         System::find_possessed(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .for_each(|system| {
-                let mut income = 10;
+                let income;
                 if mines.contains(&system.id) {
                     income = 40;
+                }
+                else {
+                    income = 10;
                 }
                 *players_income.entry(system.player).or_insert(0) += income
             }); // update the player's income
@@ -194,7 +197,7 @@ impl GameServer {
             }
         }
         let mut tx = self.state.db_pool.begin().await?;
-        for (_, p) in players {
+        for p in players.values() {
             p.update(&mut tx).await?;
         }
         tx.commit().await?;

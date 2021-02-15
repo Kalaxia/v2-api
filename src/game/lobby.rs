@@ -64,7 +64,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
 impl LobbyServer {
     pub fn ws_broadcast(&self, message: protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on lobby clients");
-        for (_, c) in clients.iter() {
+        for c in clients.values() {
             c.do_send(message.clone());
         }
     }

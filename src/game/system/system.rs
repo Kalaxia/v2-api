@@ -220,12 +220,12 @@ impl System {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn insert_all<I>(systems:I, pool:&PgPool) -> Result<u64>
-        where I : IntoIterator<Item=System>
+    pub async fn insert_all<'a, I>(systems_iter: I, pool:&PgPool) -> Result<u64>
+        where I : Iterator<Item=&'a System>
     {
         let mut tx = pool.begin().await?;
         let mut nb_inserted = 0;
-        for sys in systems {
+        for sys in systems_iter {
             nb_inserted += 1;
             sys.insert(&mut tx).await?;
         }

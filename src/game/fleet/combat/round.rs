@@ -94,11 +94,10 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
     let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker)?;
     let (remaining_ships, loss) = fire(&attacker, &target);
 
-    for fs in battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons.iter_mut() {
-        if fs.id == target.id {
-            fs.quantity = remaining_ships;
-        }
-    }
+    battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons
+        .iter_mut()
+        .filter(|fs| fs.id == target.id )
+        .for_each(|fs| fs.quantity = remaining_ships);
 
     Some(SquadronAction{
         battle: battle.id,

@@ -3,7 +3,6 @@ use actix::prelude::*;
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use std::collections::{HashMap};
 use crate::{
     lib::{
@@ -94,7 +93,7 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
     let game_server = GameServer{
         id: id.clone(),
         state: state.clone(),
-        clients: RwLock::new(clients),
+        clients,
     };
     let game = Game{
         id: id.clone(),

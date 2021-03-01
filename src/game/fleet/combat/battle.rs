@@ -192,7 +192,7 @@ pub async fn engage(system: &System, server: &GameServer, arriver: Fleet, orbiti
     let mut battle = init_battle(system, fleets, &db_pool).await?;
     let mut round_number: u16 = 1;
 
-    server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None)).await;
+    server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
 
     thread::sleep(Duration::new(3, 0));
 

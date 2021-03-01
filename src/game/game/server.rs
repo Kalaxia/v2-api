@@ -2,8 +2,7 @@ use actix_web::web;
 use actix::prelude::*;
 use serde::{Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
 use futures::executor::block_on;
@@ -33,14 +32,14 @@ use crate::{
 pub struct GameServer {
     pub id: GameID,
     pub state: web::Data<AppState>,
-    pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub clients: HashMap<PlayerID, actix::Addr<ClientSession>>,
 }
 
 impl Handler<protocol::Message> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        block_on(self.ws_broadcast(msg));
+        self.ws_broadcast(msg);
     }
 }
 
@@ -48,11 +47,11 @@ impl Actor for GameServer {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        block_on(self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(protocol::Message::new(
             protocol::Action::LobbyLaunched,
             self.id.clone(),
             None,
-        )));
+        ));
         ctx.run_later(Duration::new(1, 0), |this, _| {
             let result = block_on(this.init()).map_err(ServerError::from);
             if result.is_err() {
@@ -102,7 +101,7 @@ impl GameServer {
             protocol::Action::SystemsCreated,
             (),
             None
-        )).await;
+        ));
 
         Ok(())
     }
@@ -119,26 +118,23 @@ impl GameServer {
                 victory_points: game.victory_points
             },
             None
-        )).await;
+        ));
         Ok(())
     }
 
-    pub async fn ws_broadcast(&self, message: protocol::Message) {
-        let clients = self.clients.read().await;
-        for (_, c) in clients.iter() {
+    pub fn ws_broadcast(&self, message: protocol::Message) {
+        for (_, c) in self.clients.iter() {
             c.do_send(message.clone());
         }
     }
 
     pub async fn ws_send(&self, pid: &PlayerID, message: protocol::Message) {
-        let clients = self.clients.read().await;
-        clients.get(pid).unwrap().do_send(message);
+        self.clients.get(pid).unwrap().do_send(message);
     }
 
     async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
         let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
-        let clients = self.clients.read().await;
-        for (pid, c) in clients.iter() {
+        for (pid, c) in self.clients.iter() {
             if ids.contains(&pid) {
                 c.do_send(message.clone());
             }
@@ -175,11 +171,10 @@ impl GameServer {
         struct PlayerIncome {
             income: usize
         }
-        let clients = self.clients.read().await;
         for (pid, income) in players_income {
             players.get_mut(&pid.unwrap()).map(|p| {
                 p.wallet += income;
-                clients.get(&pid.unwrap()).map(|c| {
+                self.clients.get(&pid.unwrap()).map(|c| {
                     c.do_send(protocol::Message::new(
                         protocol::Action::PlayerIncome,
                         PlayerIncome{ income },
@@ -211,7 +206,7 @@ impl GameServer {
 
         let result = destination_system.resolve_fleet_arrival(&self, fleet, &player, system_owner, &self.state.db_pool).await?;
         
-        self.ws_broadcast(result.into()).await;
+        self.ws_broadcast(result.into());
         
         Ok(())
     }
@@ -270,7 +265,7 @@ impl GameServer {
             protocol::Action::FactionPointsUpdated,
             factions.clone(),
             None
-        )).await;
+        ));
 
         if let Some(f) = victorious_faction {
             self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
@@ -292,31 +287,28 @@ impl GameServer {
                 scores: factions,
             },
             None,
-        )).await;
+        ));
 
         let game = Game::find(self.id, &self.state.db_pool).await?;
         self.state.clear_game(&game).await?;
         Ok(())
     }
 
-    pub async fn remove_player(&self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
+    pub async fn remove_player(&mut self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
         self.ws_broadcast(protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid),
-        )).await;
-        let mut clients = self.clients.write().await;
-        let client = clients.get(&pid).unwrap().clone();
-        clients.remove(&pid);
+        ));
+        let client = self.clients.get(&pid).unwrap().clone();
+        self.clients.remove(&pid);
         Ok(client)
     }
 
-    pub async fn is_empty(&self) -> bool {
-        let clients = self.clients.read().await;
-        
-        clients.len() == 0
+    pub fn is_empty(&self) -> bool {
+        self.clients.len() == 0
     }
 }
 
@@ -359,7 +351,7 @@ impl Handler<GameRemovePlayerMessage> for GameServer {
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
-        Arc::new((client, block_on(self.is_empty())))
+        Arc::new((client, self.is_empty()))
     }
 }
 
@@ -367,8 +359,7 @@ impl Handler<GameNotifyPlayerMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameNotifyPlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let clients = block_on(self.clients.read());
-        let client = clients.get(&msg.0).unwrap().clone();
+        let client = self.clients.get(&msg.0).unwrap().clone();
         client.do_send(msg.1);
     }
 }
@@ -388,11 +379,11 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
-        block_on(self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(protocol::Message::new(
             protocol::Action::FleetSailed,
             msg.fleet.clone(),
             Some(msg.fleet.player),
-        )));
+        ));
         let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
         ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
             let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
@@ -435,8 +426,7 @@ impl Handler<GameEndMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, _msg: GameEndMessage, ctx: &mut Self::Context) -> Self::Result {
-        let clients = block_on(self.clients.read());
-        for (pid, c) in clients.iter() {
+        for (pid, c) in self.clients.iter() {
             block_on(self.state.add_client(&pid, c.clone()));
         }
         ctx.stop();

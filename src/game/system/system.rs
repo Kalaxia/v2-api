@@ -83,6 +83,10 @@ impl Coordinates {
     pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
         ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
     }
+    
+    pub fn new(x: f64, y: f64) -> Self {
+        Self{x, y}
+    }
 }
 
 impl From<SystemID> for Uuid {
@@ -244,7 +248,7 @@ impl System {
         let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
 
         for s in squadrons.into_iter() {
-            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
+            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone());
         }
         Ok(fleets)
     }
@@ -255,19 +259,39 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
 
     let mut probability: f64 = 0.5;
     let mut nb_victory_systems: u32 = 0;
-
-    Ok((graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
-        let (system, prob) = generate_system(&gid, x, y, probability);
+    let mut rng = rand::thread_rng();
+    
+    let mut system_list = graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
+        let (system, prob) = generate_system(&gid, x, y, probability, &mut rng);
         probability = prob;
         if system.kind == SystemKind::VictorySystem {
-            nb_victory_systems = nb_victory_systems + 1;
+            nb_victory_systems += 1;
         }
         system
-    }).collect(), nb_victory_systems))
+    }).collect::<Vec<System>>();
+    if nb_victory_systems == 0 {
+        // We ensure that there is at least on victory system
+        let coord_random = Coordinates::polar(
+            rng.gen_range(0_f64, 0.2_f64.powi(2)).sqrt(),
+            rng.gen_range( - std::f64::consts::PI, std::f64::consts::PI)
+        );
+        system_list.iter_mut()
+            .map(|el| {
+                let d = el.coordinates.as_distance_to(&coord_random);
+                (el, d)
+            })
+            .min_by(|(_, distance1), (_, distance2)| distance1.partial_cmp(distance2).expect("NaN comparaison"))
+            .expect("List of system Empty")
+            .0
+            .kind = SystemKind::VictorySystem;
+        nb_victory_systems += 1;
+    }
+    
+    Ok((system_list, nb_victory_systems))
 }
 
-fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {
-    let (kind, prob) = generate_system_kind(x, y, probability);
+fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64, rng: &mut impl rand::Rng) -> (System, f64) {
+    let (kind, prob) = generate_system_kind(x, y, probability, rng);
     (System{
         id: SystemID(Uuid::new_v4()),
         game: gid.clone(),
@@ -278,8 +302,7 @@ fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f
     }, prob)
 }
 
-fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
-    let mut rng = rand::thread_rng();
+fn generate_system_kind(x: f64, y: f64, probability: f64, rng: &mut impl rand::Rng) -> (SystemKind, f64) {
     let rand: f64 = rng.gen_range((x.abs() + y.abs()) / 2.0, x.abs() + y.abs() + 1.0);
 
     if rand <= probability {

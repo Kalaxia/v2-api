@@ -41,7 +41,7 @@ pub struct GameServer {
     pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
-pub trait GameServerTask {
+pub trait GameServerTask{
     fn get_task_id(&self) -> String;
 
     fn get_task_end_time(&self) -> Time;
@@ -50,6 +50,8 @@ pub trait GameServerTask {
         let datetime: DateTime<Utc> = self.get_task_end_time().into();
         datetime.signed_duration_since(Utc::now()).to_std().unwrap()
     }
+    
+    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 impl Handler<protocol::Message> for GameServer {
@@ -381,10 +383,22 @@ pub struct GameShipQueueMessage{
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameScheduleTaskMessage {
-    pub data: Box<dyn GameServerTask + Send>,
+pub struct GameScheduleTaskMessage<F, Fut>
+    where Fut: std::future::Future<Output=Result<()>> + 'static,
+    F: 'static + FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut
+{
+    pub data: Box<dyn GameServerTask + Send + Sync>,
     // pub callback: Box<dyn FnOnce(&GameServer, dyn GameServerTask) -> dyn std::future::Future<Output=Result<()>>>
-    pub callback: fn(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Pin<Box<dyn std::future::Future<Output=Result<()>>>>
+    pub callback: F,
+}
+
+impl<F, Fut> GameScheduleTaskMessage<F, Fut>
+    where Fut: std::future::Future<Output=Result<()>>,
+    F: FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut
+{
+    pub fn new(data: Box<dyn GameServerTask + Send + Sync>, callback: F) -> Self {
+        Self {data, callback}
+    }
 }
 
 #[derive(actix::Message)]
@@ -488,15 +502,19 @@ impl Handler<GameShipQueueMessage> for GameServer {
     }
 }
 
-impl Handler<GameScheduleTaskMessage> for GameServer {
+impl<F, Fut> Handler<GameScheduleTaskMessage<F, Fut>> for GameServer
+    where Fut: std::future::Future<Output=Result<()>> + 'static,
+    F: FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut + 'static
+{
     type Result = ();
 
-    fn handle(&mut self, msg: GameScheduleTaskMessage, mut ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GameScheduleTaskMessage<F, Fut>, mut ctx: &mut Self::Context) -> Self::Result {
+        let closure = msg.callback;
         self.add_task(
             &mut ctx,
             msg.data.get_task_id(),
             msg.data.get_task_duration(),
-            move |this, _| block_on((msg.callback)(&this, Box::new(&msg.data)))
+            move |this, _| block_on(closure(&this, msg.data))
         )
     }
 }

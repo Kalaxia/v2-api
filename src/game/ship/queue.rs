@@ -34,6 +34,7 @@ use crate::{
     ws::protocol,
     AppState,
 };
+use futures::join;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipQueueID(pub Uuid);
@@ -82,6 +83,10 @@ impl GameServerTask for ShipQueue {
 
     fn get_task_end_time(&self) -> Time {
         self.finished_at
+    }
+    
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -133,36 +138,36 @@ impl ShipQueue {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn produce(ship_queue: &Self, server: &GameServer) -> Result<()> {
-        let player = Player::find_system_owner(ship_queue.system.clone(), &server.state.db_pool).await?;
+    pub async fn produce(&self, server: &GameServer) -> Result<()> {
+        let player = Player::find_system_owner(self.system.clone(), &server.state.db_pool).await?;
         let mut tx = server.state.db_pool.begin().await?;
 
-        if let Some(assigned_fleet) = ship_queue.assigned_fleet.clone() {
+        if let Some(assigned_fleet) = self.assigned_fleet.clone() {
             let fleet_data: Vec<&str> = assigned_fleet.split(":").collect();
             let fleet_id = FleetID(Uuid::parse_str(fleet_data[0]).map_err(ServerError::from)?);
             let formation: FleetFormation = fleet_data[1].parse()?;
             FleetSquadron::assign_existing(
                 fleet_id,
                 formation,
-                ship_queue.category,
-                ship_queue.quantity,
-                &server.state.db_pool  
+                self.category,
+                self.quantity,
+                &server.state.db_pool
             ).await?;
         } else {
             Squadron::assign_existing(
-                ship_queue.system,
-                ship_queue.category,
-                ship_queue.quantity as i32,
+                self.system,
+                self.category,
+                self.quantity as i32,
                 &server.state.db_pool
             ).await?;
         }
-        ship_queue.remove(&mut tx).await?;
+        self.remove(&mut tx).await?;
 
         tx.commit().await?;
 
         server.ws_send(&player.id, protocol::Message::new(
             protocol::Action::ShipQueueFinished,
-            ship_queue.clone(),
+            self.clone(),
             None,
         ));
 
@@ -218,13 +223,13 @@ impl ShipQueue {
 
 
 #[post("/")]
-pub async fn add_ship_queue(
+pub async fn add_ship_queue<'a>(
     state: web::Data<AppState>,
     info: web::Path<(GameID, SystemID)>,
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let (g, s, p) = futures::join!(
+    let (g, s, p) = join!(
         Game::find(info.0, &state.db_pool),
         System::find(info.1, &state.db_pool),
         Player::find(claims.pid, &state.db_pool),
@@ -247,10 +252,13 @@ pub async fn add_ship_queue(
         &state.db_pool
     ).await?.unwrap();
 
-    state.games().get(&info.0).unwrap().do_send(GameScheduleTaskMessage{
-        data: Box::new(ship_queue.clone()),
-        callback: |gs: &GameServer, sq: Box<&ShipQueue>| Box::pin(ShipQueue::produce(sq, *gs))
-    });
+    state.games().get(&info.0).unwrap().do_send(GameScheduleTaskMessage::new(
+        Box::new(ship_queue.clone()),
+        |gs: &GameServer, sq| {
+            let dc_ref = sq.as_any().downcast_ref::<ShipQueue>().unwrap(); // TODO error handeling instead of unwrap.
+            dc_ref.produce(gs)
+        }
+    ));
 
     Ok(HttpResponse::Created().json(ship_queue))
 }

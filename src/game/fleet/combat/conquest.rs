@@ -15,13 +15,21 @@ use crate::{
     ws::protocol,
 };
 use chrono::{Duration, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
 use sqlx_core::row::Row;
 
+#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
+pub struct ConquestID(pub Uuid);
+
+impl From<ConquestID> for Uuid {
+    fn from(cid: ConquestID) -> Self { cid.0 }
+}
+
 #[derive(Serialize, Clone)]
 pub struct Conquest {
+    pub id: ConquestID,
     pub player: PlayerID,
     pub system: SystemID,
     pub fleet: Option<FleetID>,
@@ -39,6 +47,7 @@ pub struct ConquestData {
 impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Conquest {
+            id: row.try_get("id").map(ConquestID)?,
             player: row.try_get("player_id").map(PlayerID)?,
             system: row.try_get("system_id").map(SystemID)?,
             fleet: None,
@@ -52,7 +61,8 @@ impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
 impl Conquest {
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO fleet__combat__conquests (player_id, system_id, started_at, ended_at) VALUES($1, $2, $3, $4)")
+        sqlx::query("INSERT INTO fleet__combat__conquests (id, player_id, system_id, started_at, ended_at) VALUES($1, $2, $3, $4, $5)")
+            .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.player))
             .bind(Uuid::from(self.system))
             .bind(self.started_at)
@@ -62,8 +72,8 @@ impl Conquest {
 
     pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__combat__conquests SET started_at = $2, ended_at = $3 WHERE system_id = $1 AND ended_at IS NULL")
-            .bind(Uuid::from(self.system))
+        sqlx::query("UPDATE fleet__combat__conquests SET started_at = $2, ended_at = $3 WHERE id = $1")
+            .bind(Uuid::from(self.id))
             .bind(self.started_at)
             .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
@@ -71,8 +81,8 @@ impl Conquest {
 
     pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("DELETE FROM fleet__combat__conquests WHERE system_id = $1 AND ended_at IS NULL")
-            .bind(Uuid::from(self.system))
+        sqlx::query("DELETE FROM fleet__combat__conquests WHERE id = $1")
+            .bind(Uuid::from(self.id))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
@@ -130,6 +140,7 @@ impl Conquest {
 
     pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
         let conquest = Conquest{
+            id: ConquestID(Uuid::new_v4()),
             player: fleets[0].player.clone(),
             system: system.id,
             fleet: Some(fleet.id),

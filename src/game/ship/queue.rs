@@ -20,7 +20,7 @@ use crate::{
         game::{
             game::{Game, GameID},
             option::GameOptionSpeed,
-            server::{GameServer, GameShipQueueMessage},
+            server::{GameServer, GameServerTask, GameScheduleTaskMessage},
         },
         ship::{
             model::ShipModelCategory,
@@ -75,6 +75,16 @@ impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
     }
 }
 
+impl GameServerTask for ShipQueue {
+    fn get_task_id(&self) -> String {
+        self.id.0.to_string()
+    }
+
+    fn get_task_end_time(&self) -> Time {
+        self.finished_at
+    }
+}
+
 impl ShipQueue {
     pub async fn find(sqid: ShipQueueID, db_pool: &PgPool) -> Result<Self> {
         sqlx::query_as("SELECT * FROM system__ship_queues WHERE id = $1")
@@ -123,8 +133,7 @@ impl ShipQueue {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn produce(server: &GameServer, sqid: ShipQueueID) -> Result<()> {
-        let ship_queue = ShipQueue::find(sqid, &server.state.db_pool).await?;
+    pub async fn produce(ship_queue: &Self, server: &GameServer) -> Result<()> {
         let player = Player::find_system_owner(ship_queue.system.clone(), &server.state.db_pool).await?;
         let mut tx = server.state.db_pool.begin().await?;
 
@@ -137,7 +146,7 @@ impl ShipQueue {
                 formation,
                 ship_queue.category,
                 ship_queue.quantity,
-                &server.state.db_pool
+                &server.state.db_pool  
             ).await?;
         } else {
             Squadron::assign_existing(
@@ -238,7 +247,10 @@ pub async fn add_ship_queue(
         &state.db_pool
     ).await?.unwrap();
 
-    state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: ship_queue.clone() });
+    state.games().get(&info.0).unwrap().do_send(GameScheduleTaskMessage{
+        data: Box::new(ship_queue.clone()),
+        callback: |gs: &GameServer, sq: Box<&ShipQueue>| Box::pin(ShipQueue::produce(sq, *gs))
+    });
 
     Ok(HttpResponse::Created().json(ship_queue))
 }

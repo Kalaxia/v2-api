@@ -1,6 +1,7 @@
 use actix_web::web;
 use actix::prelude::*;
 use serde::{Serialize};
+use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
@@ -12,6 +13,7 @@ use crate::{
     lib::{
         Result,
         error::ServerError,
+        time::Time
     },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
@@ -39,6 +41,17 @@ pub struct GameServer {
     pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
+pub trait GameServerTask {
+    fn get_task_id(&self) -> String;
+
+    fn get_task_end_time(&self) -> Time;
+
+    fn get_task_duration(&self) -> Duration {
+        let datetime: DateTime<Utc> = self.get_task_end_time().into();
+        datetime.signed_duration_since(Utc::now()).to_std().unwrap()
+    }
+}
+
 impl Handler<protocol::Message> for GameServer {
     type Result = ();
 
@@ -59,10 +72,10 @@ impl Actor for GameServer {
         
         self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
         self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
-        self.add_task(ctx, "income".to_string(), Duration::new(5, 0), move |this, _| {
+        self.run_interval(ctx, Duration::new(5, 0), move |this, _| {
             block_on(this.produce_income())
         });
-        self.add_task(ctx, "Victory points".to_string(), Duration::new(60, 0), move |this, _| {
+        self.run_interval(ctx, Duration::new(60, 0), move |this, _| {
             block_on(this.distribute_victory_points())
         });
     }
@@ -281,6 +294,22 @@ impl GameServer {
         Ok(client)
     }
 
+    pub fn run_interval<F>(
+        &mut self,
+        ctx: &mut <Self as Actor>::Context,
+        duration: Duration,
+        closure: F
+    )
+        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
+    {
+        ctx.run_interval(duration, move |this, ctx| {
+            let result = closure(this, ctx).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
+    }
+
     pub fn add_task<F>(
         &mut self,
         ctx: &mut <Self as Actor>::Context,
@@ -348,6 +377,14 @@ pub struct GameConquestMessage{
 #[rtype(result="()")]
 pub struct GameShipQueueMessage{
     pub ship_queue: ShipQueue
+}
+
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameScheduleTaskMessage {
+    pub data: Box<dyn GameServerTask + Send>,
+    // pub callback: Box<dyn FnOnce(&GameServer, dyn GameServerTask) -> dyn std::future::Future<Output=Result<()>>>
+    pub callback: fn(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Pin<Box<dyn std::future::Future<Output=Result<()>>>>
 }
 
 #[derive(actix::Message)]
@@ -426,28 +463,41 @@ impl Handler<GameFleetTravelMessage> for GameServer {
 impl Handler<GameConquestMessage> for GameServer {
     type Result = ();
 
-    fn handle(&mut self, msg: GameConquestMessage, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GameConquestMessage, mut ctx: &mut Self::Context) -> Self::Result {
         let datetime: DateTime<Utc> = msg.conquest.ended_at.into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(msg.conquest.end(&this));
-            if res.is_err() {
-                println!("Conquest failed : {:?}", res.err());
-            }
-        });
+        self.add_task(
+            &mut ctx,
+            msg.conquest.id.0.to_string(),
+            datetime.signed_duration_since(Utc::now()).to_std().unwrap(),
+            move |this, _| block_on(msg.conquest.end(&this))
+        );
     }
 }
 
 impl Handler<GameShipQueueMessage> for GameServer {
     type Result = ();
 
-    fn handle(&mut self, msg: GameShipQueueMessage, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GameShipQueueMessage, mut ctx: &mut Self::Context) -> Self::Result {
         let datetime: DateTime<Utc> = msg.ship_queue.finished_at.into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(ShipQueue::produce(&this, msg.ship_queue.id.clone()));
-            if res.is_err() {
-                println!("Ship queue production failed : {:?}", res.err());
-            }
-        });
+        self.add_task(
+            &mut ctx,
+            msg.ship_queue.get_task_id(),
+            datetime.signed_duration_since(Utc::now()).to_std().unwrap(),
+            move |this, _| block_on(msg.ship_queue.produce(&this))
+        )
+    }
+}
+
+impl Handler<GameScheduleTaskMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, msg: GameScheduleTaskMessage, mut ctx: &mut Self::Context) -> Self::Result {
+        self.add_task(
+            &mut ctx,
+            msg.data.get_task_id(),
+            msg.data.get_task_duration(),
+            move |this, _| block_on((msg.callback)(&this, Box::new(&msg.data)))
+        )
     }
 }
 

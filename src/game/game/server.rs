@@ -1,7 +1,6 @@
 use actix_web::web;
 use actix::prelude::*;
 use serde::{Serialize};
-use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
@@ -50,8 +49,6 @@ pub trait GameServerTask{
         let datetime: DateTime<Utc> = self.get_task_end_time().into();
         datetime.signed_duration_since(Utc::now()).to_std().unwrap()
     }
-    
-    fn as_any(&self) -> &dyn std::any::Any;
 }
 
 impl Handler<protocol::Message> for GameServer {
@@ -302,10 +299,10 @@ impl GameServer {
         duration: Duration,
         closure: F
     )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
+        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static + Clone,
     {
         ctx.run_interval(duration, move |this, ctx| {
-            let result = closure(this, ctx).map_err(ServerError::from);
+            let result = closure.clone()(this, ctx).map_err(ServerError::from);
             if result.is_err() {
                 println!("{:?}", result.err());
             }
@@ -319,7 +316,7 @@ impl GameServer {
         duration: Duration,
         closure: F
     )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
+        where F: 'static + FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()>,
     {
         self.tasks.insert(task_name.clone(), ctx.run_later(
             duration,
@@ -383,20 +380,20 @@ pub struct GameShipQueueMessage{
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameScheduleTaskMessage<F, Fut>
-    where Fut: std::future::Future<Output=Result<()>> + 'static,
-    F: 'static + FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut
+pub struct GameScheduleTaskMessage<F, Data>
+    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
+    Data: Send + Sync + GameServerTask,
 {
-    pub data: Box<dyn GameServerTask + Send + Sync>,
+    pub data: Data,
     // pub callback: Box<dyn FnOnce(&GameServer, dyn GameServerTask) -> dyn std::future::Future<Output=Result<()>>>
     pub callback: F,
 }
 
-impl<F, Fut> GameScheduleTaskMessage<F, Fut>
-    where Fut: std::future::Future<Output=Result<()>>,
-    F: FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut
+impl<F, Data> GameScheduleTaskMessage<F, Data>
+    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
+    Data: 'static + Send + Sync + GameServerTask,
 {
-    pub fn new(data: Box<dyn GameServerTask + Send + Sync>, callback: F) -> Self {
+    pub fn new(data: Data, callback: F) -> Self {
         Self {data, callback}
     }
 }
@@ -502,19 +499,18 @@ impl Handler<GameShipQueueMessage> for GameServer {
     }
 }
 
-impl<F, Fut> Handler<GameScheduleTaskMessage<F, Fut>> for GameServer
-    where Fut: std::future::Future<Output=Result<()>> + 'static,
-    F: FnOnce(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Fut + 'static
+impl<F, Data> Handler<GameScheduleTaskMessage<F, Data>> for GameServer
+    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
+    Data: 'static + Send + Sync + GameServerTask,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: GameScheduleTaskMessage<F, Fut>, mut ctx: &mut Self::Context) -> Self::Result {
-        let closure = msg.callback;
+    fn handle(&mut self, msg: GameScheduleTaskMessage<F, Data>, mut ctx: &mut Self::Context) -> Self::Result {
         self.add_task(
             &mut ctx,
             msg.data.get_task_id(),
             msg.data.get_task_duration(),
-            move |this, _| block_on(closure(&this, msg.data))
+            move |this, _| (msg.callback)(&this, msg.data)
         )
     }
 }

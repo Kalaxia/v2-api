@@ -35,6 +35,7 @@ use crate::{
     AppState,
 };
 use futures::join;
+use futures::executor::block_on;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipQueueID(pub Uuid);
@@ -83,10 +84,6 @@ impl GameServerTask for ShipQueue {
 
     fn get_task_end_time(&self) -> Time {
         self.finished_at
-    }
-    
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
     }
 }
 
@@ -253,11 +250,8 @@ pub async fn add_ship_queue<'a>(
     ).await?.unwrap();
 
     state.games().get(&info.0).unwrap().do_send(GameScheduleTaskMessage::new(
-        Box::new(ship_queue.clone()),
-        |gs: &GameServer, sq| {
-            let dc_ref = sq.as_any().downcast_ref::<ShipQueue>().unwrap(); // TODO error handeling instead of unwrap.
-            dc_ref.produce(gs)
-        }
+        ship_queue.clone(),
+        |gs: &GameServer, sq| block_on(sq.produce(gs))
     ));
 
     Ok(HttpResponse::Created().json(ship_queue))

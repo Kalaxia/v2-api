@@ -66,7 +66,7 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
     let mut round = None;
 
     // new fleets arrival
-    for (_, fleet) in new_fleets.iter() {
+    for fleet in new_fleets.values() {
         round
             .get_or_insert_with(new_round)
             .fleet_actions.push(FleetAction{

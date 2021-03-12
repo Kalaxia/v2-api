@@ -51,7 +51,7 @@ impl Squadron {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn find_by_system_and_category(sid: SystemID, category: &ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
+    pub async fn find_by_system_and_category(sid: SystemID, category: ShipModelCategory, db_pool: &PgPool) -> Result<Option<Self>> {
         sqlx::query_as("SELECT * FROM map__system_squadrons WHERE system_id = $1 AND category = $2")
             .bind(Uuid::from(sid))
             .bind(category)
@@ -117,7 +117,7 @@ impl Squadron {
     pub async fn assign_existing(system: SystemID, category: ShipModelCategory, mut quantity: i32, mut db_pool: &PgPool) -> Result<()> {
         let squadron = Squadron::find_by_system_and_category(
             system,
-            &category,
+            category,
             &db_pool
         ).await?;
         if let Some(sq) = squadron.clone() {

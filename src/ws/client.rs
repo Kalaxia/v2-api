@@ -38,7 +38,7 @@ pub async fn entrypoint(
 
     state.add_client(&player.id, addr);
 
-    state.ws_broadcast(protocol::Message::new(
+    state.ws_broadcast(&protocol::Message::new(
         protocol::Action::PlayerConnected,
         player.clone(),
         Some(player.id.clone()),
@@ -89,7 +89,7 @@ impl ClientSession {
                 self.state.clear_game(&game).await?;
             }
         }
-        self.state.ws_broadcast(protocol::Message::new(
+        self.state.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerDisconnected,
             player.clone(),
             Some(self.pid),
@@ -171,6 +171,7 @@ impl ClientSession {
     /// helper method that sends ping to client every second.
     ///
     /// also this method checks heartbeats from client
+    #[allow(clippy::unused_self)]
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
             // check client heartbeats

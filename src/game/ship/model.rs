@@ -32,7 +32,7 @@ pub enum ShipModelCategory {
 }
 
 impl ShipModelCategory {
-    pub fn to_data(&self) -> ShipModel {
+    pub const fn to_data(self) -> ShipModel {
         match self {
             ShipModelCategory::Fighter => ShipModel{
                 category: ShipModelCategory::Fighter,

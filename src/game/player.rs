@@ -267,7 +267,7 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
             id: LobbyID,
             name: String
         }
-        state.ws_broadcast(protocol::Message::new(
+        state.ws_broadcast(&protocol::Message::new(
             protocol::Action::LobbyNameUpdated,
             LobbyName{ id: lobby.id.clone(), name: player.username.clone() },
             Some(player.id),

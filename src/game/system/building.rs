@@ -98,7 +98,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Building {
 }
 
 impl BuildingKind {
-    pub fn to_data(&self) -> BuildingData {
+    pub const fn to_data(self) -> BuildingData {
         match self {
             BuildingKind::Mine => BuildingData{
                 cost: 250,

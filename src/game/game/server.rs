@@ -41,7 +41,7 @@ pub struct GameServer {
 
 /// The trait of every type that can represent a task. A task is launched by message-passing to the
 /// game server with [GameScheduleTaskMessage]. When handled, this message launches a timer, and
-/// eventually perform the task by 
+/// eventually perform the task by
 ///
 /// Each timer is named by `get_task_id` to allow players to cancel its associated task before it
 /// triggers.
@@ -60,7 +60,7 @@ impl Handler<protocol::Message> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(msg);
+        self.ws_broadcast(&msg);
     }
 }
 
@@ -68,7 +68,7 @@ impl Actor for GameServer {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::LobbyLaunched,
             self.id.clone(),
             None,
@@ -103,7 +103,7 @@ impl GameServer {
         System::insert_all(systems.iter(), &self.state.db_pool).await?;
         init_player_systems(&systems, game.game_speed, &self.state.db_pool).await?;
         
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::SystemsCreated,
             (),
             None
@@ -118,7 +118,7 @@ impl GameServer {
         struct GameData{
             victory_points: i32
         }
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::GameStarted,
             GameData{
                 victory_points: game.victory_points
@@ -128,7 +128,7 @@ impl GameServer {
         Ok(())
     }
 
-    pub fn ws_broadcast(&self, message: protocol::Message) {
+    pub fn ws_broadcast(&self, message: &protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for c in clients.values() {
             c.do_send(message.clone());
@@ -168,14 +168,11 @@ impl GameServer {
         System::find_possessed(self.id.clone(), &self.state.db_pool).await?
             .into_iter()
             .for_each(|system| {
-                let income;
+                let mut income = 10;
                 if mines.contains(&system.id) {
                     income = 40;
                 }
-                else {
-                    income = 10;
-                }
-                *players_income.entry(system.player).or_insert(0) += income
+                *players_income.entry(system.player).or_insert(0) += income;
             }); // update the player's income
 
         // Notify the player for wallet update
@@ -235,7 +232,7 @@ impl GameServer {
         }
         tx.commit().await?;
 
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::FactionPointsUpdated,
             factions.clone(),
             None
@@ -254,7 +251,7 @@ impl GameServer {
             victorious_faction: FactionID,
             scores: Vec<GameFaction>
         }
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::Victory,
             VictoryData{
                 victorious_faction: victorious_faction.faction,
@@ -271,7 +268,7 @@ impl GameServer {
     pub async fn remove_player(&self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid),
@@ -459,7 +456,7 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::FleetSailed,
             msg.fleet.clone(),
             Some(msg.fleet.player),
@@ -469,7 +466,7 @@ impl Handler<GameFleetTravelMessage> for GameServer {
         if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
             let is_cancelled = block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap();
             if is_cancelled {
-                self.ws_broadcast(protocol::Message::new(
+                self.ws_broadcast(&protocol::Message::new(
                     protocol::Action::ConquestCancelled,
                     conquest,
                     None

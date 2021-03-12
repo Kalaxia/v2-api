@@ -19,9 +19,9 @@ impl FleetFormation {
     /// When attacking, a squadron will have an advantage or disadvantage because of
     /// their relative position with its opponent. This function represent this "position factor"
     /// matrix.
-    pub fn attack_coeff(self, target: Self) -> f64 {
+    pub const fn attack_coeff(self, target: Self) -> f64 {
         const COEFFS : [[f64; 4]; 4] =
-            [ // Left  Center Right  Rear  
+            [ // Left  Center Right  Rear
                 [1.15,  1.25,  1.0, 1.10], // Left
                 [ 1.0,  0.85,  1.0, 1.10], // Center
                 [ 1.0,  1.25, 1.15, 1.10], // Right
@@ -35,7 +35,7 @@ impl FleetFormation {
     /// When attacking, a squadron will try to find opponents in its attack order. If no opponent
     /// exist in the first attacked position, it searches for opponents in the next position and so
     /// on...
-    pub fn attack_order(self) -> & 'static [Self] {
+    pub const fn attack_order(self) -> & 'static [Self] {
 
         // I added every possible formation to each attack order to prevent battles to get stuck
         // (opponents still facing but no one can attack)

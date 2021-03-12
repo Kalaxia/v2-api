@@ -2,6 +2,25 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::module_inception)]
 
+#![warn(clippy::imprecise_flops)]
+#![warn(clippy::suboptimal_flops)]
+#![warn(clippy::clone_on_ref_ptr)]
+#![warn(clippy::cognitive_complexity)]
+#![warn(clippy::float_cmp_const)]
+#![warn(clippy::implicit_hasher)]
+#![warn(clippy::implicit_saturating_sub)]
+#![warn(clippy::large_types_passed_by_value)]
+#![warn(clippy::manual_ok_or)]
+#![warn(clippy::missing_const_for_fn)]
+#![warn(clippy::needless_pass_by_value)]
+#![warn(clippy::non_ascii_literal)]
+#![warn(clippy::trivially_copy_pass_by_ref)]
+#![warn(clippy::type_repetition_in_bounds)]
+#![warn(clippy::unreadable_literal)]
+#![warn(clippy::unseparated_literal_suffix)]
+#![warn(clippy::unused_self)]
+
+
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
 use std::collections::HashMap;
@@ -55,7 +74,7 @@ macro_rules! res_access {
 }
 
 impl AppState {
-    pub fn ws_broadcast(&self, message: ws::protocol::Message) {
+    pub fn ws_broadcast(&self, message: &ws::protocol::Message) {
         self.clients().iter().for_each(|(_, c)| c.do_send(message.clone()));
     }
 
@@ -63,7 +82,7 @@ impl AppState {
         let mut tx = self.db_pool.begin().await?;
         lobby.remove(&mut tx).await?;
         tx.commit().await?;
-        self.ws_broadcast(ws::protocol::Message::new(
+        self.ws_broadcast(&ws::protocol::Message::new(
             ws::protocol::Action::LobbyRemoved,
             lobby,
             Some(pid),

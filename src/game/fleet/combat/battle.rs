@@ -117,9 +117,9 @@ impl Battle {
         let mut squadrons: HashMap<i32, Vec<(FactionID, FleetSquadron)>> = HashMap::new();
         let mut rng = thread_rng();
 
-        for (fid, fleets) in self.fleets.iter() {
+        for (fid, fleets) in &self.fleets {
             for fleet in fleets.values() {
-                for squadron in fleet.squadrons.iter() {
+                for squadron in &fleet.squadrons {
                     if squadron.quantity > 0 {
                         let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
 
@@ -142,7 +142,7 @@ impl Battle {
     }
 
     fn process_victor(&self) -> Result<FactionID> {
-        for (fid, fleets) in self.fleets.iter() {
+        for (fid, fleets) in &self.fleets {
             for fleet in fleets.values() {
                 if fleet.squadrons.iter().any(|s| s.quantity > 0) {
                     return Ok(*fid);
@@ -157,7 +157,7 @@ impl Battle {
         
         let battle = Battle::engage(&system, &server, &fleet, &fleets).await?;
 
-        server.ws_broadcast(protocol::Message::new(
+        server.ws_broadcast(&protocol::Message::new(
             protocol::Action::BattleEnded,
             battle.clone(),
             None
@@ -184,7 +184,7 @@ impl Battle {
     
         let mut battle = init_battle(system, fleets, &server.state.db_pool).await?;
     
-        server.ws_broadcast(protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
+        server.ws_broadcast(&protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
     
         thread::sleep(Duration::new(3, 0));
     
@@ -287,7 +287,7 @@ async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<()> {
 }
 
 async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<()> {
-    for s in fleet.squadrons.iter() {
+    for s in &fleet.squadrons {
         if s.quantity > 0 {
             s.update(tx).await?;
         } else {

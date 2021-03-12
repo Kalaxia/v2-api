@@ -177,7 +177,7 @@ impl Conquest {
         if let Some(mut conquest) = c {
             conquest.update_time(fleets, &server.state.db_pool).await?;
         
-            server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));    
+            server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
             return Ok(());
         }
@@ -197,7 +197,7 @@ impl Conquest {
         };
         conquest.insert(&mut &server.state.db_pool).await?;
 
-        server.ws_broadcast(protocol::Message::new(
+        server.ws_broadcast(&protocol::Message::new(
             protocol::Action::ConquestStarted,
             conquest.clone(),
             None
@@ -215,7 +215,7 @@ impl Conquest {
         system.player = Some(self.player.clone());
         system.update(&mut &server.state.db_pool).await?;
 
-        server.ws_broadcast(protocol::Message::new(
+        server.ws_broadcast(&protocol::Message::new(
             protocol::Action::SystemConquerred,
             ConquestData{ system, fleets },
             None

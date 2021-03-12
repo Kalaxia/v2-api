@@ -49,6 +49,7 @@ impl Responder for Claims {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub fn create_jwt(claims: Claims) -> Result<String, JwtError> {
     encode(
         &Header::default(),

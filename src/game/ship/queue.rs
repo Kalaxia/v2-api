@@ -107,7 +107,7 @@ impl ShipQueue {
             .fetch_one(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn count_assigned_ships(assigned_fleet: &str, category: &ShipModelCategory, db_pool: &PgPool) -> Result<u32> {
+    pub async fn count_assigned_ships(assigned_fleet: &str, category: ShipModelCategory, db_pool: &PgPool) -> Result<u32> {
         let count: (i64,) = sqlx::query_as("SELECT COALESCE(SUM(quantity), 0) FROM system__ship_queues WHERE assigned_fleet = $1 AND category = $2")
             .bind(assigned_fleet)
             .bind(category)

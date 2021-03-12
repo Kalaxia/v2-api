@@ -20,6 +20,7 @@ use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
+use futures::join;
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct LobbyID(pub Uuid);
@@ -62,7 +63,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
 }
 
 impl LobbyServer {
-    pub fn ws_broadcast(&self, message: protocol::Message) {
+    pub fn ws_broadcast(&self, message: &protocol::Message) {
         let clients = self.clients.read().expect("Poisoned lock on lobby clients");
         for c in clients.values() {
             c.do_send(message.clone());
@@ -87,7 +88,7 @@ impl LobbyServer {
         // Remove the player from the lobby's list and notify all remaining players
         clients.remove(&pid);
         drop(clients);
-        self.ws_broadcast(protocol::Message::new(
+        self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid.clone()),
@@ -197,7 +198,7 @@ impl Handler<protocol::Message> for LobbyServer {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(msg);
+        self.ws_broadcast(&msg);
     }
 }
 
@@ -212,8 +213,8 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
     let lobbies = Lobby::find_all(&state.db_pool).await?;
     let mut futures : Vec<(&Lobby, Option<Player>, i16)> = Vec::new();
     
-    for lobby in lobbies.iter() {
-        let (player, count) = futures::join!(
+    for lobby in &lobbies {
+        let (player, count) = join!(
             Player::find(lobby.owner, &state.db_pool),
             Player::count_by_lobby(lobby.id, &state.db_pool)
         );
@@ -265,7 +266,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
     // If already in lobby, then error
     if player.lobby.is_some() {
-        return Err(InternalError::AlreadyInLobby.into())
+        return Err(InternalError::AlreadyInLobby.into());
     }
 
     // Else, create a lobby
@@ -290,7 +291,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     player.update(&mut tx).await?;
     tx.commit().await?;
     // Notify players for lobby creation
-    state.ws_broadcast(protocol::Message::new(
+    state.ws_broadcast(&protocol::Message::new(
         protocol::Action::LobbyCreated,
         new_lobby.clone(),
         Some(player.id),
@@ -310,7 +311,7 @@ pub async fn update_lobby_options(
     let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
-        return Err(InternalError::AccessDenied.into())
+        return Err(InternalError::AccessDenied.into());
     }
     println!("{:?}", data);
     lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
@@ -342,7 +343,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
-        return Err(InternalError::AccessDenied.into())
+        return Err(InternalError::AccessDenied.into());
     }
     let clients = Arc::try_unwrap({
         let lobbies = state.lobbies();
@@ -352,7 +353,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     let (game_id, game) = create_game(&lobby, state.clone(), clients).await?;
     games.insert(game_id, game);
 
-    state.ws_broadcast(protocol::Message::new(
+    state.ws_broadcast(&protocol::Message::new(
         protocol::Action::LobbyLaunched,
         lobby.clone(),
         None,
@@ -373,7 +374,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.lobby != Some(lobby.id) {
-        return Err(InternalError::NotInLobby.into())
+        return Err(InternalError::NotInLobby.into());
     }
     player.reset(&state.db_pool).await?;
 
@@ -401,7 +402,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     if player.lobby.is_some() {
-        return Err(InternalError::AlreadyInLobby.into())
+        return Err(InternalError::AlreadyInLobby.into());
     }
     player.lobby = Some(lobby.id);
     let mut tx = state.db_pool.begin().await?;
@@ -419,7 +420,7 @@ pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>,
     lobby_server.do_send(LobbyAddClientMessage(claims.pid.clone(), client));
     lobby_server.do_send(message.clone());
 
-    state.ws_broadcast(message);
+    state.ws_broadcast(&message);
 
     Ok(HttpResponse::NoContent().finish())
 }

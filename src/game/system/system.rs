@@ -81,7 +81,7 @@ impl Coordinates {
     }
     
     pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
-        ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
+        (to.x - self.x).hypot(to.y - self.y)
     }
     
     pub fn new(x: f64, y: f64) -> Self {
@@ -336,7 +336,7 @@ pub async fn assign_systems(players: &Vec<Player>, galaxy:&mut Vec<System>) -> R
     let cell_w = (max.x - min.x) / GRID_SIZE as f64;
     let cell_h = (max.y - min.y) / GRID_SIZE as f64;
 
-    for player in players.iter() {
+    for player in players {
         // Take the zone assigned to the player's faction
         // Assigning a new zone when encountering a new faction
         let (cell_min, cell_max) = faction_cell
@@ -358,8 +358,11 @@ pub async fn assign_systems(players: &Vec<Player>, galaxy:&mut Vec<System>) -> R
                 }
 
                 // the (x, y) coordinates of the topleft corner of the chosen cell
-                let x = min.x + cell_x as f64 * cell_w;
-                let y = min.y + cell_y as f64 * cell_h;
+                //
+                // mul_add : compute min.x + cell_x as f64 * cell_w more efficiently,
+                // see https://doc.rust-lang.org/std/primitive.f64.html#method.mul_add
+                let x = (cell_x as f64).mul_add(cell_w, min.x);
+                let y = (cell_y as f64).mul_add(cell_h, min.y);
 
                 (Coordinates { x, y }, Coordinates { x: x + cell_w, y: y + cell_h })
             });

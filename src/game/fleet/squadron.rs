@@ -30,6 +30,7 @@ use crate::{
 use futures::executor::block_on;
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
+use futures::join;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetSquadronID(pub Uuid);
@@ -67,7 +68,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {
 }
 
 impl FleetSquadron {
-    pub fn can_fight(&self) -> bool {
+    pub const fn can_fight(&self) -> bool {
         self.quantity > 0
     }
 
@@ -90,7 +91,7 @@ impl FleetSquadron {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_fleet_and_formation(fid: FleetID, formation: &FleetFormation, db_pool: &PgPool) -> Result<Option<Self>> {
+    pub async fn find_by_fleet_and_formation(fid: FleetID, formation: FleetFormation, db_pool: &PgPool) -> Result<Option<Self>> {
         sqlx::query_as("SELECT * FROM fleet__squadrons WHERE fleet_id = $1 AND formation = $2")
             .bind(Uuid::from(fid))
             .bind(formation)
@@ -162,7 +163,7 @@ impl FleetSquadron {
     pub async fn assign_existing(fid: FleetID, formation: FleetFormation, category: ShipModelCategory, mut quantity: u16, mut db_pool: &PgPool) -> Result<()> {
         let fleet_squadron = FleetSquadron::find_by_fleet_and_formation(
             fid,
-            &formation,
+            formation,
             &db_pool
         ).await?;
         if let Some(fs) = fleet_squadron.clone() {
@@ -179,19 +180,19 @@ pub async fn assign_ships(
     json_data: web::Json<SquadronAssignmentData>,
     claims: Claims
 ) -> Result<HttpResponse> {
-    let (g, s, f, p, sq, fs) = futures::join!(
+    let (g, s, f, p, sq, fs) = join!(
         Game::find(info.0, &state.db_pool),
         System::find(info.1, &state.db_pool),
         Fleet::find(&info.2, &state.db_pool),
         Player::find(claims.pid.clone(), &state.db_pool),
         Squadron::find_by_system_and_category(
             info.1,
-            &json_data.category,
+            json_data.category,
             &state.db_pool
         ),
         FleetSquadron::find_by_fleet_and_formation(
             info.2,
-            &json_data.formation,
+            json_data.formation,
             &state.db_pool
         )
     );
@@ -216,7 +217,7 @@ pub async fn assign_ships(
         assigned_quantity = available_quantity as u16;
         remaining_quantity = 0;
         let assigned_fleet = format!("{}:{}", fleet.id, json_data.formation.to_string());
-        let producing_ships = ShipQueue::count_assigned_ships(&assigned_fleet, &json_data.category, &state.db_pool).await?;
+        let producing_ships = ShipQueue::count_assigned_ships(&assigned_fleet, json_data.category, &state.db_pool).await?;
         let needed_quantity = get_needed_quantity(required_quantity as i32, available_quantity as i32, producing_ships as i32);
 
         if needed_quantity > 0 {
@@ -264,7 +265,7 @@ pub async fn assign_ships(
     Ok(HttpResponse::NoContent().finish())
 }
 
-fn get_available_ship_quantity(squadron: &Option<Squadron>, fleet_squadron: &Option<FleetSquadron>) -> u16 {
+const fn get_available_ship_quantity(squadron: &Option<Squadron>, fleet_squadron: &Option<FleetSquadron>) -> u16 {
     let mut available_quantity: u16 = 0;
     if let Some(sg) = squadron {
         available_quantity += sg.quantity;
@@ -275,7 +276,7 @@ fn get_available_ship_quantity(squadron: &Option<Squadron>, fleet_squadron: &Opt
     available_quantity
 }
 
-fn get_needed_quantity(required_quantity: i32, available_quantity: i32, producing_ships: i32) -> u16 {
+const fn get_needed_quantity(required_quantity: i32, available_quantity: i32, producing_ships: i32) -> u16 {
     let future_quantity = available_quantity + producing_ships;
     if future_quantity <= required_quantity {
         return (required_quantity - future_quantity) as u16;

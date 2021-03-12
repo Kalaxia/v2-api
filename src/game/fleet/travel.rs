@@ -121,12 +121,12 @@ pub async fn travel(
     if Battle::count_current_by_system(&system.id, &state.db_pool).await? > 1 {
         return Err(InternalError::Conflict)?;
     }
-    check_travel_destination(system.coordinates.clone(), destination_system.coordinates.clone())?;
+    check_travel_destination(&system.coordinates, &destination_system.coordinates)?;
     fleet.destination_system = Some(destination_system.id.clone());
     fleet.destination_arrival_date = Some(
         (Utc::now() + get_travel_time(
-            system.coordinates.clone(),
-            destination_system.coordinates,
+            &system.coordinates,
+            &destination_system.coordinates,
             game.game_speed.into_travel_speed()
         )).into()
     );
@@ -163,7 +163,7 @@ pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Re
 
     let outcome = resolve_arrival_outcome(&destination_system, &server, fleet, &player, system_owner).await?;
 
-    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.ws_broadcast(message));
+    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.ws_broadcast(&message));
 
     process_arrival_outcome(&outcome, &server).await
 }
@@ -200,8 +200,9 @@ async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &GameSer
     }
 }
 
-fn check_travel_destination(origin_coords: Coordinates, dest_coords: Coordinates) -> Result<()> {
-    let distance = origin_coords.as_distance_to(&dest_coords);
+#[allow(clippy::suboptimal_flops)]
+fn check_travel_destination(origin_coords: &Coordinates, dest_coords: &Coordinates) -> Result<()> {
+    let distance = origin_coords.as_distance_to(dest_coords);
 
     if distance > FLEET_RANGE.powi(2) {
         return Err(InternalError::FleetInvalidDestination.into());
@@ -210,8 +211,8 @@ fn check_travel_destination(origin_coords: Coordinates, dest_coords: Coordinates
     Ok(())
 }
 
-fn get_travel_time(from: Coordinates, to: Coordinates, time_coeff: f64) -> Duration {
-    let distance = from.as_distance_to(&to);
+fn get_travel_time(from: &Coordinates, to: &Coordinates, time_coeff: f64) -> Duration {
+    let distance = from.as_distance_to(to);
     let ms = distance / time_coeff;
 
     Duration::seconds(ms.ceil() as i64)

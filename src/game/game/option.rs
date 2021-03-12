@@ -25,7 +25,7 @@ pub enum GameOptionMapSize {
 }
 
 impl GameOptionSpeed {
-    pub fn into_coeff(self) -> f64 {
+    pub const fn into_coeff(self) -> f64 {
         match self {
             GameOptionSpeed::Slow => 1.2,
             GameOptionSpeed::Medium => 1.0,
@@ -33,7 +33,7 @@ impl GameOptionSpeed {
         }
     }
 
-    pub fn into_travel_speed(self) -> f64 {
+    pub const fn into_travel_speed(self) -> f64 {
         match self  {
             GameOptionSpeed::Slow => 0.4,
             GameOptionSpeed::Medium => 0.55,
@@ -43,7 +43,7 @@ impl GameOptionSpeed {
 }
 
 impl GameOptionMapSize {
-    pub fn to_galaxy_builder(&self) -> GalaxyBuilder {
+    pub fn to_galaxy_builder(self) -> GalaxyBuilder {
         match self {
             GameOptionMapSize::VerySmall => GalaxyBuilder::default()
                 .min_distance(Some(1.0))

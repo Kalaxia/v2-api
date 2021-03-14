@@ -40,6 +40,12 @@ pub struct GameServer {
     pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
+/// The trait of every type that can represent a task. A task is launched by message-passing to the
+/// game server with [GameScheduleTaskMessage]. When handled, this message launches a timer, and
+/// eventually perform the task by 
+///
+/// Each timer is named by `get_task_id` to allow players to cancel its associated task before it
+/// triggers.
 pub trait GameServerTask{
     fn get_task_id(&self) -> String;
 
@@ -378,6 +384,12 @@ pub struct GameShipQueueMessage{
     pub ship_queue: ShipQueue
 }
 
+/// Because of the genericity of [GameScheduleTaskMessage] we will have plenty of them to send.
+/// This macro helps keeping the code readable:
+/// ```ignore
+/// let ship_queue = todo!();
+/// server.do_send(task!(ship_queue -> move |gs: &GameServer| block_on(ship_queue.so_something)));
+/// ```
 #[macro_export]
 macro_rules! task {
     ($data:ident -> $exp:expr) => {
@@ -388,6 +400,8 @@ macro_rules! task {
     };
 }
 
+/// A generic message type used to schedule very simple cancelable tasks (e.g. ship or building
+/// production).
 #[derive(actix::Message)]
 #[rtype(result="()")]
 pub struct GameScheduleTaskMessage

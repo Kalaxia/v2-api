@@ -378,23 +378,33 @@ pub struct GameShipQueueMessage{
     pub ship_queue: ShipQueue
 }
 
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct GameScheduleTaskMessage<F, Data>
-    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
-    Data: Send + Sync + GameServerTask,
-{
-    pub data: Data,
-    // pub callback: Box<dyn FnOnce(&GameServer, dyn GameServerTask) -> dyn std::future::Future<Output=Result<()>>>
-    pub callback: F,
+#[macro_export]
+macro_rules! task {
+    ($data:ident -> $exp:expr) => {
+        {
+            use crate::game::game::server::{GameScheduleTaskMessage, GameServerTask};
+            GameScheduleTaskMessage::new($data.get_task_id(), $data.get_task_duration(), $exp)
+        }
+    };
 }
 
-impl<F, Data> GameScheduleTaskMessage<F, Data>
-    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
-    Data: 'static + Send + Sync + GameServerTask,
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameScheduleTaskMessage
 {
-    pub fn new(data: Data, callback: F) -> Self {
-        Self {data, callback}
+    task_id: String,
+    task_duration: Duration,
+    callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
+}
+
+impl GameScheduleTaskMessage
+{
+    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Duration, callback: F) -> Self {
+        Self {
+            task_id,
+            task_duration,
+            callback : Box::new(callback),
+        }
     }
 }
 
@@ -499,18 +509,16 @@ impl Handler<GameShipQueueMessage> for GameServer {
     }
 }
 
-impl<F, Data> Handler<GameScheduleTaskMessage<F, Data>> for GameServer
-    where F: 'static + FnOnce(&GameServer, Data) -> Result<()>,
-    Data: 'static + Send + Sync + GameServerTask,
+impl Handler<GameScheduleTaskMessage> for GameServer
 {
     type Result = ();
 
-    fn handle(&mut self, msg: GameScheduleTaskMessage<F, Data>, mut ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GameScheduleTaskMessage, mut ctx: &mut Self::Context) -> Self::Result {
         self.add_task(
             &mut ctx,
-            msg.data.get_task_id(),
-            msg.data.get_task_duration(),
-            move |this, _| (msg.callback)(&this, msg.data)
+            msg.task_id.clone(),
+            msg.task_duration,
+            move |this, _| (msg.callback)(&this)
         )
     }
 }

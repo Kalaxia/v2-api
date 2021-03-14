@@ -4,6 +4,7 @@ use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::{
+    task,
     lib::{
         Result,
         auth::Claims,
@@ -20,7 +21,7 @@ use crate::{
         game::{
             game::{Game, GameID},
             option::GameOptionSpeed,
-            server::{GameServer, GameServerTask, GameScheduleTaskMessage},
+            server::{GameServer, GameServerTask},
         },
         ship::{
             model::ShipModelCategory,
@@ -220,7 +221,7 @@ impl ShipQueue {
 
 
 #[post("/")]
-pub async fn add_ship_queue<'a>(
+pub async fn add_ship_queue(
     state: web::Data<AppState>,
     info: web::Path<(GameID, SystemID)>,
     json_data: web::Json<ShipQuantityData>,
@@ -249,10 +250,8 @@ pub async fn add_ship_queue<'a>(
         &state.db_pool
     ).await?.unwrap();
 
-    state.games().get(&info.0).unwrap().do_send(GameScheduleTaskMessage::new(
-        ship_queue.clone(),
-        |gs: &GameServer, sq| block_on(sq.produce(gs))
-    ));
+    let sq = ship_queue.clone();
+    state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
 
     Ok(HttpResponse::Created().json(ship_queue))
 }

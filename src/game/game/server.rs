@@ -1,7 +1,6 @@
 use actix_web::web;
 use actix::prelude::*;
 use serde::{Serialize};
-use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
@@ -41,7 +40,13 @@ pub struct GameServer {
     pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
-pub trait GameServerTask {
+/// The trait of every type that can represent a task. A task is launched by message-passing to the
+/// game server with [GameScheduleTaskMessage]. When handled, this message launches a timer, and
+/// eventually perform the task by 
+///
+/// Each timer is named by `get_task_id` to allow players to cancel its associated task before it
+/// triggers.
+pub trait GameServerTask{
     fn get_task_id(&self) -> String;
 
     fn get_task_end_time(&self) -> Time;
@@ -300,10 +305,10 @@ impl GameServer {
         duration: Duration,
         closure: F
     )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
+        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static + Clone,
     {
         ctx.run_interval(duration, move |this, ctx| {
-            let result = closure(this, ctx).map_err(ServerError::from);
+            let result = closure.clone()(this, ctx).map_err(ServerError::from);
             if result.is_err() {
                 println!("{:?}", result.err());
             }
@@ -317,7 +322,7 @@ impl GameServer {
         duration: Duration,
         closure: F
     )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
+        where F: 'static + FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()>,
     {
         self.tasks.insert(task_name.clone(), ctx.run_later(
             duration,
@@ -379,12 +384,42 @@ pub struct GameShipQueueMessage{
     pub ship_queue: ShipQueue
 }
 
+/// Because of the genericity of [GameScheduleTaskMessage] we will have plenty of them to send.
+/// This macro helps keeping the code readable:
+/// ```ignore
+/// let ship_queue = todo!();
+/// server.do_send(task!(ship_queue -> move |gs: &GameServer| block_on(ship_queue.so_something)));
+/// ```
+#[macro_export]
+macro_rules! task {
+    ($data:ident -> $exp:expr) => {
+        {
+            use crate::game::game::server::{GameScheduleTaskMessage, GameServerTask};
+            GameScheduleTaskMessage::new($data.get_task_id(), $data.get_task_duration(), $exp)
+        }
+    };
+}
+
+/// A generic message type used to schedule very simple cancelable tasks (e.g. ship or building
+/// production).
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameScheduleTaskMessage {
-    pub data: Box<dyn GameServerTask + Send>,
-    // pub callback: Box<dyn FnOnce(&GameServer, dyn GameServerTask) -> dyn std::future::Future<Output=Result<()>>>
-    pub callback: fn(&GameServer, Box<dyn GameServerTask + Send + Sync>) -> Pin<Box<dyn std::future::Future<Output=Result<()>>>>
+pub struct GameScheduleTaskMessage
+{
+    task_id: String,
+    task_duration: Duration,
+    callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
+}
+
+impl GameScheduleTaskMessage
+{
+    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Duration, callback: F) -> Self {
+        Self {
+            task_id,
+            task_duration,
+            callback : Box::new(callback),
+        }
+    }
 }
 
 #[derive(actix::Message)]
@@ -488,15 +523,16 @@ impl Handler<GameShipQueueMessage> for GameServer {
     }
 }
 
-impl Handler<GameScheduleTaskMessage> for GameServer {
+impl Handler<GameScheduleTaskMessage> for GameServer
+{
     type Result = ();
 
     fn handle(&mut self, msg: GameScheduleTaskMessage, mut ctx: &mut Self::Context) -> Self::Result {
         self.add_task(
             &mut ctx,
-            msg.data.get_task_id(),
-            msg.data.get_task_duration(),
-            move |this, _| block_on((msg.callback)(&this, Box::new(&msg.data)))
+            msg.task_id.clone(),
+            msg.task_duration,
+            move |this, _| (msg.callback)(&this)
         )
     }
 }

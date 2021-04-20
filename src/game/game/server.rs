@@ -328,7 +328,7 @@ impl GameServer {
             duration,
             move |this, ctx| {
                 let result = closure(this, ctx).map_err(ServerError::from);
-                this.remove_task(task_name);
+                this.remove_task(&task_name);
                 if result.is_err() {
                     println!("{:?}", result.err());
                 }
@@ -336,14 +336,16 @@ impl GameServer {
         ));
     }
 
-    pub fn cancel_task(&mut self, task_name: String) {
-        if self.tasks.get(&task_name).is_some(  ) {
+    pub fn cancel_task(&mut self, task_name: &String, context: &mut actix::Context<GameServer>) {
+        if let Some(task) = self.tasks.get(task_name) {
+            context.cancel_future(*task);
+
             self.remove_task(task_name);
         }
     }
 
-    pub fn remove_task(&mut self, task_name: String) {
-        self.tasks.remove(&task_name);
+    pub fn remove_task(&mut self, task_name: &String) {
+        self.tasks.remove(task_name);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -394,8 +396,18 @@ pub struct GameShipQueueMessage{
 macro_rules! task {
     ($data:ident -> $exp:expr) => {
         {
-            use crate::game::game::server::{GameScheduleTaskMessage, GameServerTask};
+            use crate::game::game::server::GameScheduleTaskMessage;
             GameScheduleTaskMessage::new($data.get_task_id(), $data.get_task_duration(), $exp)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! cancel_task {
+    ($data:ident) => {
+        {
+            use crate::game::game::server::GameCancelTaskMessage;
+            GameCancelTaskMessage::new($data.get_task_id())
         }
     };
 }
@@ -411,6 +423,13 @@ pub struct GameScheduleTaskMessage
     callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
 }
 
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameCancelTaskMessage
+{
+    task_id: String,
+}
+
 impl GameScheduleTaskMessage
 {
     pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Duration, callback: F) -> Self {
@@ -418,6 +437,15 @@ impl GameScheduleTaskMessage
             task_id,
             task_duration,
             callback : Box::new(callback),
+        }
+    }
+}
+
+impl GameCancelTaskMessage
+{
+    pub fn new(task_id: String) -> Self {
+        Self {
+            task_id,
         }
     }
 }
@@ -482,7 +510,7 @@ impl Handler<GameFleetTravelMessage> for GameServer {
                     None
                 ));
             } else {
-                self.state.games().get(&self.id).unwrap().do_send(GameConquestMessage{ conquest });
+                self.state.games().get(&self.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
             }
         }
         let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
@@ -492,20 +520,6 @@ impl Handler<GameFleetTravelMessage> for GameServer {
                 println!("Fleet arrival fail : {:?}", res.err());
             }
         });
-    }
-}
-
-impl Handler<GameConquestMessage> for GameServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: GameConquestMessage, mut ctx: &mut Self::Context) -> Self::Result {
-        let datetime: DateTime<Utc> = msg.conquest.ended_at.into();
-        self.add_task(
-            &mut ctx,
-            msg.conquest.id.0.to_string(),
-            datetime.signed_duration_since(Utc::now()).to_std().unwrap(),
-            move |this, _| block_on(msg.conquest.end(&this))
-        );
     }
 }
 
@@ -534,6 +548,15 @@ impl Handler<GameScheduleTaskMessage> for GameServer
             msg.task_duration,
             move |this, _| (msg.callback)(&this)
         )
+    }
+}
+
+impl Handler<GameCancelTaskMessage> for GameServer
+{
+    type Result = ();
+
+    fn handle(&mut self, msg: GameCancelTaskMessage, ctx: &mut Self::Context) -> Self::Result {
+        self.cancel_task(&msg.task_id, ctx);
     }
 }
 

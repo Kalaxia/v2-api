@@ -1,4 +1,7 @@
+use actix_web::web;
 use crate::{
+    task,
+    cancel_task,
     lib::{
         time::Time,
         error::ServerError,
@@ -8,13 +11,20 @@ use crate::{
         fleet::{
             fleet::{FleetID, Fleet},
         },
-        game::server::{GameServer, GameConquestMessage},
-        player::{Player, PlayerID},
+        game::{
+            game::GameID,
+            server::{GameServer, GameServerTask},
+        },
+        player::PlayerID,
         system::system::{SystemID, System},
     },
+    AppState,
     ws::protocol,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
+use futures::{
+    executor::block_on,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
@@ -35,6 +45,7 @@ pub struct Conquest {
     pub fleet: Option<FleetID>,
     pub fleets: Option<Vec<Fleet>>,
     pub started_at: Time,
+    pub stopped_at: Option<Time>,
     pub ended_at: Time,
 }
 
@@ -53,8 +64,19 @@ impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
             fleet: None,
             fleets: None,
             started_at: row.try_get("started_at")?,
+            stopped_at: row.try_get("stopped_at")?,
             ended_at: row.try_get("ended_at")?,
         })
+    }
+}
+
+impl GameServerTask for Conquest {
+    fn get_task_id(&self) -> String {
+        self.id.0.to_string()
+    }
+
+    fn get_task_end_time(&self) -> Time {
+        self.ended_at
     }
 }
 
@@ -72,9 +94,10 @@ impl Conquest {
 
     pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__combat__conquests SET started_at = $2, ended_at = $3 WHERE id = $1")
+        sqlx::query("UPDATE fleet__combat__conquests SET started_at = $2, stopped_at = $3, ended_at = $4 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(self.started_at)
+            .bind(self.stopped_at)
             .bind(self.ended_at)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
@@ -93,7 +116,7 @@ impl Conquest {
     }
 
     pub async fn find_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__combat__conquests WHERE system_id = $1 AND ended_at IS NULL")
+        sqlx::query_as("SELECT * FROM fleet__combat__conquests WHERE system_id = $1 AND ended_at > NOW()")
             .bind(Uuid::from(sid.clone()))
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
@@ -109,8 +132,15 @@ impl Conquest {
     }
 
     pub async fn update_time(&mut self, fleets: Vec<&Fleet>, mut db_pool: &PgPool) -> Result<()> {
-        self.ended_at = get_remaining_conquest_time(fleets);
+        if let Some(sa) = self.stopped_at {
+            let started_at: DateTime<Utc> = self.started_at.into();
+            let stopped_at: DateTime<Utc> = sa.into();
 
+            self.stopped_at = None;
+            self.ended_at = Time::from(Utc::now().checked_add_signed(stopped_at.signed_duration_since(started_at)).unwrap());
+        } else {
+            self.ended_at = get_remaining_conquest_time(fleets);
+        }
         self.update(&mut db_pool).await?;
 
         Ok(())
@@ -123,19 +153,35 @@ impl Conquest {
         Ok(())
     }
 
+    pub async fn stop(system: &System, server: &GameServer) -> Result<()> {
+        let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
+        
+        if let Some(mut conquest) = c {
+            conquest.halt(&server.state, &server.id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn halt(&mut self, state: &web::Data<AppState>, game_id: &GameID) -> Result<()> {
+        self.stopped_at = Some(Time::now());
+        self.update(&mut &state.db_pool).await?;
+
+        state.games().get(&game_id).unwrap().do_send(cancel_task!(self));
+
+        Ok(())
+    }
+
     pub async fn resume(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         
-        if c.is_none() {
-            return Self::new(fleet, fleets, system, &server).await;
-        }
-
-        let mut conquest = c.unwrap();
-        conquest.update_time(fleets, &server.state.db_pool).await?;
+        if let Some(mut conquest) = c {
+            conquest.update_time(fleets, &server.state.db_pool).await?;
         
-        server.state.games().get(&server.id).unwrap().do_send(GameConquestMessage{ conquest });
+            server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));    
 
-        Ok(())
+            return Ok(());
+        }
+        Self::new(fleet, fleets, system, &server).await
     }
 
     pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
@@ -146,6 +192,7 @@ impl Conquest {
             fleet: Some(fleet.id),
             fleets: Some(fleets.iter().map(|&f| f.clone()).collect()),
             started_at: Time::now(),
+            stopped_at: None,
             ended_at: get_conquest_time(fleets),
         };
         conquest.insert(&mut &server.state.db_pool).await?;
@@ -156,7 +203,7 @@ impl Conquest {
             None
         ));
 
-        server.state.games().get(&server.id).unwrap().do_send(GameConquestMessage{ conquest });
+        server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
         Ok(())
     }

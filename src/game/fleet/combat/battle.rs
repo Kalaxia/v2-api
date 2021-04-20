@@ -153,6 +153,8 @@ impl Battle {
     }
 
     pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: &FactionID, server: &GameServer) -> Result<()> {
+        Conquest::stop(&system, &server).await?;
+        
         let battle = Battle::engage(&system, &server, &fleet, &fleets).await?;
 
         server.ws_broadcast(protocol::Message::new(

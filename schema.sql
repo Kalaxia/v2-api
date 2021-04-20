@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS fleet__combat__conquests(
     player_id UUID NOT NULL,
     system_id UUID NOT NULL,
     started_at TIMESTAMPTZ NOT NULL,
+    stopped_at TIMESTAMPTZ DEFAULT NULL,
     ended_at TIMESTAMPTZ NOT NULL
 );
 CREATE TABLE IF NOT EXISTS fleet__combat__reports(

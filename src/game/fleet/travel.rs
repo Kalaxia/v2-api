@@ -103,6 +103,7 @@ pub async fn travel(
     
     let destination_system = ds?;
     let game = g?;
+    let game_id = game.id;
     let system = s?;
     let mut fleet = f?;
     fleet.squadrons = sg?;
@@ -130,9 +131,15 @@ pub async fn travel(
         )).into()
     );
     fleet.update(&mut &state.db_pool).await?;
-
     let games = state.games();
     let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+
+    if let Some(mut conquest) = Conquest::find_current_by_system(&system.id, &state.db_pool).await? {
+        let count = Fleet::count_stationed_by_system(&system.id, &state.db_pool).await?;
+        if 1 >= count {
+            conquest.halt(&state, &game_id).await?;
+        }
+    }
     game.do_send(GameFleetTravelMessage{ system, fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))
@@ -161,7 +168,7 @@ pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Re
     process_arrival_outcome(&outcome, &server).await
 }
 
-async fn resolve_arrival_outcome(system: &System, server: &GameServer, mut fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
+async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
     match system_owner {
         Some(system_owner) => {
             // First we check if a battle rages in the destination system. No matter the opponents, the fleet joins in

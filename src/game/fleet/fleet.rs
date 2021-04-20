@@ -88,6 +88,14 @@ impl Fleet {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn count_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
+        sqlx::query_as("SELECT COUNT(*) FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
+            .bind(Uuid::from(sid.clone()))
+            .fetch_one(db_pool).await
+            .map(|count: (i64,)| count.0 as i16)
+            .map_err(ServerError::from)
+    }
+
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")

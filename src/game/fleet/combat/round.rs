@@ -65,7 +65,6 @@ pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashM
 
     let mut round = None;
 
-    println!("PROCESSING ARRIVALS");
     // new fleets arrival
     for (_, fleet) in new_fleets.iter() {
         round

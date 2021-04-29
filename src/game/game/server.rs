@@ -22,10 +22,9 @@ use crate::{
             travel::process_fleet_arrival,
         },
         game::game::{Game, GameID, VICTORY_POINTS_PER_MINUTE},
-        ship::queue::ShipQueue,
         player::{PlayerID, Player, init_player_wallets},
         system::{
-            building::{Building, BuildingID, BuildingStatus, BuildingKind},
+            building::{Building, BuildingStatus, BuildingKind},
             system::{System, SystemID, assign_systems, generate_systems, init_player_systems}
         },
     },
@@ -141,7 +140,7 @@ impl GameServer {
         clients.get(pid).unwrap().do_send(message);
     }
 
-    async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
+    pub async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
         let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, c) in clients.iter() {
@@ -199,25 +198,6 @@ impl GameServer {
             p.update(&mut tx).await?;
         }
         tx.commit().await?;
-        Ok(())
-    }
-
-    async fn process_building_construction(&mut self, bid: BuildingID) -> Result<()> {
-        let mut building = Building::find(bid, &self.state.db_pool).await?;
-        let player = Player::find_system_owner(building.system.clone(), &self.state.db_pool).await?;
-
-        building.status = BuildingStatus::Operational;
-
-        let mut tx = self.state.db_pool.begin().await?;
-        building.update(&mut tx).await?;
-        tx.commit().await?;
-
-        self.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
-            protocol::Action::BuildingConstructed,
-            building.clone(),
-            None,
-        )).await?;
-
         Ok(())
     }
 
@@ -374,18 +354,6 @@ pub struct GameFleetTravelMessage{
     pub system: System
 }
 
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct GameConquestMessage{
-    pub conquest: Conquest,
-}
-
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct GameShipQueueMessage{
-    pub ship_queue: ShipQueue
-}
-
 /// Because of the genericity of [GameScheduleTaskMessage] we will have plenty of them to send.
 /// This macro helps keeping the code readable:
 /// ```ignore
@@ -396,7 +364,7 @@ pub struct GameShipQueueMessage{
 macro_rules! task {
     ($data:ident -> $exp:expr) => {
         {
-            use crate::game::game::server::GameScheduleTaskMessage;
+            use crate::game::game::server::{GameScheduleTaskMessage, GameServerTask};
             GameScheduleTaskMessage::new($data.get_task_id(), $data.get_task_duration(), $exp)
         }
     };
@@ -448,12 +416,6 @@ impl GameCancelTaskMessage
             task_id,
         }
     }
-}
-
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct GameBuildingConstructionMessage{
-    pub building: Building
 }
 
 #[derive(actix::Message)]
@@ -523,20 +485,6 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     }
 }
 
-impl Handler<GameShipQueueMessage> for GameServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: GameShipQueueMessage, mut ctx: &mut Self::Context) -> Self::Result {
-        let datetime: DateTime<Utc> = msg.ship_queue.finished_at.into();
-        self.add_task(
-            &mut ctx,
-            msg.ship_queue.get_task_id(),
-            datetime.signed_duration_since(Utc::now()).to_std().unwrap(),
-            move |this, _| block_on(msg.ship_queue.produce(&this))
-        )
-    }
-}
-
 impl Handler<GameScheduleTaskMessage> for GameServer
 {
     type Result = ();
@@ -557,20 +505,6 @@ impl Handler<GameCancelTaskMessage> for GameServer
 
     fn handle(&mut self, msg: GameCancelTaskMessage, ctx: &mut Self::Context) -> Self::Result {
         self.cancel_task(&msg.task_id, ctx);
-    }
-}
-
-impl Handler<GameBuildingConstructionMessage> for GameServer {
-    type Result = ();
-
-    fn handle(&mut self, msg: GameBuildingConstructionMessage, ctx: &mut Self::Context) -> Self::Result {
-        let datetime: DateTime<Utc> = msg.building.built_at.into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(this.process_building_construction(msg.building.id.clone()));
-            if res.is_err() {
-                println!("Building construction failed : {:?}", res.err());
-            }
-        });
     }
 }
 

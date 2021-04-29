@@ -4,7 +4,9 @@ use uuid::Uuid;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
+use futures::executor::block_on;
 use crate::{
+    task,
     AppState,
     lib::{
         Result,
@@ -15,12 +17,13 @@ use crate::{
     game::{
         game::{
             game::{Game, GameID},
-            server::GameBuildingConstructionMessage,
+            server::{GameServer, GameServerTask},
             option::GameOptionSpeed
         },
         system::system::{System, SystemID},
         player::Player
-    }
+    },
+    ws::protocol,
 };
 
 #[derive(Serialize, Clone)]
@@ -69,6 +72,16 @@ pub struct BuildingRequest {
 
 impl From<BuildingID> for Uuid {
     fn from(bid: BuildingID) -> Self { bid.0 }
+}
+
+impl GameServerTask for Building {
+    fn get_task_id(&self) -> String {
+        self.id.0.to_string()
+    }
+
+    fn get_task_end_time(&self) -> Time {
+        self.built_at
+    }
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for Building {
@@ -180,6 +193,24 @@ impl Building {
             .bind(self.status)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
+
+    async fn construct(&mut self, server: &GameServer) -> Result<()> {
+        let player = Player::find_system_owner(self.system.clone(), &server.state.db_pool).await?;
+
+        self.status = BuildingStatus::Operational;
+
+        let mut tx = server.state.db_pool.begin().await?;
+        self.update(&mut tx).await?;
+        tx.commit().await?;
+
+        server.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
+            protocol::Action::BuildingConstructed,
+            self.clone(),
+            None,
+        )).await?;
+
+        Ok(())
+    }
 }
 
 #[get("/")]
@@ -221,7 +252,8 @@ pub async fn create_building(
     building.insert(&mut tx).await?;
     tx.commit().await?;
 
-    state.games().get(&info.0).unwrap().do_send(GameBuildingConstructionMessage{ building: building.clone() });
+    let mut b = building.clone();
+    state.games().get(&info.0).unwrap().do_send(task!(building -> move |gs: &GameServer| block_on(b.construct(gs))));
 
     Ok(HttpResponse::Created().json(building))
 }

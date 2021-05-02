@@ -5,23 +5,26 @@ use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
-use futures::executor::block_on;
+use futures::{
+    executor::block_on,
+};
 use crate::{
     lib::{
         Result,
         error::ServerError,
+        time::Time
     },
     game::{
         faction::{FactionID, GameFaction, generate_game_factions},
         fleet::{
-            fleet::{Fleet, FleetID},
-            squadron::{FleetSquadron},
+            combat::conquest::Conquest,
+            fleet::Fleet,
+            travel::process_fleet_arrival,
         },
         game::game::{Game, GameID, VICTORY_POINTS_PER_MINUTE},
-        ship::queue::ShipQueue,
         player::{PlayerID, Player, init_player_wallets},
         system::{
-            building::{Building, BuildingID, BuildingStatus, BuildingKind},
+            building::{Building, BuildingStatus, BuildingKind},
             system::{System, SystemID, assign_systems, generate_systems, init_player_systems}
         },
     },
@@ -33,6 +36,24 @@ pub struct GameServer {
     pub id: GameID,
     pub state: web::Data<AppState>,
     pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub tasks: HashMap<String, actix::SpawnHandle>,
+}
+
+/// The trait of every type that can represent a task. A task is launched by message-passing to the
+/// game server with [GameScheduleTaskMessage]. When handled, this message launches a timer, and
+/// eventually perform the task by 
+///
+/// Each timer is named by `get_task_id` to allow players to cancel its associated task before it
+/// triggers.
+pub trait GameServerTask{
+    fn get_task_id(&self) -> String;
+
+    fn get_task_end_time(&self) -> Time;
+
+    fn get_task_duration(&self) -> Duration {
+        let datetime: DateTime<Utc> = self.get_task_end_time().into();
+        datetime.signed_duration_since(Utc::now()).to_std().unwrap()
+    }
 }
 
 impl Handler<protocol::Message> for GameServer {
@@ -52,29 +73,14 @@ impl Actor for GameServer {
             self.id.clone(),
             None,
         ));
-        ctx.run_later(Duration::new(1, 0), |this, _| {
-            let result = block_on(this.init()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
+        
+        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
+        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
+        self.run_interval(ctx, Duration::new(5, 0), move |this, _| {
+            block_on(this.produce_income())
         });
-        ctx.run_later(Duration::new(4, 0), |this, _| {
-            let result = block_on(this.begin());
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_interval(Duration::new(5, 0), move |this, _| {
-            let result = block_on(this.produce_income()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
-        ctx.run_interval(Duration::new(60, 0), move |this, _| {
-            let result = block_on(this.distribute_victory_points()).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
+        self.run_interval(ctx, Duration::new(60, 0), move |this, _| {
+            block_on(this.distribute_victory_points())
         });
     }
 }
@@ -134,7 +140,7 @@ impl GameServer {
         clients.get(pid).unwrap().do_send(message);
     }
 
-    async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
+    pub async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
         let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
         let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, c) in clients.iter() {
@@ -195,50 +201,11 @@ impl GameServer {
         Ok(())
     }
 
-    async fn process_fleet_arrival(&mut self, fleet_id: FleetID) -> Result<()> {
-        let mut fleet = Fleet::find(&fleet_id, &self.state.db_pool).await?;
-        fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &self.state.db_pool).await?;
-        let mut destination_system = System::find(fleet.destination_system.unwrap(), &self.state.db_pool).await?;
-        let player = Player::find(fleet.player, &self.state.db_pool).await?;
-
-        let system_owner = {
-            match destination_system.player {
-                Some(owner_id) => Some(Player::find(owner_id, &self.state.db_pool).await?),
-                None => None,
-            }
-        };
-
-        let result = destination_system.resolve_fleet_arrival(&self, fleet, &player, system_owner, &self.state.db_pool).await?;
-        
-        self.ws_broadcast(result.into());
-        
-        Ok(())
-    }
-
-    async fn process_building_construction(&mut self, bid: BuildingID) -> Result<()> {
-        let mut building = Building::find(bid, &self.state.db_pool).await?;
-        let player = Player::find_system_owner(building.system.clone(), &self.state.db_pool).await?;
-
-        building.status = BuildingStatus::Operational;
-
-        let mut tx = self.state.db_pool.begin().await?;
-        building.update(&mut tx).await?;
-        tx.commit().await?;
-
-        self.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
-            protocol::Action::BuildingConstructed,
-            building.clone(),
-            None,
-        )).await?;
-
-        Ok(())
-    }
-
     async fn distribute_victory_points(&mut self) -> Result<()> {
         let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
         let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
         let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
-            .into_iter()    
+            .into_iter()
             .map(|gf| (gf.faction.clone(), gf))
             .collect::<HashMap<FactionID, GameFaction>>();
         let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
@@ -246,21 +213,21 @@ impl GameServer {
             .map(|p| (p.id.clone(), p))
             .collect::<HashMap<PlayerID, Player>>();
 
-        for system in victory_systems {
+        for system in victory_systems.iter() {
             factions.get_mut(
                 &players.get_mut(&system.player.unwrap())
                     .unwrap()
                     .faction
                     .unwrap()
-            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE; 
+            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE;
         }
 
-        let mut victorious_faction: Option<GameFaction> = None;
+        let mut victorious_faction: Option<&GameFaction> = None;
         let mut tx = self.state.db_pool.begin().await?;
-        for (_, f) in factions.clone() {
-            GameFaction::update(&f, &mut tx).await?;
+        for f in factions.values() {
+            GameFaction::update(f, &mut tx).await?;
             if f.victory_points >= game.victory_points {
-                victorious_faction = Some(f.clone());
+                victorious_faction = Some(f);
             }
         }
         tx.commit().await?;
@@ -272,7 +239,7 @@ impl GameServer {
         ));
 
         if let Some(f) = victorious_faction {
-            self.process_victory(&f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
+            self.process_victory(f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
         }
 
         Ok(())
@@ -312,6 +279,55 @@ impl GameServer {
         Ok(client)
     }
 
+    pub fn run_interval<F>(
+        &mut self,
+        ctx: &mut <Self as Actor>::Context,
+        duration: Duration,
+        closure: F
+    )
+        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static + Clone,
+    {
+        ctx.run_interval(duration, move |this, ctx| {
+            let result = closure.clone()(this, ctx).map_err(ServerError::from);
+            if result.is_err() {
+                println!("{:?}", result.err());
+            }
+        });
+    }
+
+    pub fn add_task<F>(
+        &mut self,
+        ctx: &mut <Self as Actor>::Context,
+        task_name: String,
+        duration: Duration,
+        closure: F
+    )
+        where F: 'static + FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()>,
+    {
+        self.tasks.insert(task_name.clone(), ctx.run_later(
+            duration,
+            move |this, ctx| {
+                let result = closure(this, ctx).map_err(ServerError::from);
+                this.remove_task(&task_name);
+                if result.is_err() {
+                    println!("{:?}", result.err());
+                }
+            }
+        ));
+    }
+
+    pub fn cancel_task(&mut self, task_name: &String, context: &mut actix::Context<GameServer>) {
+        if let Some(task) = self.tasks.get(task_name) {
+            context.cancel_future(*task);
+
+            self.remove_task(task_name);
+        }
+    }
+
+    pub fn remove_task(&mut self, task_name: &String) {
+        self.tasks.remove(task_name);
+    }
+
     pub fn is_empty(&self) -> bool {
         let clients = self.clients.read().expect("Poisoned lock on game players");
         
@@ -334,19 +350,72 @@ pub struct GameNotifyFactionMessage(pub FactionID, pub protocol::Message);
 #[derive(actix::Message)]
 #[rtype(result="()")]
 pub struct GameFleetTravelMessage{
-    pub fleet: Fleet
+    pub fleet: Fleet,
+    pub system: System
+}
+
+/// Because of the genericity of [GameScheduleTaskMessage] we will have plenty of them to send.
+/// This macro helps keeping the code readable:
+/// ```ignore
+/// let ship_queue = todo!();
+/// server.do_send(task!(ship_queue -> move |gs: &GameServer| block_on(ship_queue.so_something)));
+/// ```
+#[macro_export]
+macro_rules! task {
+    ($data:ident -> $exp:expr) => {
+        {
+            use crate::game::game::server::{GameScheduleTaskMessage, GameServerTask};
+            GameScheduleTaskMessage::new($data.get_task_id(), $data.get_task_duration(), $exp)
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! cancel_task {
+    ($data:ident) => {
+        {
+            use crate::game::game::server::GameCancelTaskMessage;
+            GameCancelTaskMessage::new($data.get_task_id())
+        }
+    };
+}
+
+/// A generic message type used to schedule very simple cancelable tasks (e.g. ship or building
+/// production).
+#[derive(actix::Message)]
+#[rtype(result="()")]
+pub struct GameScheduleTaskMessage
+{
+    task_id: String,
+    task_duration: Duration,
+    callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
 }
 
 #[derive(actix::Message)]
 #[rtype(result="()")]
-pub struct GameShipQueueMessage{
-    pub ship_queue: ShipQueue
+pub struct GameCancelTaskMessage
+{
+    task_id: String,
 }
 
-#[derive(actix::Message)]
-#[rtype(result="()")]
-pub struct GameBuildingConstructionMessage{
-    pub building: Building
+impl GameScheduleTaskMessage
+{
+    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Duration, callback: F) -> Self {
+        Self {
+            task_id,
+            task_duration,
+            callback : Box::new(callback),
+        }
+    }
+}
+
+impl GameCancelTaskMessage
+{
+    pub fn new(task_id: String) -> Self {
+        Self {
+            task_id,
+        }
+    }
 }
 
 #[derive(actix::Message)]
@@ -392,9 +461,23 @@ impl Handler<GameFleetTravelMessage> for GameServer {
             msg.fleet.clone(),
             Some(msg.fleet.player),
         ));
+        // In this case, there is no battle, but a in-progress conquest
+        // We update the conquest or cancel it depending on the remaining fleets
+        if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
+            let is_cancelled = block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap();
+            if is_cancelled {
+                self.ws_broadcast(protocol::Message::new(
+                    protocol::Action::ConquestCancelled,
+                    conquest,
+                    None
+                ));
+            } else {
+                self.state.games().get(&self.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
+            }
+        }
         let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
         ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(this.process_fleet_arrival(msg.fleet.id.clone()));
+            let res = block_on(process_fleet_arrival(&this, msg.fleet.id));
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());
             }
@@ -402,31 +485,26 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     }
 }
 
-impl Handler<GameShipQueueMessage> for GameServer {
+impl Handler<GameScheduleTaskMessage> for GameServer
+{
     type Result = ();
 
-    fn handle(&mut self, msg: GameShipQueueMessage, ctx: &mut Self::Context) -> Self::Result {
-        let datetime: DateTime<Utc> = msg.ship_queue.finished_at.into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(ShipQueue::produce(&this, msg.ship_queue.id.clone()));
-            if res.is_err() {
-                println!("Ship queue production failed : {:?}", res.err());
-            }
-        });
+    fn handle(&mut self, msg: GameScheduleTaskMessage, mut ctx: &mut Self::Context) -> Self::Result {
+        self.add_task(
+            &mut ctx,
+            msg.task_id.clone(),
+            msg.task_duration,
+            move |this, _| (msg.callback)(&this)
+        )
     }
 }
 
-impl Handler<GameBuildingConstructionMessage> for GameServer {
+impl Handler<GameCancelTaskMessage> for GameServer
+{
     type Result = ();
 
-    fn handle(&mut self, msg: GameBuildingConstructionMessage, ctx: &mut Self::Context) -> Self::Result {
-        let datetime: DateTime<Utc> = msg.building.built_at.into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(this.process_building_construction(msg.building.id.clone()));
-            if res.is_err() {
-                println!("Building construction failed : {:?}", res.err());
-            }
-        });
+    fn handle(&mut self, msg: GameCancelTaskMessage, ctx: &mut Self::Context) -> Self::Result {
+        self.cancel_task(&msg.task_id, ctx);
     }
 }
 

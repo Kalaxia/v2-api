@@ -2,6 +2,7 @@ use actix_web::{post , web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::{
+    task,
     lib::{
         Result,
         error::{ServerError, InternalError},
@@ -10,7 +11,7 @@ use crate::{
     game::{
         game::{
             game::{Game, GameID},
-            server::GameShipQueueMessage,
+            server::GameServer,
         },
         system::system::{System, SystemID},
         fleet::{
@@ -26,6 +27,7 @@ use crate::{
     },
     AppState
 };
+use futures::executor::block_on;
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
@@ -255,8 +257,9 @@ pub async fn assign_ships(
     tx.commit().await?;
 
     if let Some(sq) = ship_queue {
-        state.games().get(&info.0).unwrap().do_send(GameShipQueueMessage{ ship_queue: sq.clone() });
-        return Ok(HttpResponse::Created().json(sq));
+        let data = sq.clone();
+        state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
+        return Ok(HttpResponse::Created().json(data));
     }
     Ok(HttpResponse::NoContent().finish())
 }

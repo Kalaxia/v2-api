@@ -12,21 +12,18 @@ use crate::{
     game::{
         faction::{FactionID},
         fleet::{
-            combat::battle::{Battle, engage},
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadron},
         },
         game::{
             game::GameID,
             option::{GameOptionMapSize, GameOptionSpeed},
-            server::GameServer,
         },
         player::{PlayerID, Player},
         system::{
             building::{Building, BuildingStatus, BuildingKind},
         },
     },
-    ws::protocol
 };
 use galaxy_rs::{Point, DataPoint};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
@@ -75,29 +72,6 @@ pub struct Coordinates {
     pub y: f64
 }
 
-#[derive(Serialize, Clone)]
-pub struct ConquestData {
-    pub system: System,
-    pub fleet: Fleet,
-}
-
-#[derive(Clone)]
-pub enum FleetArrivalOutcome {
-    Conquerred{
-        system: System,
-        fleet: Fleet,
-    },
-    Defended{
-        battle: Battle,
-    },
-    JoinedBattle{
-        fleet: Fleet,
-    },
-    Arrived{
-        fleet: Fleet,
-    }
-}
-
 impl Coordinates {
     pub fn polar(r:f64, theta:f64) -> Coordinates {
         Coordinates {
@@ -108,6 +82,10 @@ impl Coordinates {
     
     pub fn as_distance_to(&self, to: &Coordinates) -> f64 {
         ((to.x - self.x).powi(2) + (to.y - self.y).powi(2)).sqrt()
+    }
+    
+    pub fn new(x: f64, y: f64) -> Self {
+        Self{x, y}
     }
 }
 
@@ -175,75 +153,6 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
 }
 
 impl System {
-    pub async fn resolve_fleet_arrival(&mut self, server: &GameServer, mut fleet: Fleet, player: &Player, system_owner: Option<Player>, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
-        fleet.change_system(self);
-        fleet.update(&mut db_pool).await?;
-
-        match system_owner {
-            Some(system_owner) => {
-                if Battle::count_current_by_system(&self.id, db_pool).await? > 0 {
-                    return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
-                }
-
-                // Both players have the same faction, the arrived fleet just parks here
-                if system_owner.faction == player.faction {
-                    return Ok(FleetArrivalOutcome::Arrived{ fleet });
-                }
-
-                let fleets = self.retrieve_orbiting_fleets(db_pool).await?;
-
-                if fleets.is_empty() {
-                    return self.conquer(fleet, db_pool).await;
-                }
-                let battle = engage(&self, &server, fleet.clone(), fleets, db_pool).await?;
-                if battle.victor == player.faction {
-                    return self.conquer(fleet, db_pool).await;
-                } else if battle.victor == system_owner.faction {
-                    return Ok(FleetArrivalOutcome::Defended{ battle });
-                }
-                return self.conquer(battle
-                    .fleets
-                    .get(&battle.victor.unwrap())
-                    .unwrap()
-                    .values()
-                    .next()
-                    .cloned()
-                    .unwrap()
-                , db_pool).await;
-            },
-            None => self.conquer(fleet, db_pool).await
-        }
-    }
-
-    async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
-        let mut ids = vec![];
-        // Conquest of the system by the arrived fleet
-        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
-            .into_iter()
-            .map(|f| {
-                ids.push(f.id.clone());
-                (f.id.clone(), f)
-            })
-            .collect();
-        let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
-
-        for s in squadrons.into_iter() {
-            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone()); 
-        }
-        Ok(fleets)
-    }
-
-    pub async fn conquer(&mut self, mut fleet: Fleet, mut db_pool: &PgPool) -> Result<FleetArrivalOutcome> {
-        fleet.change_system(self);
-        fleet.update(&mut db_pool).await?;
-        self.player = Some(fleet.player.clone());
-        self.update(&mut db_pool).await?;
-        Ok(FleetArrivalOutcome::Conquerred{
-            system: self.clone(),
-            fleet: fleet,
-        })
-    }
-
     pub async fn find(sid: SystemID, db_pool: &PgPool) -> Result<System> {
         sqlx::query_as("SELECT * FROM map__systems WHERE id = $1")
             .bind(Uuid::from(sid))
@@ -324,35 +233,24 @@ impl System {
         tx.commit().await?;
         Ok(nb_inserted)
     }
-}
 
-impl From<FleetArrivalOutcome> for protocol::Message {
-    fn from(outcome: FleetArrivalOutcome) -> Self {
-        match outcome {
-            FleetArrivalOutcome::Conquerred { system, fleet } => protocol::Message::new(
-                protocol::Action::SystemConquerred,
-                ConquestData{
-                    system: system.clone(),
-                    fleet: fleet.clone(),
-                },
-                None,
-            ),
-            FleetArrivalOutcome::Defended { battle } => protocol::Message::new(
-                protocol::Action::BattleEnded,
-                battle,
-                None,
-            ),
-            FleetArrivalOutcome::JoinedBattle { fleet } => protocol::Message::new(
-                protocol::Action::FleetJoinedBattle,
-                fleet.clone(),
-                None,
-            ),
-            FleetArrivalOutcome::Arrived { fleet } => protocol::Message::new(
-                protocol::Action::FleetArrived,
-                fleet.clone(),
-                None,
-            )
+    
+    pub async fn retrieve_orbiting_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let mut ids = vec![];
+        // Conquest of the system by the arrived fleet
+        let mut fleets: HashMap<FleetID, Fleet> = Fleet::find_stationed_by_system(&self.id, db_pool).await?
+            .into_iter()
+            .map(|f| {
+                ids.push(f.id.clone());
+                (f.id.clone(), f)
+            })
+            .collect();
+        let squadrons = FleetSquadron::find_by_fleets(ids, db_pool).await?;
+
+        for s in squadrons.into_iter() {
+            fleets.get_mut(&s.fleet).unwrap().squadrons.push(s.clone());
         }
+        Ok(fleets)
     }
 }
 
@@ -361,19 +259,39 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
 
     let mut probability: f64 = 0.5;
     let mut nb_victory_systems: u32 = 0;
-
-    Ok((graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
-        let (system, prob) = generate_system(&gid, x, y, probability);
+    let mut rng = rand::thread_rng();
+    
+    let mut system_list = graph.into_points().map(|DataPoint { point:Point { x, y }, .. }| {
+        let (system, prob) = generate_system(&gid, x, y, probability, &mut rng);
         probability = prob;
         if system.kind == SystemKind::VictorySystem {
-            nb_victory_systems = nb_victory_systems + 1;
+            nb_victory_systems += 1;
         }
         system
-    }).collect(), nb_victory_systems))
+    }).collect::<Vec<System>>();
+    if nb_victory_systems == 0 {
+        // We ensure that there is at least on victory system
+        let coord_random = Coordinates::polar(
+            rng.gen_range(0_f64, 0.2_f64.powi(2)).sqrt(),
+            rng.gen_range( - std::f64::consts::PI, std::f64::consts::PI)
+        );
+        system_list.iter_mut()
+            .map(|el| {
+                let d = el.coordinates.as_distance_to(&coord_random);
+                (el, d)
+            })
+            .min_by(|(_, distance1), (_, distance2)| distance1.partial_cmp(distance2).expect("NaN comparaison"))
+            .expect("List of system Empty")
+            .0
+            .kind = SystemKind::VictorySystem;
+        nb_victory_systems += 1;
+    }
+    
+    Ok((system_list, nb_victory_systems))
 }
 
-fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f64) {
-    let (kind, prob) = generate_system_kind(x, y, probability);
+fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64, rng: &mut impl rand::Rng) -> (System, f64) {
+    let (kind, prob) = generate_system_kind(x, y, probability, rng);
     (System{
         id: SystemID(Uuid::new_v4()),
         game: gid.clone(),
@@ -384,8 +302,7 @@ fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64) -> (System, f
     }, prob)
 }
 
-fn generate_system_kind(x: f64, y: f64, probability: f64) -> (SystemKind, f64) {
-    let mut rng = rand::thread_rng();
+fn generate_system_kind(x: f64, y: f64, probability: f64, rng: &mut impl rand::Rng) -> (SystemKind, f64) {
     let rand: f64 = rng.gen_range((x.abs() + y.abs()) / 2.0, x.abs() + y.abs() + 1.0);
 
     if rand <= probability {

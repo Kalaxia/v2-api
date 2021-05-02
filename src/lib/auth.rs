@@ -40,7 +40,7 @@ impl Responder for Claims {
 
     fn respond_to(self, _req: &HttpRequest) -> Self::Future {
         #[derive(Serialize)]
-        struct TokenResponse { token: String };
+        struct TokenResponse { token: String }
 
         ready(create_jwt(self)
             .map(|token| HttpResponse::Ok().json(TokenResponse { token }))

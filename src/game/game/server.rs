@@ -50,9 +50,9 @@ pub trait GameServerTask{
 
     fn get_task_end_time(&self) -> Time;
 
-    fn get_task_duration(&self) -> Duration {
+    fn get_task_duration(&self) -> Option<Duration> {
         let datetime: DateTime<Utc> = self.get_task_end_time().into();
-        datetime.signed_duration_since(Utc::now()).to_std().unwrap()
+        datetime.signed_duration_since(Utc::now()).to_std().ok()
     }
 }
 
@@ -387,7 +387,7 @@ macro_rules! cancel_task {
 pub struct GameScheduleTaskMessage
 {
     task_id: String,
-    task_duration: Duration,
+    task_duration: Option<Duration>,
     callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
 }
 
@@ -400,7 +400,7 @@ pub struct GameCancelTaskMessage
 
 impl GameScheduleTaskMessage
 {
-    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Duration, callback: F) -> Self {
+    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Option<Duration>, callback: F) -> Self {
         Self {
             task_id,
             task_duration,
@@ -493,7 +493,7 @@ impl Handler<GameScheduleTaskMessage> for GameServer
         self.add_task(
             &mut ctx,
             msg.task_id.clone(),
-            msg.task_duration,
+            msg.task_duration.unwrap_or(Duration::new(0, 0)),
             move |this, _| (msg.callback)(&this)
         )
     }

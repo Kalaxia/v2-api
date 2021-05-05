@@ -316,7 +316,7 @@ impl GameServer {
         ));
     }
 
-    pub fn cancel_task(&mut self, task_name: &String, context: &mut actix::Context<GameServer>) {
+    pub fn cancel_task(&mut self, task_name: &str, context: &mut actix::Context<GameServer>) {
         if let Some(task) = self.tasks.get(task_name) {
             context.cancel_future(*task);
 
@@ -324,7 +324,7 @@ impl GameServer {
         }
     }
 
-    pub fn remove_task(&mut self, task_name: &String) {
+    pub fn remove_task(&mut self, task_name: &str) {
         self.tasks.remove(task_name);
     }
 
@@ -411,7 +411,7 @@ impl GameScheduleTaskMessage
 
 impl GameCancelTaskMessage
 {
-    pub fn new(task_id: String) -> Self {
+    pub const fn new(task_id: String) -> Self {
         Self {
             task_id,
         }

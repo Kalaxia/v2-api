@@ -11,24 +11,24 @@ ssl-secure = ["openssl", "actix-web/openssl"]
 vendored = ["openssl", "openssl/vendored"]
 
 [dependencies]
-actix = "0.9.0"
-actix-web = { version = "2.0" }
-actix-web-actors = "2.0"
-actix-rt = "1.1"
-actix-files = "0.2.2"
-rand = "0.7.3"
+actix = "0.11.1"
+actix-web = { version = "3.3.2" }
+actix-web-actors = "3.0.0"
+actix-rt = "2.2.0"
+actix-files = "0.5.0"
+rand = "0.8.3"
 log = "0.4.8"
 serde = "1.0.111"
 uuid = { version = "0.8", features = ["v4", "serde"] }
 jsonwebtoken = "7.1.1"
 futures = "0.3.5"
-actix-service = "1.0.5"
+actix-service = "2.0.0"
 serde_json = "1.0.55"
 openssl = { version = "0.10.30", optional = true }
-env_logger = "0.7.1"
-sqlx = { version = "0.3", default-features = false, features = [ "runtime-async-std", "macros", "postgres", "json", "uuid", "chrono" ] }
-refinery = "0.3.0"
-sqlx-core = { version = "0.3.5", default-features = false, features = [ "runtime-async-std", "postgres", "json" ] }
+env_logger = "0.8.3"
+sqlx = { version = "0.5.2", default-features = false, features = [ "runtime-async-std-native-tls", "macros", "postgres", "json", "uuid", "chrono" ] }
+refinery = "0.5.0"
+sqlx-core = { version = "0.5.2", default-features = false, features = [ "runtime-async-std-native-tls", "postgres", "json" ] }
 galaxy-rs = { git = "https://github.com/ablanleuil/galaxy-rs", version = "1.2.1" }
 petgraph = "0.5.1"
 chrono = { version = "0.4", features = ["serde"] }

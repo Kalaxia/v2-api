@@ -72,12 +72,12 @@ impl From<FleetArrivalOutcome> for Option<protocol::Message> {
         match outcome {
             FleetArrivalOutcome::JoinedBattle { fleet } => Some(protocol::Message::new(
                 protocol::Action::FleetJoinedBattle,
-                fleet.clone(),
+                fleet,
                 None,
             )),
             FleetArrivalOutcome::Arrived { fleet } => Some(protocol::Message::new(
                 protocol::Action::FleetArrived,
-                fleet.clone(),
+                fleet,
                 None,
             )),
             _ => None,
@@ -119,7 +119,7 @@ pub async fn travel(
         return Err(InternalError::FleetEmpty.into());
     }
     if Battle::count_current_by_system(&system.id, &state.db_pool).await? > 1 {
-        return Err(InternalError::Conflict)?;
+        return Err(InternalError::Conflict.into());
     }
     check_travel_destination(&system.coordinates, &destination_system.coordinates)?;
     fleet.destination_system = Some(destination_system.id.clone());

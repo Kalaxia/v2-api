@@ -1,0 +1,20 @@
+name: build docker image
+# This workflow is triggered on pushes to the repository.
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    name: Building docker image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+
+      - name: Build
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          push: false

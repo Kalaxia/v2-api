@@ -30,6 +30,10 @@ use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
 use sqlx_core::row::Row;
 
+const CONQUEST_DURATION_MAX: f64 = 60000.0;
+const CONQUEST_DURATION_MIN: f64 = 5000.0;
+const CONQUEST_DURATION_COEFF: f64 = 100.0;
+
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ConquestID(pub Uuid);
 
@@ -44,8 +48,11 @@ pub struct Conquest {
     pub system: SystemID,
     pub fleet: Option<FleetID>,
     pub fleets: Option<Vec<Fleet>>,
+    pub is_successful: bool,
+    pub is_stopped: bool,
+    pub is_over: bool,
+    pub percent: f32,
     pub started_at: Time,
-    pub stopped_at: Option<Time>,
     pub ended_at: Time,
 }
 
@@ -63,8 +70,11 @@ impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
             system: row.try_get("system_id").map(SystemID)?,
             fleet: None,
             fleets: None,
+            is_successful: row.try_get("is_successful")?,
+            is_stopped: row.try_get("is_stopped")?,
+            is_over: row.try_get("is_over")?,
+            percent: row.try_get("percent")?,
             started_at: row.try_get("started_at")?,
-            stopped_at: row.try_get("stopped_at")?,
             ended_at: row.try_get("ended_at")?,
         })
     }
@@ -94,11 +104,18 @@ impl Conquest {
 
     pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__combat__conquests SET started_at = $2, stopped_at = $3, ended_at = $4 WHERE id = $1")
+        sqlx::query("UPDATE fleet__combat__conquests SET
+            started_at = $2,
+            ended_at = $3,
+            is_successful = $4,
+            is_stopped = $5,
+            is_over = $6 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(self.started_at)
-            .bind(self.stopped_at)
             .bind(self.ended_at)
+            .bind(self.is_successful)
+            .bind(self.is_stopped)
+            .bind(self.is_over)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
@@ -116,7 +133,7 @@ impl Conquest {
     }
 
     pub async fn find_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Option<Self>> {
-        sqlx::query_as("SELECT * FROM fleet__combat__conquests WHERE system_id = $1 AND ended_at > NOW()")
+        sqlx::query_as("SELECT * FROM fleet__combat__conquests WHERE system_id = $1 AND is_over = false")
             .bind(Uuid::from(sid.clone()))
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
@@ -132,15 +149,8 @@ impl Conquest {
     }
 
     pub async fn update_time(&mut self, fleets: Vec<&Fleet>, mut db_pool: &PgPool) -> Result<()> {
-        if let Some(sa) = self.stopped_at {
-            let started_at: DateTime<Utc> = self.started_at.into();
-            let stopped_at: DateTime<Utc> = sa.into();
-
-            self.stopped_at = None;
-            self.ended_at = Time::from(Utc::now().checked_add_signed(stopped_at.signed_duration_since(started_at)).unwrap());
-        } else {
-            self.ended_at = get_remaining_conquest_time(fleets);
-        }
+        self.ended_at = get_conquest_time(fleets, self.percent);
+        self.started_at = Time::now();
         self.update(&mut db_pool).await?;
 
         Ok(())
@@ -148,6 +158,7 @@ impl Conquest {
 
     pub async fn cancel(&mut self, mut db_pool: &PgPool) -> Result<()> {
         self.ended_at = Time::now();
+        self.is_over = true;
         self.update(&mut db_pool).await?;
 
         Ok(())
@@ -163,12 +174,23 @@ impl Conquest {
     }
 
     pub async fn halt(&mut self, state: &web::Data<AppState>, game_id: &GameID) -> Result<()> {
-        self.stopped_at = Some(Time::now());
+        self.is_stopped = true;
+        self.percent = self.calculate_progress();
         self.update(&mut &state.db_pool).await?;
 
         state.games().get(&game_id).unwrap().do_send(cancel_task!(self));
 
         Ok(())
+    }
+
+    pub fn calculate_progress(&self) -> f32 {
+        let started_at: DateTime<Utc> = self.started_at.into();
+        let ended_at: DateTime<Utc> = self.ended_at.into();
+
+        let total_ms = ended_at.signed_duration_since(started_at).num_milliseconds() as f32;
+        let consumed_ms = Utc::now().signed_duration_since(started_at).num_milliseconds() as f32;
+
+        consumed_ms / total_ms
     }
 
     pub async fn resume(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
@@ -185,15 +207,18 @@ impl Conquest {
     }
 
     pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, server: &GameServer) -> Result<()> {
-        let conquest = Conquest{
+        let mut conquest = Conquest{
             id: ConquestID(Uuid::new_v4()),
             player: fleets[0].player.clone(),
             system: system.id,
             fleet: Some(fleet.id),
             fleets: Some(fleets.iter().map(|&f| f.clone()).collect()),
             started_at: Time::now(),
-            stopped_at: None,
-            ended_at: get_conquest_time(fleets),
+            ended_at: get_conquest_time(fleets, 0.0),
+            percent: 0.0,
+            is_stopped: false,
+            is_successful: false,
+            is_over: false,
         };
         conquest.insert(&mut &server.state.db_pool).await?;
 
@@ -208,9 +233,12 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn end(&self, server: &GameServer) -> Result<()> {
+    pub async fn end(&mut self, server: &GameServer) -> Result<()> {
         let mut system = System::find(self.system.clone(), &server.state.db_pool).await?;
         let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?.values().cloned().collect();
+
+        self.is_over = true;
+        self.update(&mut &server.state.db_pool).await?;
 
         system.player = Some(self.player.clone());
         system.update(&mut &server.state.db_pool).await?;
@@ -225,10 +253,21 @@ impl Conquest {
     }
 }
 
-fn get_conquest_time(fleets: Vec<&Fleet>) -> Time {
-    (Utc::now() + Duration::seconds(5)).into()
-}
+    
+fn get_conquest_time(fleets: Vec<&Fleet>, percent: f32) -> Time {
+    let mut strength = 0;
 
-fn get_remaining_conquest_time(fleets: Vec<&Fleet>) -> Time {
-    (Utc::now() + Duration::seconds(5)).into()
+    for fleet in &fleets {
+        strength += fleet.get_strength();
+    }
+
+    let mut ms = (CONQUEST_DURATION_MAX - CONQUEST_DURATION_COEFF * strength as f64).max(CONQUEST_DURATION_MIN);
+
+    if 0.0 < percent {
+        ms = ms - (ms * (percent as f64));
+    }
+
+    println!("Fleet strengh : {}; Conquest time : {}", strength, ms);
+
+    (Utc::now() + Duration::milliseconds(ms.ceil() as i64)).into()
 }

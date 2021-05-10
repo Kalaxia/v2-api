@@ -90,10 +90,13 @@ CREATE TABLE IF NOT EXISTS fleet__combat__conquests(
     player_id UUID NOT NULL,
     system_id UUID NOT NULL,
     started_at TIMESTAMPTZ NOT NULL,
-    stopped_at TIMESTAMPTZ DEFAULT NULL,
-    ended_at TIMESTAMPTZ NOT NULL
+    ended_at TIMESTAMPTZ NOT NULL,
+    percent REAL NOT NULL DEFAULT 0.0,
+    is_successful BOOLEAN NOT NULL DEFAULT false,
+    is_stopped BOOLEAN NOT NULL DEFAULT false,
+    is_over BOOLEAN NOT NULL DEFAULT false
 );
-CREATE TABLE IF NOT EXISTS fleet__combat__reports(
+CREATE TABLE IF NOT EXISTS fleet__combat__reports( 
     battle_id UUID NOT NULL,
     player_id UUID NOT NULL,
     PRIMARY KEY (battle_id, player_id)

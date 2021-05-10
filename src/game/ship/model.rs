@@ -12,6 +12,7 @@ use crate::{
 #[derive(Serialize, Copy, Clone)]
 pub struct ShipModel {
     pub category: ShipModelCategory,
+    pub strength: u16,
     pub construction_time: u16,
     pub cost: u16,
     pub damage: u16,
@@ -37,6 +38,7 @@ impl ShipModelCategory {
             ShipModelCategory::Fighter => ShipModel{
                 category: ShipModelCategory::Fighter,
                 construction_time: 400,
+                strength: 1,
                 cost: 20,
                 damage: 15,
                 combat_speed: 80,
@@ -46,6 +48,7 @@ impl ShipModelCategory {
             ShipModelCategory::Corvette => ShipModel{
                 category: ShipModelCategory::Corvette,
                 construction_time: 1500,
+                strength: 10,
                 cost: 140,
                 damage: 40,
                 combat_speed: 50,
@@ -55,6 +58,7 @@ impl ShipModelCategory {
             ShipModelCategory::Frigate => ShipModel{
                 category: ShipModelCategory::Frigate,
                 construction_time: 2000,
+                strength: 25,
                 cost: 250,
                 damage: 25,
                 combat_speed: 35,
@@ -64,6 +68,7 @@ impl ShipModelCategory {
             ShipModelCategory::Cruiser => ShipModel{
                 category: ShipModelCategory::Cruiser,
                 construction_time: 7000,
+                strength: 75,
                 cost: 600,
                 damage: 80,
                 combat_speed: 20,

@@ -2,7 +2,7 @@
 # Cargo Build Stage
 # ------------------------------------------------------------------------------
 
-FROM rust:1.52 as cargo-build
+FROM rust:1.52.1 as cargo-build
 
 ARG FEATURES
 

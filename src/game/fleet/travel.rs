@@ -230,15 +230,15 @@ mod tests {
     #[test]
     fn test_get_travel_time() {
         let time = get_travel_time(
-            Coordinates{ x: 1.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 4.0 },
+            &Coordinates{ x: 1.0, y: 2.0 },
+            &Coordinates{ x: 4.0, y: 4.0 },
             0.4,
         );
         assert_eq!(10, time.num_seconds());
 
         let time = get_travel_time(
-            Coordinates{ x: 6.0, y: 2.0 },
-            Coordinates{ x: 4.0, y: 12.0 },
+            &Coordinates{ x: 6.0, y: 2.0 },
+            &Coordinates{ x: 4.0, y: 12.0 },
             0.55,
         );
         assert_eq!(19, time.num_seconds());

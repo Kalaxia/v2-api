@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 #[derive(Clone, Copy, Debug, serde::Serialize, sqlx::Type, PartialEq)]
 #[serde(into = "i64")]
@@ -19,4 +19,8 @@ impl From<Time> for DateTime<Utc> {
 
 impl From<Time> for i64 {
     fn from(time: Time) -> i64 { time.0.timestamp_millis() }
+}
+
+pub fn ms_to_time(ms: f64) -> Time {
+    (Utc::now() + Duration::milliseconds(ms.ceil() as i64)).into()
 }

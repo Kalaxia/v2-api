@@ -3,7 +3,7 @@ use crate::{
     task,
     cancel_task,
     lib::{
-        time::Time,
+        time::{ms_to_time, Time},
         error::ServerError,
         Result
     },
@@ -22,7 +22,7 @@ use crate::{
     AppState,
     ws::protocol,
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use futures::{
     executor::block_on,
 };
@@ -156,7 +156,7 @@ impl Conquest {
             self.percent = self.calculate_progress();
         }
         self.is_stopped = false;
-        self.ended_at = get_conquest_time(&fleets, self.percent, game_speed);
+        self.ended_at = ms_to_time(get_conquest_time(&fleets, self.percent, game_speed));
         self.started_at = Time::now();
         self.update(&mut db_pool).await?;
 
@@ -236,7 +236,7 @@ impl Conquest {
             fleet: Some(fleet.id),
             fleets: Some(fleets.iter().map(|&f| f.clone()).collect()),
             started_at: Time::now(),
-            ended_at: get_conquest_time(&fleets, 0.0, game_speed),
+            ended_at: ms_to_time(get_conquest_time(&fleets, 0.0, game_speed)),
             percent: 0.0,
             is_stopped: false,
             is_successful: false,
@@ -276,7 +276,7 @@ impl Conquest {
 }
 
     
-fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: &GameOptionSpeed) -> Time {
+fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: &GameOptionSpeed) -> f64 {
     let mut strength = 0;
 
     for fleet in fleets {
@@ -287,9 +287,7 @@ fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: &GameOption
     if 0.0 < percent {
         remaining_time = remaining_time - (remaining_time * (percent as f64));
     }
-    let ms = (remaining_time - CONQUEST_STRENGTH_COEFF * strength as f64).max(CONQUEST_DURATION_MIN);
-
-    (Utc::now() + Duration::milliseconds(ms.ceil() as i64)).into()
+    (remaining_time - CONQUEST_STRENGTH_COEFF * strength as f64).max(CONQUEST_DURATION_MIN)
 }
 
 #[cfg(test)]
@@ -313,10 +311,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        let time: DateTime<Utc> = get_conquest_time(&fleets, 0.0, &game_speed).into();
-        let duration = time.signed_duration_since(Utc::now()).num_milliseconds();
-
-        assert_eq!(50000, duration);
+        assert_eq!(50000.0, get_conquest_time(&fleets, 0.0, &game_speed));
     }
 
     #[test]
@@ -326,10 +321,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Fast;
 
-        let time: DateTime<Utc> = get_conquest_time(&fleets, 0.0, &game_speed).into();
-        let duration = time.signed_duration_since(Utc::now()).num_milliseconds();
-
-        assert_eq!(38000, duration);
+        assert_eq!(38000.0, get_conquest_time(&fleets, 0.0, &game_speed));
     }
 
     #[test]
@@ -339,10 +331,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        let time: DateTime<Utc> = get_conquest_time(&fleets, 0.5, &game_speed).into();
-        let duration = time.signed_duration_since(Utc::now()).num_milliseconds();
-
-        assert_eq!(20000, duration);
+        assert_eq!(20000.0, get_conquest_time(&fleets, 0.5, &game_speed));
     }
 
     #[test]
@@ -352,10 +341,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        let time: DateTime<Utc> = get_conquest_time(&fleets, 0.0, &game_speed).into();
-        let duration = time.signed_duration_since(Utc::now()).num_milliseconds();
-
-        assert_eq!(CONQUEST_DURATION_MIN as i64, duration);
+        assert_eq!(CONQUEST_DURATION_MIN, get_conquest_time(&fleets, 0.0, &game_speed));
     }
 
     #[test]
@@ -368,10 +354,7 @@ mod tests
         let fleets = vec![&fleet1, &fleet2];
         let game_speed = GameOptionSpeed::Medium;
 
-        let time: DateTime<Utc> = get_conquest_time(&fleets, 0.0, &game_speed).into();
-        let duration = time.signed_duration_since(Utc::now()).num_milliseconds();
-
-        assert_eq!(40000, duration);
+        assert_eq!(40000.0, get_conquest_time(&fleets, 0.0, &game_speed));
     }
 
     fn get_fleet_mock() -> Fleet {

@@ -153,6 +153,7 @@ impl Conquest {
         if !self.is_stopped {
             self.percent = self.calculate_progress();
         }
+        self.is_stopped = false;
         self.ended_at = get_conquest_time(&fleets, self.percent);
         self.started_at = Time::now();
         self.update(&mut db_pool).await?;
@@ -199,13 +200,25 @@ impl Conquest {
 
     pub async fn resume(fleet: &Fleet, system: &System, server: &GameServer) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
-        let fleets_data = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;;
+        let fleets_data = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
         let fleets = fleets_data.values().collect();
         
         if let Some(mut conquest) = c {
+            let games = server.state.games();
+            let game_server = games.get(&server.id).unwrap();
+
+            // This case means the fleet is reinforcing a current conquest
+            if !conquest.is_stopped {
+                game_server.do_send(cancel_task!(conquest));
+                game_server.do_send(protocol::Message::new(
+                    protocol::Action::FleetArrived,
+                    fleet,
+                    None,
+                ));
+            }
             conquest.update_time(fleets, &server.state.db_pool).await?;
-        
-            server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
+
+            game_server.do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
             return Ok(());
         }
@@ -272,8 +285,6 @@ fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32) -> Time {
         remaining_time = remaining_time - (remaining_time * (percent as f64));
     }
     let ms = (remaining_time - CONQUEST_DURATION_COEFF * strength as f64).max(CONQUEST_DURATION_MIN);
-
-    println!("Fleets strengh : {}; Conquest time : {}, Percent : {}", strength, ms, percent);
 
     (Utc::now() + Duration::milliseconds(ms.ceil() as i64)).into()
 }

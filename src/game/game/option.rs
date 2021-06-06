@@ -40,6 +40,14 @@ impl GameOptionSpeed {
             GameOptionSpeed::Fast => 0.7,
         }
     }
+
+    pub const fn into_conquest_speed(self) -> f64 {
+        match self {
+            GameOptionSpeed::Slow => 1.1,
+            GameOptionSpeed::Medium => 1.0,
+            GameOptionSpeed::Fast => 0.8,
+        }
+    }
 }
 
 impl GameOptionMapSize {

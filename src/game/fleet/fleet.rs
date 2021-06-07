@@ -122,6 +122,14 @@ impl Fleet {
             .bind(Uuid::from(self.id))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
+
+    pub fn get_strength(&self) -> u32 {
+        let mut strength = 0;
+        for squadron in &self.squadrons {
+            strength += squadron.category.to_data().strength as u32 * squadron.quantity as u32; 
+        }
+        strength
+    }
 }
 
 #[post("/")]

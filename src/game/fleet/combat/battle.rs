@@ -167,15 +167,7 @@ impl Battle {
             return Ok(());
         }
 
-        Conquest::resume(&fleet, vec![&battle
-            .fleets
-            .get(&battle.victor.unwrap())
-            .unwrap()
-            .values()
-            .next()
-            .cloned()
-            .unwrap()
-        ], &system, &server).await
+        Conquest::resume(&fleet, &system, &server).await
     }
 
     pub async fn engage(system: &System, server: &GameServer, arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>) -> Result<Battle> {

@@ -10,8 +10,8 @@ Setup
 
 **Prerequisites**
 
-* Rust <= 1.42
-* Cargo <= 1.42
+* Rust <= 1.52.1
+* Cargo <= 1.52
 
 **Instructions**
 

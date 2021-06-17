@@ -20,6 +20,7 @@ use crate::{
 };
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
+use std::collections::HashMap;
 
 pub const FLEET_RANGE: f64 = 20.0;
 
@@ -83,13 +84,13 @@ impl Fleet {
     }
 
     pub async fn find_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Vec<Fleet>> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
+        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND is_destroyed = FALSE")
             .bind(Uuid::from(sid.clone()))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
     pub async fn count_stationed_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
-        sqlx::query_as("SELECT COUNT(*) FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL")
+        sqlx::query_as("SELECT COUNT(*) FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND is_destroyed = FALSE")
             .bind(Uuid::from(sid.clone()))
             .fetch_one(db_pool).await
             .map(|count: (i64,)| count.0 as i16)
@@ -107,11 +108,12 @@ impl Fleet {
 
     pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4 WHERE id=$5")
+        sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4, is_destroyed=$5 WHERE id=$6")
             .bind(Uuid::from(self.system))
             .bind(self.destination_system.map(Uuid::from))
             .bind(self.destination_arrival_date)
             .bind(Uuid::from(self.player))
+            .bind(self.is_destroyed)
             .bind(Uuid::from(self.id))
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
@@ -209,6 +211,10 @@ pub async fn donate(
     ));
 
     Ok(HttpResponse::NoContent().finish())
+}
+
+pub fn get_fleet_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
+    fleets.iter().map(|(_, f)| f.player).collect()
 }
 
 #[cfg(test)]

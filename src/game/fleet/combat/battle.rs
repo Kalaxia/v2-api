@@ -14,7 +14,7 @@ use crate::{
                 round::{Round, fight_round},
             },
             squadron::FleetSquadron,
-            fleet::{Fleet, FleetID},
+            fleet::{Fleet, FleetID, get_fleet_player_ids},
         },
         system::system::{System, SystemID},
         player::{PlayerID, Player},
@@ -152,7 +152,7 @@ impl Battle {
         Err(InternalError::NotFound.into())
     }
 
-    pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: &FactionID, server: &GameServer) -> Result<()> {
+    pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
         Conquest::stop(&system, &server).await?;
         
         let battle = Battle::engage(&system, &server, &fleet, &fleets).await?;
@@ -163,11 +163,11 @@ impl Battle {
             None
         ));
 
-        if battle.victor == Some(*defender_faction) {
+        if battle.victor == defender_faction {
             return Ok(());
         }
 
-        Conquest::resume(&fleet, &system, &server).await
+        Conquest::resume(&fleet, &system, battle.victor, &server).await
     }
 
     pub async fn engage(system: &System, server: &GameServer, arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>) -> Result<Battle> {
@@ -197,10 +197,10 @@ impl Battle {
                 break;
             }
         }
-        update_fleets(&battle, &server.state.db_pool).await?;
         battle.victor = Some(battle.process_victor()?);
         battle.ended_at = Some(Time::now());
         battle.update(&mut &server.state.db_pool).await?;
+        battle.fleets = update_fleets(&battle, &server.state.db_pool).await?;
         Ok(battle)
     }
 }
@@ -216,12 +216,8 @@ impl Report {
     }
 }
 
-fn get_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
-    fleets.iter().map(|(_, f)| f.player).collect()
-}
-
 async fn get_factions_fleets(fleets: HashMap<FleetID, Fleet>, db_pool: &PgPool) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
-    let players: HashMap<PlayerID, Player> = Player::find_by_ids(get_player_ids(&fleets), &db_pool).await?
+    let players: HashMap<PlayerID, Player> = Player::find_by_ids(get_fleet_player_ids(&fleets), &db_pool).await?
         .iter()
         .map(|p| (p.id, p.clone()))
         .collect();
@@ -264,21 +260,29 @@ async fn init_battle(system: &System, fleets: HashMap<FleetID, Fleet>, db_pool: 
     Ok(battle)
 }
 
-async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<()> {
+async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
     let mut tx = db_pool.begin().await?;
+    let mut remaining_fleets = HashMap::new();
 
-    for fleets in battle.fleets.values() {
-        for fleet in fleets.values() {
-            update_fleet(fleet.clone(), &mut tx).await?;
+    for (faction_id, fleets) in battle.fleets.iter() {
+        let mut faction_remaining_fleets = HashMap::new();
+        for (fleet_id, fleet) in fleets.iter() {
+            let is_destroyed = update_fleet(fleet.clone(), &mut tx).await?;
+            if !is_destroyed {
+                faction_remaining_fleets.insert(*fleet_id, fleet.clone());
+            }
+        }
+        if !faction_remaining_fleets.is_empty() {
+            remaining_fleets.insert(*faction_id, faction_remaining_fleets);
         }
     }
 
     tx.commit().await?;
 
-    Ok(())
+    Ok(remaining_fleets)
 }
 
-async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<()> {
+async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<bool> {
     for s in &fleet.squadrons {
         if s.quantity > 0 {
             s.update(tx).await?;
@@ -294,5 +298,5 @@ async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgCo
     }
     fleet.update(tx).await?;
 
-    Ok(())
+    Ok(fleet.is_destroyed)
 }

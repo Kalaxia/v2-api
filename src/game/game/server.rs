@@ -464,16 +464,7 @@ impl Handler<GameFleetTravelMessage> for GameServer {
         // In this case, there is no battle, but a in-progress conquest
         // We update the conquest or cancel it depending on the remaining fleets
         if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
-            let is_cancelled = block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap();
-            if is_cancelled {
-                self.ws_broadcast(&protocol::Message::new(
-                    protocol::Action::ConquestCancelled,
-                    conquest,
-                    None
-                ));
-            } else {
-                self.state.games().get(&self.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
-            }
+            block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self)).map_err(ServerError::from).ok().unwrap();
         }
         let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
         ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {

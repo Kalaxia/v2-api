@@ -8,6 +8,7 @@ use crate::{
         Result
     },
     game::{
+        faction::FactionID,
         fleet::{
             fleet::{FleetID, Fleet},
         },
@@ -16,7 +17,7 @@ use crate::{
             option::GameOptionSpeed,
             server::{GameServer, GameServerTask},
         },
-        player::PlayerID,
+        player::{Player, PlayerID},
         system::system::{SystemID, System},
     },
     AppState,
@@ -139,18 +140,24 @@ impl Conquest {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove_fleet(&mut self, system: &System, fleet: &Fleet, db_pool: &PgPool) -> Result<bool> {
-        let mut fleets = system.retrieve_orbiting_fleets(&db_pool).await?;
-        let game = Game::find(system.game, &db_pool).await?;
+    pub async fn remove_fleet(&mut self, system: &System, fleet: &Fleet, server: &GameServer) -> Result<()> {
+        let mut fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
+        let game = Game::find(system.game, &server.state.db_pool).await?;
         fleets.retain(|&fid, _| fid != fleet.id);
         // If the current fleet is the only one, the conquest is cancelled
         if fleets.len() < 1 {
-            return self.cancel(&db_pool).await.map(|_| true);
+            return self.cancel(&server).await;
         }
-        self.update_time(fleets.values().collect(), &game.game_speed, &db_pool).await.map(|_| false)
+        server.state.games().get(&server.id).unwrap().do_send(cancel_task!(self));
+        self.update_time(fleets.values().collect(), game.game_speed, &server.state.db_pool).await?;
+
+        let mut conquest = self.clone();
+        server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
+
+        Ok(())
     }
 
-    pub async fn update_time(&mut self, fleets: Vec<&Fleet>, game_speed: &GameOptionSpeed, mut db_pool: &PgPool) -> Result<()> {
+    pub async fn update_time(&mut self, fleets: Vec<&Fleet>, game_speed: GameOptionSpeed, mut db_pool: &PgPool) -> Result<()> {
         // If the conquest is currently on and a new fleet joins it, we calculate the progress so the get_conquest_time method can have it
         if !self.is_stopped {
             self.percent = self.calculate_progress();
@@ -163,10 +170,18 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn cancel(&mut self, mut db_pool: &PgPool) -> Result<()> {
+    pub async fn cancel(&mut self, server: &GameServer) -> Result<()> {
         self.ended_at = Time::now();
         self.is_over = true;
-        self.update(&mut db_pool).await?;
+        self.update(&mut &server.state.db_pool).await?;
+        
+        let conquest = self.clone();
+        server.ws_broadcast(&protocol::Message::new(
+            protocol::Action::ConquestCancelled,
+            conquest.clone(),
+            None
+        ));
+        server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
 
         Ok(())
     }
@@ -200,15 +215,22 @@ impl Conquest {
         self.percent + (consumed_ms / total_ms)
     }
 
-    pub async fn resume(fleet: &Fleet, system: &System, server: &GameServer) -> Result<()> {
+    pub async fn resume(fleet: &Fleet, system: &System, victor_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         let game = Game::find(system.game, &server.state.db_pool).await?;
         let fleets_data = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
         let fleets = fleets_data.values().collect();
         
         if let Some(mut conquest) = c {
+            let conquest_player = Player::find(conquest.player, &server.state.db_pool).await?;
             let games = server.state.games();
             let game_server = games.get(&server.id).unwrap();
+
+            if victor_faction.is_some() && victor_faction != conquest_player.faction {
+                conquest.cancel(&server).await?;
+
+                return Self::new(fleet, fleets, system, game.game_speed, &server).await;
+            }
 
             // This case means the fleet is reinforcing a current conquest
             if !conquest.is_stopped {
@@ -219,16 +241,21 @@ impl Conquest {
                     None,
                 ));
             }
-            conquest.update_time(fleets, &game.game_speed, &server.state.db_pool).await?;
+            conquest.update_time(fleets, game.game_speed, &server.state.db_pool).await?;
 
+            game_server.do_send(protocol::Message::new(
+                protocol::Action::ConquestUpdated,
+                conquest.clone(),
+                None
+            ));
             game_server.do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
             return Ok(());
         }
-        Self::new(fleet, fleets, system, &game.game_speed, &server).await
+        Self::new(fleet, fleets, system, game.game_speed, &server).await
     }
 
-    pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, game_speed: &GameOptionSpeed, server: &GameServer) -> Result<()> {
+    pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, game_speed: GameOptionSpeed, server: &GameServer) -> Result<()> {
         let mut conquest = Conquest{
             id: ConquestID(Uuid::new_v4()),
             player: fleets[0].player.clone(),
@@ -276,7 +303,7 @@ impl Conquest {
 }
 
     
-fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: &GameOptionSpeed) -> f64 {
+fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: GameOptionSpeed) -> f64 {
     let mut strength = 0;
 
     for fleet in fleets {
@@ -311,7 +338,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        assert_eq!(50000.0, get_conquest_time(&fleets, 0.0, &game_speed));
+        assert_eq!(50000.0, get_conquest_time(&fleets, 0.0, game_speed));
     }
 
     #[test]
@@ -321,7 +348,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Fast;
 
-        assert_eq!(38000.0, get_conquest_time(&fleets, 0.0, &game_speed));
+        assert_eq!(38000.0, get_conquest_time(&fleets, 0.0, game_speed));
     }
 
     #[test]
@@ -331,7 +358,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        assert_eq!(20000.0, get_conquest_time(&fleets, 0.5, &game_speed));
+        assert_eq!(20000.0, get_conquest_time(&fleets, 0.5, game_speed));
     }
 
     #[test]
@@ -341,7 +368,7 @@ mod tests
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
-        assert_eq!(CONQUEST_DURATION_MIN, get_conquest_time(&fleets, 0.0, &game_speed));
+        assert_eq!(CONQUEST_DURATION_MIN, get_conquest_time(&fleets, 0.0, game_speed));
     }
 
     #[test]
@@ -354,7 +381,7 @@ mod tests
         let fleets = vec![&fleet1, &fleet2];
         let game_speed = GameOptionSpeed::Medium;
 
-        assert_eq!(40000.0, get_conquest_time(&fleets, 0.0, &game_speed));
+        assert_eq!(40000.0, get_conquest_time(&fleets, 0.0, game_speed));
     }
 
     fn get_fleet_mock() -> Fleet {

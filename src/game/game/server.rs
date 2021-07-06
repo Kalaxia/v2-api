@@ -283,12 +283,12 @@ impl GameServer {
         &mut self,
         ctx: &mut <Self as Actor>::Context,
         duration: Duration,
-        closure: F
+        mut closure: F
     )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static + Clone,
+        where F: FnMut(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static,
     {
         ctx.run_interval(duration, move |this, ctx| {
-            let result = closure.clone()(this, ctx).map_err(ServerError::from);
+            let result = closure(this, ctx).map_err(ServerError::from);
             if result.is_err() {
                 println!("{:?}", result.err());
             }
@@ -464,15 +464,17 @@ impl Handler<GameFleetTravelMessage> for GameServer {
         // In this case, there is no battle, but a in-progress conquest
         // We update the conquest or cancel it depending on the remaining fleets
         if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
-            block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self)).map_err(ServerError::from).ok().unwrap();
+            block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &ctx.address(), &self.state)).map_err(ServerError::from).ok().unwrap();
         }
-        let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(process_fleet_arrival(&this, msg.fleet.id));
+
+        let this = ctx.address();
+        let state = self.state.clone();
+        ctx.spawn(actix::fut::wrap_future(async move {
+            let res = process_fleet_arrival(&this, &state, msg.fleet.id).await;
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());
             }
-        });
+        }));
     }
 }
 

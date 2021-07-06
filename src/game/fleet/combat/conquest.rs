@@ -1,4 +1,5 @@
-use actix_web::web;
+use actix_web::web::Data;
+use actix::Addr;
 use crate::{
     task,
     cancel_task,
@@ -13,7 +14,7 @@ use crate::{
             fleet::{FleetID, Fleet},
         },
         game::{
-            game::{Game, GameID},
+            game::Game,
             option::GameOptionSpeed,
             server::{GameServer, GameServerTask},
         },
@@ -29,7 +30,7 @@ use futures::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 const CONQUEST_DURATION_MAX: f64 = 60000.0;
@@ -140,19 +141,19 @@ impl Conquest {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove_fleet(&mut self, system: &System, fleet: &Fleet, server: &GameServer) -> Result<()> {
-        let mut fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
-        let game = Game::find(system.game, &server.state.db_pool).await?;
+    pub async fn remove_fleet(&mut self, system: &System, fleet: &Fleet, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
+        let mut fleets = system.retrieve_orbiting_fleets(&state.db_pool).await?;
+        let game = Game::find(system.game, &state.db_pool).await?;
         fleets.retain(|&fid, _| fid != fleet.id);
         // If the current fleet is the only one, the conquest is cancelled
         if fleets.len() < 1 {
-            return self.cancel(&server).await;
+            return self.cancel(server, state).await;
         }
-        server.state.games().get(&server.id).unwrap().do_send(cancel_task!(self));
-        self.update_time(fleets.values().collect(), game.game_speed, &server.state.db_pool).await?;
+        server.do_send(cancel_task!(self));
+        self.update_time(fleets.values().collect(), game.game_speed, &state.db_pool).await?;
 
         let mut conquest = self.clone();
-        server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
+        server.do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
         Ok(())
     }
@@ -170,37 +171,37 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn cancel(&mut self, server: &GameServer) -> Result<()> {
+    pub async fn cancel(&mut self, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
         self.ended_at = Time::now();
         self.is_over = true;
-        self.update(&mut &server.state.db_pool).await?;
+        self.update(&mut &state.db_pool).await?;
         
-        let conquest = self.clone();
-        server.ws_broadcast(&protocol::Message::new(
+        server.send(protocol::Message::new(
             protocol::Action::ConquestCancelled,
-            conquest.clone(),
+            self.clone(),
             None
-        ));
-        server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
+        )).await?;
+        let conquest = self.clone();
+        server.send(cancel_task!(conquest)).await?;
 
         Ok(())
     }
 
-    pub async fn stop(system: &System, server: &GameServer) -> Result<()> {
-        let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
+    pub async fn stop(system: &System, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
+        let c = Self::find_current_by_system(&system.id, &state.db_pool).await?;
         
         if let Some(mut conquest) = c {
-            conquest.halt(&server.state, &server.id).await?;
+            conquest.halt(server, state).await?;
         }
         Ok(())
     }
 
-    pub async fn halt(&mut self, state: &web::Data<AppState>, game_id: &GameID) -> Result<()> {
+    pub async fn halt(&mut self, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
         self.is_stopped = true;
         self.percent = self.calculate_progress();
         self.update(&mut &state.db_pool).await?;
 
-        state.games().get(&game_id).unwrap().do_send(cancel_task!(self));
+        server.do_send(cancel_task!(self));
 
         Ok(())
     }
@@ -215,21 +216,19 @@ impl Conquest {
         self.percent + (consumed_ms / total_ms)
     }
 
-    pub async fn resume(fleet: &Fleet, system: &System, victor_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
-        let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
-        let game = Game::find(system.game, &server.state.db_pool).await?;
-        let fleets_data = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
+    pub async fn resume(fleet: &Fleet, system: &System, victor_faction: Option<FactionID>, game_server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
+        let c = Self::find_current_by_system(&system.id, &state.db_pool).await?;
+        let game = Game::find(system.game, &state.db_pool).await?;
+        let fleets_data = system.retrieve_orbiting_fleets(&state.db_pool).await?;
         let fleets = fleets_data.values().collect();
         
         if let Some(mut conquest) = c {
-            let conquest_player = Player::find(conquest.player, &server.state.db_pool).await?;
-            let games = server.state.games();
-            let game_server = games.get(&server.id).unwrap();
+            let conquest_player = Player::find(conquest.player, &state.db_pool).await?;
 
             if victor_faction.is_some() && victor_faction != conquest_player.faction {
-                conquest.cancel(&server).await?;
+                conquest.cancel(game_server, state).await?;
 
-                return Self::new(fleet, fleets, system, game.game_speed, &server).await;
+                return Self::new(fleet, fleets, system, game.game_speed, game_server, state).await;
             }
 
             // This case means the fleet is reinforcing a current conquest
@@ -241,7 +240,7 @@ impl Conquest {
                     None,
                 ));
             }
-            conquest.update_time(fleets, game.game_speed, &server.state.db_pool).await?;
+            conquest.update_time(fleets, game.game_speed, &state.db_pool).await?;
 
             game_server.do_send(protocol::Message::new(
                 protocol::Action::ConquestUpdated,
@@ -252,10 +251,10 @@ impl Conquest {
 
             return Ok(());
         }
-        Self::new(fleet, fleets, system, game.game_speed, &server).await
+        Self::new(fleet, fleets, system, game.game_speed, game_server, state).await
     }
 
-    pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, game_speed: GameOptionSpeed, server: &GameServer) -> Result<()> {
+    pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, game_speed: GameOptionSpeed, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
         let mut conquest = Conquest{
             id: ConquestID(Uuid::new_v4()),
             player: fleets[0].player.clone(),
@@ -269,15 +268,15 @@ impl Conquest {
             is_successful: false,
             is_over: false,
         };
-        conquest.insert(&mut &server.state.db_pool).await?;
+        conquest.insert(&mut &state.db_pool).await?;
 
-        server.ws_broadcast(&protocol::Message::new(
+        server.send(protocol::Message::new(
             protocol::Action::ConquestStarted,
             conquest.clone(),
             None
-        ));
+        )).await?;
 
-        server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
+        server.do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
         Ok(())
     }

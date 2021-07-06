@@ -1,4 +1,5 @@
-use actix_web::{post, web, HttpResponse};
+use actix::Addr;
+use actix_web::{post, web::{self, Data}, HttpResponse};
 use serde::{Serialize, Deserialize};
 use crate::{
     lib::{
@@ -137,7 +138,7 @@ pub async fn travel(
     if let Some(mut conquest) = Conquest::find_current_by_system(&system.id, &state.db_pool).await? {
         let count = Fleet::count_stationed_by_system(&system.id, &state.db_pool).await?;
         if 1 >= count {
-            conquest.halt(&state, &game_id).await?;
+            conquest.halt(&game, &state).await?;
         }
     }
     game.do_send(GameFleetTravelMessage{ system, fleet: fleet.clone() });
@@ -145,32 +146,32 @@ pub async fn travel(
     Ok(HttpResponse::Ok().json(fleet))
 }
 
-pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Result<()> {
-    let mut fleet = Fleet::find(&fleet_id, &server.state.db_pool).await?;
-    fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &server.state.db_pool).await?;
-    let destination_system = System::find(fleet.destination_system.unwrap(), &server.state.db_pool).await?;
-    let player = Player::find(fleet.player, &server.state.db_pool).await?;
+pub async fn process_fleet_arrival(server: &Addr<GameServer>, state: &Data<AppState>, fleet_id: FleetID) -> Result<()> {
+    let mut fleet = Fleet::find(&fleet_id, &state.db_pool).await?;
+    fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &state.db_pool).await?;
+    let destination_system = System::find(fleet.destination_system.unwrap(), &state.db_pool).await?;
+    let player = Player::find(fleet.player, &state.db_pool).await?;
 
     let system_owner = {
         match destination_system.player {
-            Some(owner_id) => Some(Player::find(owner_id, &server.state.db_pool).await?),
+            Some(owner_id) => Some(Player::find(owner_id, &state.db_pool).await?),
             None => None,
         }
     };
 
     fleet.change_system(&destination_system);
-    fleet.update(&mut &server.state.db_pool).await?;
+    fleet.update(&mut &state.db_pool).await?;
 
-    let outcome = resolve_arrival_outcome(&destination_system, &server, fleet, &player, system_owner).await?;
+    let outcome = resolve_arrival_outcome(&destination_system, &state, fleet, &player, system_owner).await?;
 
-    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.ws_broadcast(&message));
+    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.send(message));
 
-    process_arrival_outcome(&outcome, &server).await
+    process_arrival_outcome(&outcome, server, state).await
 }
 
-async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
+async fn resolve_arrival_outcome(system: &System, state: &Data<AppState>, fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
     // First we check if a battle rages in the destination system. No matter the opponents, the fleet joins in
-    if Battle::count_current_by_system(&system.id, &server.state.db_pool).await? > 0 {
+    if Battle::count_current_by_system(&system.id, &state.db_pool).await? > 0 {
         return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
     }
     match system_owner {
@@ -180,7 +181,7 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
                 return Ok(FleetArrivalOutcome::Arrived{ fleet });
             }
             // The fleet landed in an enemy system. We check if it is defended by some fleets and initiate a battle
-            let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
+            let fleets = system.retrieve_orbiting_fleets(&state.db_pool).await?;
             // If there are none, a conquest begins
             if fleets.is_empty() {
                 return Ok(FleetArrivalOutcome::Conquer{ system: system.clone(), fleet });
@@ -189,12 +190,12 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
         },
         None => {
             // The fleet landed in a neutral system. We check if it is currently being colonized by some fleets and initiate a battle
-            match Conquest::find_current_by_system(&system.id, &server.state.db_pool).await? {
+            match Conquest::find_current_by_system(&system.id, &state.db_pool).await? {
                 Some(current_colonization) => {
-                    let colonizer = Player::find(current_colonization.player, &server.state.db_pool).await?;
+                    let colonizer = Player::find(current_colonization.player, &state.db_pool).await?;
 
                     if colonizer.faction != player.faction {
-                        let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
+                        let fleets = system.retrieve_orbiting_fleets(&state.db_pool).await?;
                         return Ok(FleetArrivalOutcome::Battle{ system: system.clone(), fleet, fleets, defender_faction: None })
                     }
                     // The fleet reinforces the current colonization
@@ -206,11 +207,11 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
     }
 }
 
-async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &GameServer) -> Result<()> {
+async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &Addr<GameServer>, state: &Data<AppState>) -> Result<()> {
     match outcome {
-        FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::prepare(&fleet, &fleets, &system, *defender_faction, &server).await,
-        FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(fleet, &system, None, &server).await,
-        FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(fleet, &system, None, &server).await,
+        FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::prepare(&fleet, &fleets, &system, *defender_faction, server, state).await,
+        FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(fleet, &system, None, server, state).await,
+        FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(fleet, &system, None, server, state).await,
         _ => Ok(())
     }
 }

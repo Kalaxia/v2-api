@@ -1,5 +1,8 @@
+use actix::Addr;
+use actix_web::web;
 use std::collections::{HashSet, HashMap};
 use crate::{
+    AppState,
     lib::{
         error::{ServerError, InternalError},
         time::Time,
@@ -26,7 +29,6 @@ use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::PgQueryAs, Exec
 use rand::prelude::*;
 use uuid::Uuid;
 use std::time::Duration;
-use std::thread;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct BattleID(pub Uuid);
@@ -152,55 +154,55 @@ impl Battle {
         Err(InternalError::NotFound.into())
     }
 
-    pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
-        Conquest::stop(&system, &server).await?;
+    pub async fn prepare(fleet: &Fleet, fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &Addr<GameServer>, state: &web::Data<AppState>) -> Result<()> {
+        Conquest::stop(&system, server, state).await?;
         
-        let battle = Battle::engage(&system, &server, &fleet, &fleets).await?;
+        let battle = Battle::engage(&system, &server, &state, &fleet, &fleets).await?;
 
-        server.ws_broadcast(&protocol::Message::new(
+        server.send(protocol::Message::new(
             protocol::Action::BattleEnded,
             battle.clone(),
             None
-        ));
+        )).await?;
 
         if battle.victor == defender_faction {
             return Ok(());
         }
 
-        Conquest::resume(&fleet, &system, battle.victor, &server).await
+        Conquest::resume(&fleet, &system, battle.victor, server, state).await
     }
 
-    pub async fn engage(system: &System, server: &GameServer, arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>) -> Result<Battle> {
+    pub async fn engage(system: &System, server: &Addr<GameServer>, state: &web::Data<AppState>, arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>) -> Result<Battle> {
         let mut fleets = orbiting_fleets.clone();
         fleets.insert(arriver.id.clone(), arriver.clone());
     
-        let mut battle = init_battle(system, fleets, &server.state.db_pool).await?;
+        let mut battle = init_battle(system, fleets, &state.db_pool).await?;
     
-        server.ws_broadcast(&protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
+        server.send(protocol::Message::new(protocol::Action::BattleStarted, &battle, None)).await?;
     
-        thread::sleep(Duration::new(3, 0));
+        tokio::time::sleep(Duration::new(3, 0)).await;
     
         let mut round_number: u16 = 1;
         loop {
-            let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
-            for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
+            let new_fleets = battle.get_joined_fleets(&state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
+            for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &state.db_pool).await? {
                 battle.fleets.get_mut(&fid).unwrap().extend(fleets);
             }
     
             if let Some(round) = fight_round(&mut battle, round_number, new_fleets).await {
                 battle.rounds.push(round);
-                battle.update(&mut &server.state.db_pool).await?;
+                battle.update(&mut &state.db_pool).await?;
                 round_number += 1;
     
-                thread::sleep(Duration::new(1, 0));
+                tokio::time::sleep(Duration::new(1, 0)).await;
             } else {
                 break;
             }
         }
         battle.victor = Some(battle.process_victor()?);
         battle.ended_at = Some(Time::now());
-        battle.update(&mut &server.state.db_pool).await?;
-        battle.fleets = update_fleets(&battle, &server.state.db_pool).await?;
+        battle.update(&mut &state.db_pool).await?;
+        battle.fleets = update_fleets(&battle, &state.db_pool).await?;
         Ok(battle)
     }
 }

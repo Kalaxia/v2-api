@@ -1,4 +1,5 @@
 use actix_web::web;
+use actix::fut::wrap_future;
 use actix::prelude::*;
 use serde::{Serialize};
 use std::sync::{Arc, RwLock};
@@ -425,7 +426,7 @@ pub struct GameEndMessage{}
 impl Handler<GameRemovePlayerMessage> for GameServer {
     type Result = Arc<(actix::Addr<ClientSession>, bool)>;
 
-    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
         Arc::new((client, self.is_empty()))
     }
@@ -467,9 +468,13 @@ impl Handler<GameFleetTravelMessage> for GameServer {
             block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &ctx.address(), &self.state)).map_err(ServerError::from).ok().unwrap();
         }
 
+        let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
+        let dur = datetime.signed_duration_since(Utc::now()).to_std().unwrap();
+
         let this = ctx.address();
         let state = self.state.clone();
         ctx.spawn(actix::fut::wrap_future(async move {
+            tokio::time::sleep(dur).await;
             let res = process_fleet_arrival(&this, &state, msg.fleet.id).await;
             if res.is_err() {
                 println!("Fleet arrival fail : {:?}", res.err());

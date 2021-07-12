@@ -17,6 +17,7 @@ pub enum GameOptionSpeed {
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum GameOptionMapSize {
+    Mini,
     VerySmall,
     Small,
     Medium,
@@ -53,6 +54,14 @@ impl GameOptionSpeed {
 impl GameOptionMapSize {
     pub fn to_galaxy_builder(self) -> GalaxyBuilder {
         match self {
+            GameOptionMapSize::Mini => GalaxyBuilder::default()
+                .min_distance(Some(1.0))
+                .cloud_population(1)
+                .nb_arms(1)
+                .nb_arm_bones(1)
+                .slope_factor(0.6)
+                .arm_slope(std::f64::consts::PI / 4.0)
+                .arm_width_factor(1.0 / 32.0),
             GameOptionMapSize::VerySmall => GalaxyBuilder::default()
                 .min_distance(Some(1.0))
                 .cloud_population(1)

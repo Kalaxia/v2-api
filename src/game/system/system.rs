@@ -26,7 +26,7 @@ use crate::{
     },
 };
 use galaxy_rs::{Point, DataPoint};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use rand::{prelude::*, distributions::{Distribution, Uniform}};
 
@@ -102,7 +102,7 @@ impl From<SystemKind> for i16 {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
+impl<'a> FromRow<'a, PgRow> for Coordinates {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Coordinates{
             x: row.try_get("coord_x")?,
@@ -111,7 +111,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Coordinates {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for System {
+impl<'a> FromRow<'a, PgRow> for System {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         let id : Uuid = row.try_get("id")?;
         let game_id : Uuid = row.try_get("game_id")?;
@@ -131,7 +131,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for System {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for SystemKind {
+impl<'a> FromRow<'a, PgRow> for SystemKind {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(match row.try_get::<i16, _>("kind")? {
             1 => Self::BaseSystem,
@@ -141,7 +141,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for SystemKind {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for SystemDominion {
+impl<'a> FromRow<'a, PgRow> for SystemDominion {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         let id : i32 = row.try_get("faction_id")?;
 
@@ -198,8 +198,8 @@ impl System {
         count.0 as u32
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO map__systems (id, game_id, player_id, kind, coord_x, coord_y, is_unreachable) VALUES($1, $2, $3, $4, $5, $6, $7)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.game))
@@ -208,16 +208,16 @@ impl System {
             .bind(self.coordinates.x)
             .bind(self.coordinates.y)
             .bind(self.unreachable)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE map__systems SET player_id = $1, is_unreachable = $2 WHERE id = $3")
             .bind(self.player.map(Uuid::from))
             .bind(self.unreachable)
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     pub async fn insert_all<'a, I>(systems_iter: I, pool:&PgPool) -> Result<u64>
@@ -272,8 +272,8 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
     if nb_victory_systems == 0 {
         // We ensure that there is at least on victory system
         let coord_random = Coordinates::polar(
-            rng.gen_range(0_f64, 0.2_f64.powi(2)).sqrt(),
-            rng.gen_range( - std::f64::consts::PI, std::f64::consts::PI)
+            rng.gen_range(0_f64..0.2_f64.powi(2)).sqrt(),
+            rng.gen_range((- std::f64::consts::PI)..std::f64::consts::PI)
         );
         system_list.iter_mut()
             .map(|el| {
@@ -303,7 +303,7 @@ fn generate_system(gid: &GameID, x: f64, y: f64, probability: f64, rng: &mut imp
 }
 
 fn generate_system_kind(x: f64, y: f64, probability: f64, rng: &mut impl rand::Rng) -> (SystemKind, f64) {
-    let rand: f64 = rng.gen_range((x.abs() + y.abs()) / 2.0, x.abs() + y.abs() + 1.0);
+    let rand: f64 = rng.gen_range(((x.abs() + y.abs()) / 2.0)..(x.abs() + y.abs() + 1.0));
 
     if rand <= probability {
         return (SystemKind::VictorySystem, 0.5);
@@ -377,16 +377,17 @@ pub async fn assign_systems(players: &Vec<Player>, galaxy:&mut Vec<System>) -> R
 
 #[allow(clippy::needless_lifetimes)] // false positive
 async fn find_place<'a>(
-    Coordinates { x:xmin, y:ymin }: &Coordinates,
-    Coordinates { x:xmax, y:ymax }: &Coordinates,
+    Coordinates { x: xmin, y: ymin }: &Coordinates,
+    Coordinates { x: xmax, y: ymax }: &Coordinates,
     galaxy: & 'a mut Vec<System>
 )
     -> Option<& 'a mut System>
 {
     let mut rng = thread_rng();
-    let final_x: f64 = rng.gen_range(xmin, xmax);
-    let final_y: f64 = rng.gen_range(ymin, ymax);
-    let final_coord = Coordinates { x:final_x, y:final_y };
+    let final_coord = Coordinates {
+        x: *rng.gen_range(xmin..xmax),
+        y: *rng.gen_range(ymin..ymax)
+    };
 
     let mut min_dist = std::f64::MAX;
     let mut idx = None;
@@ -403,14 +404,16 @@ async fn find_place<'a>(
 
 #[allow(clippy::eval_order_dependence)] // false positive ?
 #[get("/")]
-pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
+pub async fn get_systems(state: web::Data<AppState>, info: web::Path<GameID>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>
 {
+    let game_id = info.into_inner();
+
     Ok(new_paginated_response(
         pagination.limit,
         pagination.page,
-        System::count(info.0.clone(), &state.db_pool).await.into(),
-        System::find_all(&info.0, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await?,
+        System::count(game_id.clone(), &state.db_pool).await.into(),
+        System::find_all(&game_id, pagination.limit, (pagination.page - 1) * pagination.limit, &state.db_pool).await?,
     ))
 }
 

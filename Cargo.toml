@@ -11,7 +11,7 @@ ssl-secure = ["openssl", "actix-web/openssl"]
 vendored = ["openssl", "openssl/vendored"]
 
 [dependencies]
-actix = "0.12"
+actix = "0.10"
 actix-web = { version = "3.3" }
 actix-web-actors = "3.0"
 actix-rt = "2.2"
@@ -27,7 +27,7 @@ serde_json = "1.0.55"
 openssl = { version = "0.10.30", optional = true }
 env_logger = "0.8"
 sqlx = { version = "0.5", default-features = false, features = [ "runtime-async-std-native-tls", "macros", "postgres", "json", "uuid", "chrono" ] }
-refinery = "0.5"
+refinery = "0.6"
 sqlx-core = { version = "0.5", default-features = false, features = [ "runtime-async-std-native-tls", "postgres", "json" ] }
 galaxy-rs = { git = "https://github.com/ablanleuil/galaxy-rs", version = "1.2.1" }
 petgraph = "0.6"

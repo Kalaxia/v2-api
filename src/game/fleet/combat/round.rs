@@ -147,7 +147,7 @@ fn fire(attacker: &FleetSquadron, defender: &FleetSquadron) -> (u16, u16) {
     let defender_model = defender.category.to_data();
 
     let mut rng = thread_rng();
-    let percent = rng.gen_range(attacker_model.precision as f64 / 2.0, attacker_model.precision as f64);
+    let percent = rng.gen_range((attacker_model.precision as f64 / 2.0)..(attacker_model.precision as f64));
 
     let quantity = attacker.quantity as f64 * percent / 100.0;
     let damage = (quantity * attacker_model.damage as f64 * attack_coeff).ceil() as u16;

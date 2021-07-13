@@ -22,7 +22,7 @@ use crate::{
     ws::protocol,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::PgQueryAs, Executor, Transaction, Postgres, types::Json};
+use sqlx::{PgPool, postgres::PgQueryResult, Executor, Transaction, Postgres, types::Json};
 use rand::prelude::*;
 use uuid::Uuid;
 use std::time::Duration;
@@ -53,9 +53,9 @@ impl From<BattleID> for Uuid {
 }
 
 impl Battle {
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
     where
-        E: Executor<Database = Postgres> {
+        E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO fleet__combat__battles(id, system_id, fleets, rounds, begun_at, ended_at) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
@@ -63,19 +63,19 @@ impl Battle {
             .bind(Json(&self.rounds))
             .bind(self.begun_at)
             .bind(self.ended_at)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
     where
-        E: Executor<Database = Postgres> {
+        E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE fleet__combat__battles SET fleets = $2, rounds = $3, victor_id = $4, ended_at = $5 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(Json(&self.fleets))
             .bind(Json(&self.rounds))
             .bind(self.victor.map(i32::from))
             .bind(self.ended_at)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
@@ -93,9 +93,9 @@ impl Battle {
             .map_err(ServerError::from)
     }
 
-    pub async fn generate_reports<E>(&self, exec: &mut E) -> Result<()>
+    pub async fn generate_reports<'a, E>(&self, exec: &E) -> Result<()>
     where
-        E: Executor<Database = Postgres> {
+        E: Executor<'a, Database = Postgres> + Copy {
         let mut players: HashSet<PlayerID> = HashSet::new();
 
         for fleets in self.fleets.values() {
@@ -121,7 +121,7 @@ impl Battle {
             for fleet in fleets.values() {
                 for squadron in &fleet.squadrons {
                     if squadron.quantity > 0 {
-                        let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
+                        let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5..1.5)).round() as i32;
 
                         squadrons.entry(initiative)
                             .or_default()
@@ -189,7 +189,7 @@ impl Battle {
     
             if let Some(round) = fight_round(&mut battle, round_number, new_fleets).await {
                 battle.rounds.push(round);
-                battle.update(&mut &server.state.db_pool).await?;
+                battle.update(&server.state.db_pool).await?;
                 round_number += 1;
     
                 thread::sleep(Duration::new(1, 0));
@@ -199,20 +199,20 @@ impl Battle {
         }
         battle.victor = Some(battle.process_victor()?);
         battle.ended_at = Some(Time::now());
-        battle.update(&mut &server.state.db_pool).await?;
+        battle.update(&server.state.db_pool).await?;
         battle.fleets = update_fleets(&battle, &server.state.db_pool).await?;
         Ok(battle)
     }
 }
 
 impl Report {
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
     where
-        E: Executor<Database = Postgres>  {
+        E: Executor<'a, Database = Postgres> + Copy  {
         sqlx::query("INSERT INTO fleet__combat__reports(battle_id, player_id) VALUES($1, $2)")
             .bind(Uuid::from(self.battle))
             .bind(Uuid::from(self.player))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 }
 
@@ -282,7 +282,7 @@ async fn update_fleets(battle: &Battle, db_pool: &PgPool) -> Result<HashMap<Fact
     Ok(remaining_fleets)
 }
 
-async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<PoolConnection<PgConnection>>) -> Result<bool> {
+async fn update_fleet(mut fleet: Fleet, tx: &mut Transaction<'_, Postgres>) -> Result<bool> {
     for s in &fleet.squadrons {
         if s.quantity > 0 {
             s.update(tx).await?;

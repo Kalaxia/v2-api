@@ -18,7 +18,7 @@ use crate::{
     ws::protocol,
     AppState
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{PgRow, PgQueryResult}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use std::collections::HashMap;
 
@@ -48,7 +48,7 @@ impl From<FleetID> for Uuid {
     fn from(fid: FleetID) -> Self { fid.0 }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Fleet {
+impl<'a> FromRow<'a, PgRow> for Fleet {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Fleet {
             id: row.try_get("id").map(FleetID)?,
@@ -97,17 +97,17 @@ impl Fleet {
             .map_err(ServerError::from)
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO fleet__fleets(id, system_id, player_id) VALUES($1, $2, $3)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
             .bind(Uuid::from(self.player))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE fleet__fleets SET system_id=$1, destination_id=$2, destination_arrival_date=$3, player_id=$4, is_destroyed=$5 WHERE id=$6")
             .bind(Uuid::from(self.system))
             .bind(self.destination_system.map(Uuid::from))
@@ -115,14 +115,14 @@ impl Fleet {
             .bind(Uuid::from(self.player))
             .bind(self.is_destroyed)
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("DELETE FROM fleet__fleets WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     pub fn get_strength(&self) -> u32 {
@@ -136,7 +136,8 @@ impl Fleet {
 
 #[post("/")]
 pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
-    let system = System::find(info.1, &state.db_pool).await?;
+    let (game_id, system_id) = info.into_inner();
+    let system = System::find(system_id, &state.db_pool).await?;
     
     if system.player != Some(claims.pid) {
         return Err(InternalError::AccessDenied.into());
@@ -155,7 +156,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
     tx.commit().await?;
 
     let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    let game = games.get(&game_id).cloned().ok_or(InternalError::GameUnknown)?;
     game.do_send(protocol::Message::new(
         protocol::Action::FleetCreated,
         fleet.clone(),
@@ -170,10 +171,12 @@ pub async fn donate(
     info: web::Path<(GameID,SystemID,FleetID,)>,
     claims: Claims
 ) -> Result<HttpResponse> {
+    let (game_id, system_id, fleet_id) = info.into_inner();
+
     let (s, f, sg, p) = futures::join!(
-        System::find(info.1, &state.db_pool),
-        Fleet::find(&info.2, &state.db_pool),
-        FleetSquadron::find_by_fleet(info.2, &state.db_pool),
+        System::find(system_id, &state.db_pool),
+        Fleet::find(&fleet_id, &state.db_pool),
+        FleetSquadron::find_by_fleet(fleet_id, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     let system = s?;
@@ -193,7 +196,7 @@ pub async fn donate(
 
     fleet.player = other_player.id;
 
-    fleet.update(&mut &state.db_pool).await?;
+    fleet.update(&state.db_pool).await?;
 
     #[derive(Serialize)]
     pub struct FleetTransferData{

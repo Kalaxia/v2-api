@@ -4,7 +4,7 @@ use std::str::FromStr;
 use std::fmt;
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, Hash, Eq, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
+#[sqlx(type_name = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum FleetFormation {

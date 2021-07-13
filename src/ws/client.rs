@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use actix::*;
+use actix::{Actor, Handler, StreamHandler, Running};
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use futures::executor::block_on;
@@ -98,6 +98,30 @@ impl ClientSession {
     }
 }
 
+impl ClientSession {
+    /// helper method that sends ping to client every second.
+    ///
+    /// also this method checks heartbeats from client
+    #[allow(clippy::unused_self)]
+    fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
+            // check client heartbeats
+            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
+                // heartbeat timed out
+                println!("Websocket Client heartbeat failed, disconnecting!");
+
+                // stop actor
+                ctx.stop();
+
+                // don't try to send a ping
+                return;
+            }
+
+            ctx.ping(b"");
+        });
+    }
+}
+
 impl Actor for ClientSession {
     type Context = ws::WebsocketContext<Self>;
 
@@ -164,29 +188,5 @@ impl StreamHandler<std::result::Result<ws::Message, ws::ProtocolError>> for Clie
             }
             ws::Message::Nop => (),
         };
-    }
-}
-
-impl ClientSession {
-    /// helper method that sends ping to client every second.
-    ///
-    /// also this method checks heartbeats from client
-    #[allow(clippy::unused_self)]
-    fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
-        ctx.run_interval(HEARTBEAT_INTERVAL, |act, ctx| {
-            // check client heartbeats
-            if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
-                // heartbeat timed out
-                println!("Websocket Client heartbeat failed, disconnecting!");
-
-                // stop actor
-                ctx.stop();
-
-                // don't try to send a ping
-                return;
-            }
-
-            ctx.ping(b"");
-        });
     }
 }

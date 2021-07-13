@@ -307,11 +307,13 @@ impl GameServer {
         self.tasks.insert(task_name.clone(), ctx.run_later(
             duration,
             move |this, ctx| {
-                let result = closure(this, ctx).map_err(ServerError::from);
-                this.remove_task(&task_name);
-                if result.is_err() {
-                    println!("{:?}", result.err());
-                }
+                Arbiter::spawn_fn(move || {
+                    let result = closure(this, ctx).map_err(ServerError::from);
+                    this.remove_task(&task_name);
+                    if result.is_err() {
+                        println!("{:?}", result.err());
+                    }
+                });
             }
         ));
     }

@@ -1,5 +1,5 @@
 use actix_web::{get, post, web, HttpResponse};
-use sqlx::{PgPool, Executor, postgres::{PgRow, PgQueryAs}, FromRow, Error, Postgres};
+use sqlx::{PgPool, Executor, postgres::{ PgRow, PgQueryResult }, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
@@ -63,7 +63,7 @@ impl From<ShipQueueID> for Uuid {
     fn from(sqid: ShipQueueID) -> Self { sqid.0 }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for ShipQueue {
+impl<'a> FromRow<'a, PgRow> for ShipQueue {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(ShipQueue {
             id: row.try_get("id").map(ShipQueueID)?,
@@ -115,8 +115,8 @@ impl ShipQueue {
         Ok(count.0 as u32)
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO system__ship_queues (id, system_id, category, quantity, assigned_fleet, created_at, started_at, finished_at) VALUES($1, $2, $3, $4, $5, $6, $7, $8)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
@@ -126,14 +126,14 @@ impl ShipQueue {
             .bind(self.created_at)
             .bind(self.started_at)
             .bind(self.finished_at)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("DELETE FROM system__ship_queues WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     pub async fn produce(&self, server: &GameServer) -> Result<()> {
@@ -227,9 +227,11 @@ pub async fn add_ship_queue(
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
 ) -> Result<HttpResponse> {
+    let (game_id, system_id) = info.into_inner();
+
     let (g, s, p) = join!(
-        Game::find(info.0, &state.db_pool),
-        System::find(info.1, &state.db_pool),
+        Game::find(game_id, &state.db_pool),
+        System::find(system_id, &state.db_pool),
         Player::find(claims.pid, &state.db_pool),
     );
     let game = g?;
@@ -251,7 +253,7 @@ pub async fn add_ship_queue(
     ).await?.unwrap();
 
     let sq = ship_queue.clone();
-    state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
+    state.games().get(&game_id).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
 
     Ok(HttpResponse::Created().json(ship_queue))
 }
@@ -260,8 +262,10 @@ pub async fn add_ship_queue(
 pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>, claims: Claims)
     -> Result<HttpResponse>
 {
+    let (_, system_id) = info.into_inner();
+
     let (s, p) = futures::join!(
-        System::find(info.1, &state.db_pool),
+        System::find(system_id, &state.db_pool),
         Player::find(claims.pid, &state.db_pool),
     );
     let system = s?;

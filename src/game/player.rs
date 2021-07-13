@@ -1,7 +1,7 @@
 use actix_web::{web, get, patch, post, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, Executor, FromRow, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, Executor, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use crate::{
     AppState,
@@ -47,7 +47,7 @@ impl From<PlayerID> for Uuid {
     fn from(pid: PlayerID) -> Self { pid.0 }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Player {
+impl<'a> FromRow<'a, PgRow> for Player {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Player {
             id: row.try_get::<Uuid, _>("id").ok().map(PlayerID).unwrap(),
@@ -144,25 +144,25 @@ impl Player {
             .map_err(ServerError::from)
     }
 
-    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<PgQueryResult, Error> {
         sqlx::query("UPDATE player__players SET lobby_id = NULL, game_id = $1 WHERE lobby_id = $2")
             .bind(Uuid::from(gid.clone()))
             .bind(Uuid::from(lid.clone()))
             .execute(db_pool).await
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO player__players (id, wallet, is_ready, is_connected) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(self.id))
             .bind(self.wallet as i32)
             .bind(self.ready)
             .bind(self.is_connected)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE player__players SET username = $1,
             game_id = $2,
             lobby_id = $3,
@@ -179,7 +179,7 @@ impl Player {
             .bind(self.ready)
             .bind(self.is_connected)
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 }
 
@@ -281,15 +281,17 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
 pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(GameID, FactionID)>)
     -> Result<HttpResponse>
 {
-    Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(info.0, info.1, &state.db_pool).await?))
+    let (game_id, faction_id) = info.into_inner();
+    Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(game_id, faction_id, &state.db_pool).await?))
 }
 
 #[patch("/players/{player_id}/money/")]
 pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID, FactionID, PlayerID)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
+    let (game_id, faction_id, player_id) = info.into_inner();
     let mut current_player = Player::find(claims.pid, &state.db_pool).await?;
-    let mut other_player = Player::find(info.2, &state.db_pool).await?;
+    let mut other_player = Player::find(player_id, &state.db_pool).await?;
 
     if current_player.faction != other_player.faction {
         return Err(InternalError::Conflict.into());

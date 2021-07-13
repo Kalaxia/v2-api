@@ -3,7 +3,7 @@ use actix_web::{http::StatusCode, Error as ActixWebError, ResponseError, HttpRes
 use actix_web_actors::ws::ProtocolError;
 use actix::MailboxError;
 use std::fmt::{Display, Formatter, Error as FmtError};
-use sqlx_core::{Error as SqlxError};
+use sqlx_core::error::{Error as SqlxError};
 use serde::Serialize;
 use uuid::{Error as UuidError};
 

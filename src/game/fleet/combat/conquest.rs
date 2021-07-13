@@ -29,7 +29,7 @@ use futures::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 const CONQUEST_DURATION_MAX: f64 = 60000.0;
@@ -64,7 +64,7 @@ pub struct ConquestData {
     pub fleets: Vec<Fleet>,
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Conquest {
+impl<'a> FromRow<'a, PgRow> for Conquest {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Conquest {
             id: row.try_get("id").map(ConquestID)?,
@@ -93,19 +93,19 @@ impl GameServerTask for Conquest {
 }
 
 impl Conquest {
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO fleet__combat__conquests (id, player_id, system_id, started_at, ended_at) VALUES($1, $2, $3, $4, $5)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.player))
             .bind(Uuid::from(self.system))
             .bind(self.started_at)
             .bind(self.ended_at)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE fleet__combat__conquests SET
             started_at = $2,
             ended_at = $3,
@@ -118,14 +118,14 @@ impl Conquest {
             .bind(self.is_successful)
             .bind(self.is_stopped)
             .bind(self.is_over)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("DELETE FROM fleet__combat__conquests WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     pub async fn find_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<Vec<Self>> {
@@ -165,7 +165,7 @@ impl Conquest {
         self.is_stopped = false;
         self.ended_at = ms_to_time(get_conquest_time(&fleets, self.percent, game_speed));
         self.started_at = Time::now();
-        self.update(&mut db_pool).await?;
+        self.update(db_pool).await?;
 
         Ok(())
     }
@@ -173,7 +173,7 @@ impl Conquest {
     pub async fn cancel(&mut self, server: &GameServer) -> Result<()> {
         self.ended_at = Time::now();
         self.is_over = true;
-        self.update(&mut &server.state.db_pool).await?;
+        self.update(&server.state.db_pool).await?;
         
         let conquest = self.clone();
         server.ws_broadcast(&protocol::Message::new(
@@ -198,7 +198,7 @@ impl Conquest {
     pub async fn halt(&mut self, state: &web::Data<AppState>, game_id: &GameID) -> Result<()> {
         self.is_stopped = true;
         self.percent = self.calculate_progress();
-        self.update(&mut &state.db_pool).await?;
+        self.update(&state.db_pool).await?;
 
         state.games().get(&game_id).unwrap().do_send(cancel_task!(self));
 
@@ -269,7 +269,7 @@ impl Conquest {
             is_successful: false,
             is_over: false,
         };
-        conquest.insert(&mut &server.state.db_pool).await?;
+        conquest.insert(&server.state.db_pool).await?;
 
         server.ws_broadcast(&protocol::Message::new(
             protocol::Action::ConquestStarted,
@@ -287,10 +287,10 @@ impl Conquest {
         let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?.values().cloned().collect();
 
         self.is_over = true;
-        self.update(&mut &server.state.db_pool).await?;
+        self.update(&server.state.db_pool).await?;
 
         system.player = Some(self.player.clone());
-        system.update(&mut &server.state.db_pool).await?;
+        system.update(&server.state.db_pool).await?;
 
         server.ws_broadcast(&protocol::Message::new(
             protocol::Action::SystemConquerred,

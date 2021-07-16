@@ -22,7 +22,7 @@ pub struct ShipModel {
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
+#[sqlx(type_name = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum ShipModelCategory {

@@ -22,7 +22,7 @@ use crate::{
     ws::client::ClientSession,
     AppState,
 };
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Error, Executor, Postgres};
 use sqlx_core::row::Row;
 
 pub const GAME_START_WALLET: usize = 200;
@@ -43,7 +43,7 @@ impl From<GameID> for Uuid {
     fn from(gid: GameID) -> Self { gid.0 }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Game {
+impl<'a> FromRow<'a, PgRow> for Game {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         let id : Uuid = row.try_get("id")?;
 
@@ -63,27 +63,27 @@ impl Game {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::GameUnknown))
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO game__games(id, game_speed, map_size) VALUES($1, $2, $3)")
             .bind(Uuid::from(self.id))
             .bind(self.game_speed)
             .bind(self.map_size)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update(game: Game, db_pool: &PgPool) -> Result<u64> {
+    pub async fn update(game: Game, db_pool: &PgPool) -> Result<PgQueryResult> {
         sqlx::query("UPDATE game__games SET victory_points = $2 WHERE id = $1")
             .bind(Uuid::from(game.id))
             .bind(game.victory_points)
             .execute(db_pool).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("DELETE FROM game__games WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 }
 
@@ -113,15 +113,19 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
 }
 
 #[get("/{id}/players/")]
-pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
+pub async fn get_players(state: web::Data<AppState>, info: web::Path<GameID>) -> Result<HttpResponse> {
+    let game_id = info.into_inner();
+
+    Ok(HttpResponse::Ok().json(Player::find_by_game(game_id, &state.db_pool).await?))
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
+pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<GameID>)
     -> Result<HttpResponse>
 {
-    let game = Game::find(info.0, &state.db_pool).await?;
+    let game_id = info.into_inner();
+
+    let game = Game::find(game_id, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.game != Some(game.id) {

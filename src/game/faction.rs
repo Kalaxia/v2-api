@@ -8,7 +8,7 @@ use crate::{
     lib::{Result, error::{ServerError, InternalError}},
 };
 use uuid::Uuid;
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -25,7 +25,7 @@ pub struct GameFaction{
     pub victory_points: i32,
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Faction {
+impl<'a> FromRow<'a, PgRow> for Faction {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Faction {
             id: row.try_get::<i32, _>("id").map(|id| FactionID(id as u8))?,
@@ -35,7 +35,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for Faction {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for GameFaction {
+impl<'a> FromRow<'a, PgRow> for GameFaction {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(GameFaction{
             faction: row.try_get::<i32, _>("faction_id").map(|id| FactionID(id as u8))?,
@@ -99,22 +99,22 @@ impl GameFaction {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO game__factions(game_id, faction_id, victory_points) VALUES($1, $2, $3)")
             .bind(Uuid::from(self.game))
             .bind(i32::from(self.faction))
             .bind(self.victory_points as i16)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE game__factions SET victory_points = $1 WHERE game_id = $2 AND faction_id = $3")
             .bind(self.victory_points as i16)
             .bind(Uuid::from(self.game))
             .bind(i32::from(self.faction))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 }
 

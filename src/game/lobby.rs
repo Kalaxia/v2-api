@@ -18,7 +18,7 @@ use crate::{
 };
 use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use futures::join;
 
@@ -48,7 +48,7 @@ pub struct LobbyOptionsPatch {
     pub game_speed: Option<GameOptionSpeed>,
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
+impl<'a> FromRow<'a, PgRow> for Lobby {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         let id : Uuid = row.try_get("id")?;
         let owner_id : Uuid = row.try_get("owner_id")?;
@@ -118,31 +118,31 @@ impl Lobby {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::LobbyUnknown))
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO lobby__lobbies(id, owner_id, game_speed, map_size) VALUES($1, $2, $3, $4)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.owner))
             .bind(self.game_speed)
             .bind(self.map_size)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE lobby__lobbies SET owner_id = $2, game_speed = $3, map_size = $4 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.owner))
             .bind(self.game_speed)
             .bind(self.map_size)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres>{
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres>{
         sqlx::query("DELETE FROM lobby__lobbies WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 }
 
@@ -237,8 +237,9 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
 
 #[allow(clippy::eval_order_dependence)]
 #[get("/{id}")]
-pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
-    let lobby = Lobby::find(info.0, &state.db_pool).await?;
+pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<LobbyID>) -> Result<HttpResponse> {
+    let lobby_id = info.into_inner();
+    let lobby = Lobby::find(lobby_id, &state.db_pool).await?;
 
     #[derive(Serialize)]
     struct LobbyData{
@@ -303,22 +304,20 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 #[patch("/{id}/")]
 pub async fn update_lobby_options(
     state: web::Data<AppState>,
-    info: web::Path<(LobbyID,)>,
+    info: web::Path<LobbyID>,
     data: web::Json<LobbyOptionsPatch>,
     claims: Claims
 ) -> Result<HttpResponse>
 {
-    let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
+    let lobby_id = info.into_inner();
+    let mut lobby = Lobby::find(lobby_id, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
         return Err(InternalError::AccessDenied.into());
     }
-    println!("{:?}", data);
     lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
     lobby.map_size = data.map_size.clone().map_or(GameOptionMapSize::Medium, |ms| ms);
 
-    println!("{:?}", lobby.game_speed.clone());
-    println!("{:?}", lobby.map_size.clone());
 
     let mut tx = state.db_pool.begin().await?;
     lobby.update(&mut tx).await?;
@@ -335,12 +334,13 @@ pub async fn update_lobby_options(
 }
 
 #[post("/{id}/launch/")]
-pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(LobbyID,)>)
+pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<LobbyID>)
     -> Result<HttpResponse>
 {
+    let lobby_id = info.into_inner();
     let mut games = state.games_mut();
 
-    let lobby = Lobby::find(info.0, &state.db_pool).await?;
+    let lobby = Lobby::find(lobby_id, &state.db_pool).await?;
 
     if lobby.owner != claims.pid.clone() {
         return Err(InternalError::AccessDenied.into());
@@ -367,10 +367,11 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
+pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<LobbyID>)
     -> Result<HttpResponse>
 {
-    let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
+    let lobby_id = info.into_inner();
+    let mut lobby = Lobby::find(lobby_id, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if player.lobby != Some(lobby.id) {
@@ -396,10 +397,11 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 }
 
 #[post("/{id}/players/")]
-pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
+pub async fn join_lobby(info: web::Path<LobbyID>, state: web::Data<AppState>, claims: Claims)
     -> Result<HttpResponse>
 {
-    let lobby = Lobby::find(info.0, &state.db_pool).await?;
+    let lobby_id = info.into_inner();
+    let lobby = Lobby::find(lobby_id, &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     if player.lobby.is_some() {
         return Err(InternalError::AlreadyInLobby.into());

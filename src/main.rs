@@ -209,7 +209,7 @@ fn config(cfg: &mut web::ServiceConfig) {
     .service(player::login)
     .service(web::resource("/ws/").to(ws::client::entrypoint));
 }
-
+  
 fn get_env(key: &str, default: &str) -> String {
     match env::var_os(key) {
         Some(val) => val.into_string().unwrap(),
@@ -218,7 +218,7 @@ fn get_env(key: &str, default: &str) -> String {
 }
 
 async fn create_pool() -> Result<PgPool> {
-    let result = PgPool::new(&format!(
+    let result = PgPool::connect(&format!(
         "postgres://{}:{}@{}/{}",
         &get_env("POSTGRES_USER", "kalaxia"),
         &get_env("POSTGRES_PASSWORD", "kalaxia"),

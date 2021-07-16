@@ -28,7 +28,7 @@ use crate::{
     AppState
 };
 use futures::executor::block_on;
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use futures::join;
 
@@ -55,7 +55,7 @@ pub struct SquadronAssignmentData {
     pub quantity: usize
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {
+impl<'a> FromRow<'a, PgRow> for FleetSquadron {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(FleetSquadron {
             id: row.try_get("id").map(FleetSquadronID)?,
@@ -98,46 +98,46 @@ impl FleetSquadron {
             .fetch_optional(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
     where
-        E: Executor<Database = Postgres> {
+        E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO fleet__squadrons (id, fleet_id, category, formation, quantity) VALUES($1, $2, $3, $4, $5)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.fleet))
             .bind(self.category)
             .bind(self.formation)
             .bind(self.quantity as i32)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
     where
-        E: Executor<Database = Postgres> {
+        E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE fleet__squadrons SET fleet_id = $2, category = $3, formation = $4, quantity = $5 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.fleet))
             .bind(self.category)
             .bind(self.formation)
             .bind(self.quantity as i32)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
     
-    pub async fn remove<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn remove<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("DELETE FROM fleet__squadrons WHERE id = $1")
             .bind(Uuid::from(self.id))
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn assign<E>(
+    pub async fn assign<'a, E>(
         fleet_squadron: Option<FleetSquadron>,
         fid: FleetID,
         formation: FleetFormation,
         category: ShipModelCategory,
         quantity: u16,
-        exec: &mut E
+        exec: E
     ) -> Result<()>
-        where E: Executor<Database = Postgres> {
+        where E: Executor<'a, Database = Postgres> {
         if fleet_squadron.is_none() && quantity > 0 {
             let fs = FleetSquadron{
                 id: FleetSquadronID(Uuid::new_v4()),
@@ -146,16 +146,16 @@ impl FleetSquadron {
                 quantity: quantity as u16,
                 category: category.clone(),
             };
-            fs.insert(&mut *exec).await?;
+            fs.insert(exec).await?;
         } else if fleet_squadron.is_some() && quantity > 0 {
             let mut fs = fleet_squadron.unwrap();
             if fs.category != category {
                 return Err(InternalError::Conflict.into());
             }
             fs.quantity = quantity;
-            fs.update(&mut *exec).await?;
+            fs.update(exec).await?;
         } else if fleet_squadron.is_some() {
-            fleet_squadron.unwrap().remove(&mut *exec).await?;
+            fleet_squadron.unwrap().remove(exec).await?;
         }
         Ok(())
     }
@@ -169,7 +169,7 @@ impl FleetSquadron {
         if let Some(fs) = fleet_squadron.clone() {
             quantity += fs.quantity;
         }
-        FleetSquadron::assign(fleet_squadron, fid, formation, category, quantity, &mut db_pool).await
+        FleetSquadron::assign(fleet_squadron, fid, formation, category, quantity, db_pool).await
     }
 }
 
@@ -180,18 +180,19 @@ pub async fn assign_ships(
     json_data: web::Json<SquadronAssignmentData>,
     claims: Claims
 ) -> Result<HttpResponse> {
+    let (game_id, system_id, fleet_id) = info.into_inner();
     let (g, s, f, p, sq, fs) = join!(
-        Game::find(info.0, &state.db_pool),
-        System::find(info.1, &state.db_pool),
-        Fleet::find(&info.2, &state.db_pool),
+        Game::find(game_id, &state.db_pool),
+        System::find(system_id, &state.db_pool),
+        Fleet::find(&fleet_id, &state.db_pool),
         Player::find(claims.pid.clone(), &state.db_pool),
         Squadron::find_by_system_and_category(
-            info.1,
+            system_id,
             json_data.category,
             &state.db_pool
         ),
         FleetSquadron::find_by_fleet_and_formation(
-            info.2,
+            fleet_id,
             json_data.formation,
             &state.db_pool
         )
@@ -259,7 +260,7 @@ pub async fn assign_ships(
 
     if let Some(sq) = ship_queue {
         let data = sq.clone();
-        state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
+        state.games().get(&game_id).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
         return Ok(HttpResponse::Created().json(data));
     }
     Ok(HttpResponse::NoContent().finish())

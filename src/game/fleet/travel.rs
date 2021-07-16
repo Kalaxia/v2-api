@@ -92,12 +92,14 @@ pub async fn travel(
     json_data: web::Json<FleetTravelRequest>,
     claims: Claims
 ) -> Result<HttpResponse> {
+    let (game_id, system_id, fleet_id) = info.into_inner();
+
     let (ds, g, s, f, sg, p) = futures::join!(
         System::find(json_data.destination_system_id, &state.db_pool),
-        Game::find(info.0, &state.db_pool),
-        System::find(info.1, &state.db_pool),
-        Fleet::find(&info.2, &state.db_pool),
-        FleetSquadron::find_by_fleet(info.2, &state.db_pool),
+        Game::find(game_id, &state.db_pool),
+        System::find(system_id, &state.db_pool),
+        Fleet::find(&fleet_id, &state.db_pool),
+        FleetSquadron::find_by_fleet(fleet_id, &state.db_pool),
         Player::find(claims.pid, &state.db_pool)
     );
     
@@ -130,9 +132,9 @@ pub async fn travel(
             game.game_speed.into_travel_speed()
         )).into()
     );
-    fleet.update(&mut &state.db_pool).await?;
+    fleet.update(&state.db_pool).await?;
     let games = state.games();
-    let game = games.get(&info.0).cloned().ok_or(InternalError::GameUnknown)?;
+    let game = games.get(&game_id).cloned().ok_or(InternalError::GameUnknown)?;
 
     if let Some(mut conquest) = Conquest::find_current_by_system(&system.id, &state.db_pool).await? {
         let count = Fleet::count_stationed_by_system(&system.id, &state.db_pool).await?;
@@ -159,7 +161,7 @@ pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Re
     };
 
     fleet.change_system(&destination_system);
-    fleet.update(&mut &server.state.db_pool).await?;
+    fleet.update(&server.state.db_pool).await?;
 
     let outcome = resolve_arrival_outcome(&destination_system, &server, fleet, &player, system_owner).await?;
 

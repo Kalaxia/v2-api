@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Duration, Utc};
-use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
+use sqlx::{PgPool, postgres::{ PgRow, PgQueryResult }, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use futures::executor::block_on;
 use crate::{
@@ -37,7 +37,7 @@ pub struct Building {
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
+#[sqlx(type_name = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum BuildingStatus {
@@ -46,7 +46,7 @@ pub enum BuildingStatus {
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
-#[sqlx(rename = "VARCHAR")]
+#[sqlx(type_name = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum BuildingKind {
@@ -84,7 +84,7 @@ impl GameServerTask for Building {
     }
 }
 
-impl<'a> FromRow<'a, PgRow<'a>> for Building {
+impl<'a> FromRow<'a, PgRow> for Building {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Building {
             id: row.try_get("id").map(BuildingID)?,
@@ -174,8 +174,8 @@ impl Building {
         Ok(count.0 as u32)
     }
 
-    pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn insert<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("INSERT INTO map__system_buildings (id, system_id, kind, status, created_at, built_at) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.system))
@@ -183,15 +183,15 @@ impl Building {
             .bind(self.status)
             .bind(self.created_at)
             .bind(self.built_at)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
-    pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
-        where E: Executor<Database = Postgres> {
+    pub async fn update<'a, E>(&self, exec: E) -> Result<PgQueryResult>
+        where E: Executor<'a, Database = Postgres> {
         sqlx::query("UPDATE map__system_buildings SET status = $2 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(self.status)
-            .execute(&mut *exec).await.map_err(ServerError::from)
+            .execute(exec).await.map_err(ServerError::from)
     }
 
     async fn construct(&mut self, server: &GameServer) -> Result<()> {
@@ -229,8 +229,10 @@ pub async fn create_building(
 )
     -> Result<HttpResponse>
 {
-    let game = Game::find(info.0, &state.db_pool).await?;
-    let system = System::find(info.1.clone(), &state.db_pool).await?;
+    let (game_id, system_id) = info.into_inner();
+
+    let game = Game::find(game_id, &state.db_pool).await?;
+    let system = System::find(system_id.clone(), &state.db_pool).await?;
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
 
     if system.player != Some(player.id) {
@@ -245,7 +247,7 @@ pub async fn create_building(
     let building_data = data.kind.to_data();
     player.spend(building_data.cost as usize)?;
 
-    let building = Building::new(info.1.clone(), data.kind, building_data, game.game_speed);
+    let building = Building::new(system_id.clone(), data.kind, building_data, game.game_speed);
 
     let mut tx = state.db_pool.begin().await?;
     player.update(&mut tx).await?;
@@ -253,7 +255,7 @@ pub async fn create_building(
     tx.commit().await?;
 
     let mut b = building.clone();
-    state.games().get(&info.0).unwrap().do_send(task!(building -> move |gs: &GameServer| block_on(b.construct(gs))));
+    state.games().get(&game_id).unwrap().do_send(task!(building -> move |gs: &GameServer| block_on(b.construct(gs))));
 
     Ok(HttpResponse::Created().json(building))
 }

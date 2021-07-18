@@ -4,6 +4,7 @@ use crate::{
     cancel_task,
     lib::{
         time::{ms_to_time, Time},
+        log::log,
         error::ServerError,
         Result
     },
@@ -24,9 +25,7 @@ use crate::{
     ws::protocol,
 };
 use chrono::{DateTime, Utc};
-use futures::{
-    executor::block_on,
-};
+use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};
@@ -270,6 +269,12 @@ impl Conquest {
             is_over: false,
         };
         conquest.insert(&mut &server.state.db_pool).await?;
+
+        log(gelf::Level::Informational, "New conquest", "A new conquest has started", vec![
+            ("player_id", fleets[0].player.0.to_string()),
+            ("fleet_id", fleets[0].id.0.to_string()),
+            ("system_id", system.id.0.to_string())
+        ], &server.state.logger);
 
         server.ws_broadcast(&protocol::Message::new(
             protocol::Action::ConquestStarted,

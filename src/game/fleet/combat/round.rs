@@ -1,20 +1,29 @@
 use std::collections::HashMap;
 use crate::{
+    task,
+    lib::{
+        time::Time,
+        error::ServerError,
+        Result
+    },
     game::{
         faction::{FactionID},
         fleet::{
             combat::{
-                battle::{BattleID, Battle},
+                battle::{BattleID, Battle, get_factions_fleets, update_fleets},
             },
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadronID, FleetSquadron},
-        }
+        },
+        game::server::{ GameServer, GameServerTask }
     }
 };
-use serde::{Serialize};
+use futures::executor::block_on;
+use chrono::{DateTime, Duration, Utc};
+use serde::{Deserialize, Serialize};
 use rand::prelude::*;
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Round {
     pub battle: BattleID,
     pub number: u16,
@@ -22,7 +31,7 @@ pub struct Round {
     pub squadron_actions: Vec<SquadronAction>,
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Deserialize, Serialize, Clone, Copy)]
 pub struct FleetAction {
     fleet: FleetID,
     battle: BattleID,
@@ -30,7 +39,7 @@ pub struct FleetAction {
     round_number: u16
 }
 
-#[derive(Serialize, Clone, Copy, sqlx::Type)]
+#[derive(Deserialize, Serialize, Clone, Copy, sqlx::Type)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum FleetActionKind {
     Join,
@@ -38,7 +47,7 @@ pub enum FleetActionKind {
     Surrender
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Deserialize, Serialize, Clone, Copy)]
 pub struct SquadronAction {
     squadron: FleetSquadronID,
     battle: BattleID,
@@ -46,48 +55,79 @@ pub struct SquadronAction {
     round_number: u16
 }
 
-#[derive(Serialize, Clone, Copy)]
+#[derive(Deserialize, Serialize, Clone, Copy)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
 pub enum SquadronActionKind {
     Attack { target: FleetSquadronID, loss: u16 }
 }
 
-pub async fn fight_round(mut battle: &mut Battle, number: u16, new_fleets: HashMap<FleetID, Fleet>) -> Option<Round> {
-    let bid = battle.id;
-    let new_round = move || {
+impl GameServerTask for Round {
+    fn get_task_id(&self) -> String {
+        format!("{}.{}", self.battle.0.to_string(), self.number.to_string())
+    }
+
+    fn get_task_end_time(&self) -> Time {
+        let mut seconds = 1;
+        if 1 == self.number {
+            seconds = 3;
+        }
+
+        Time(Utc::now().checked_add_signed(Duration::seconds(seconds)).expect("Could not add round preparation time"))
+    }
+}
+
+impl Round {
+    pub fn new(battle_id: BattleID, number: u16) -> Round
+    {
         Round {
-            battle: bid,
+            battle: battle_id,
             fleet_actions: vec![],
             squadron_actions: vec![],
             number,
         }
-    };
+    }
 
-    let mut round = None;
+    pub async fn execute(&mut self, server: &GameServer) -> Result<()> {
+        let mut battle = Battle::find(self.battle, &server.state.db_pool).await?;
+        
+        let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
+        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
+            battle.fleets.get_mut(&fid).unwrap().extend(fleets);
+        }
 
-    // new fleets arrival
-    for fleet in new_fleets.values() {
-        round
-            .get_or_insert_with(new_round)
-            .fleet_actions.push(FleetAction{
+        self.fight(&mut battle, new_fleets);
+        battle.rounds.push(self.clone());
+        battle.fleets = update_fleets(&battle, &server.state.db_pool).await?;
+        battle.update(&mut &server.state.db_pool).await?;
+
+        if battle.is_over() {
+            battle.end(server).await?;
+        } else {
+            let mut next_round = Round::new(battle.id, self.number + 1);
+            server.state.games().get(&server.id).unwrap().do_send(task!(next_round -> move |gs| block_on(next_round.execute(gs))));
+        }
+        Ok(())
+    }
+
+    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: HashMap<FleetID, Fleet>) {
+        // new fleets arrival
+        for fleet in new_fleets.values() {
+            self.fleet_actions.push(FleetAction{
                 battle: battle.id,
                 fleet: fleet.id,
                 kind: FleetActionKind::Join,
-                round_number: number,
+                round_number: self.number,
             });
-    }
-
-    // make each squadron fight
-    for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
-        // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
-        if let Some(act) = attack(&mut battle, fid, &squadron, number) {
-            round
-                .get_or_insert_with(new_round)
-                .squadron_actions.push(act);
+        }
+    
+        // make each squadron fight
+        for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
+            // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
+            if let Some(act) = attack(&mut battle, fid, &squadron, self.number) {
+                self.squadron_actions.push(act);
+            }
         }
     }
-
-    round
 }
 
 fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Option<SquadronAction> {
@@ -246,6 +286,8 @@ mod tests {
         Battle{
             id: BattleID(Uuid::new_v4()),
             system: SystemID(Uuid::new_v4()),
+            attacker: FleetID(Uuid::new_v4()),
+            defender_faction: None,
             fleets: faction_fleets,
             rounds: vec![],
             victor: None,

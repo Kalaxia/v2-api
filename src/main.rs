@@ -30,6 +30,11 @@ use std::env;
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use sqlx::PgPool;
 
+extern crate gelf;
+
+use gelf::{Logger as GelfLogger, TcpBackend, NullBackend, Message, Level};
+use log::LevelFilter;
+
 mod ws;
 mod game;
 mod lib;
@@ -57,6 +62,7 @@ use lib::Result;
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
     db_pool: PgPool,
+    logger: GelfLogger,
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
@@ -128,6 +134,7 @@ impl AppState {
 async fn generate_state() -> AppState {
     AppState {
         db_pool: create_pool().await.unwrap(),
+        logger: create_logger(),
         games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
         clients: RwLock::new(HashMap::new()),
@@ -231,41 +238,48 @@ async fn create_pool() -> Result<PgPool> {
     Ok(result?)
 }
 
-#[actix_rt::main]
-#[cfg(feature="ssl-secure")]
-async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "actix_web=info");
-    env_logger::init();
+fn create_logger() -> GelfLogger {
+    #[cfg(feature="graylog")]
+    let backend = TcpBackend::new(&format!(
+        "{}:{}",
+        &get_env("GRAYLOG_HOST", "kalaxia_v2_graylog"),
+        &get_env("GRAYLOG_PORT", "1514")
+    ))
+        .expect("Failed to create TCP backend");
+    #[cfg(not(feature="graylog"))]
+    let backend = NullBackend::new();
 
-    let key = get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem");
-    let cert = get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem");
+    let logger = GelfLogger::new(Box::new(backend))
+        .expect("Failed to determine hostname");
 
-    let mut ssl_config = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
-    ssl_config.set_private_key_file(key, SslFiletype::PEM).unwrap();
-    ssl_config.set_certificate_chain_file(cert).unwrap();
-
-    let state = web::Data::new(generate_state().await);
-
-    HttpServer::new(move || App::new()
-        .wrap(Logger::default())
-        .app_data(state.clone()).configure(config))
-        .bind_openssl(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?
-        .run()
-        .await
+    logger
 }
 
 #[actix_rt::main]
-#[cfg(not(feature="ssl-secure"))]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
-    
+
     let state = web::Data::new(generate_state().await);
 
-    HttpServer::new(move || App::new()
+    let mut server = HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .app_data(state.clone()).configure(config))
-        .bind(get_env("LISTENING_URL", "127.0.0.1:80"))?
-        .run()
-        .await
+        .app_data(state.clone()).configure(config));
+
+    #[cfg(feature="ssl-secure")]
+    {
+        let key = get_env("SSL_PRIVATE_KEY", "../var/ssl/key.pem");
+        let cert = get_env("SSL_CERTIFICATE", "../var/ssl/cert.pem");
+
+        let mut ssl_config = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+        ssl_config.set_private_key_file(key, SslFiletype::PEM).unwrap();
+        ssl_config.set_certificate_chain_file(cert).unwrap();
+
+        server = server.bind_openssl(get_env("LISTENING_URL", "127.0.0.1:443"), ssl_config)?;
+    }
+    #[cfg(not(feature="ssl-secure"))]
+    {
+        server = server.bind(get_env("LISTENING_URL", "127.0.0.1:80"))?;
+    }
+    server.run().await
 }

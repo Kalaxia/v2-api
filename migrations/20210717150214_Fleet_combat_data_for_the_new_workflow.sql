@@ -1,0 +1,3 @@
+ALTER TABLE fleet__combat__battles ADD attacker_id UUID NOT NULL, ADD defender_faction_id INT DEFAULT NULL;
+ALTER TABLE fleet__combat__battles ADD CONSTRAINT attacker_fkey FOREIGN KEY (attacker_id) REFERENCES fleet__fleets (id) ON DELETE CASCADE;
+ALTER TABLE fleet__combat__battles ADD CONSTRAINT defender_faction_fkey FOREIGN KEY (defender_faction_id) REFERENCES faction__factions (id) ON DELETE CASCADE;

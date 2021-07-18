@@ -1,5 +1,5 @@
 use actix_web::{post, patch, web, HttpResponse};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use std::fmt;
 use crate::{
@@ -27,7 +27,7 @@ pub const FLEET_RANGE: f64 = 20.0;
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Fleet{
     pub id: FleetID,
     pub system: SystemID,

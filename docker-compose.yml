@@ -30,3 +30,11 @@ services:
             - "./var/data:/var/lib/postgresql/data"
         networks:
             - api
+
+    graylog:
+        container_name: kalaxia_v2_graylog
+        image: graylog/graylog:4.0
+        env_file:
+            - kalaxia.env
+        networks:
+            - api

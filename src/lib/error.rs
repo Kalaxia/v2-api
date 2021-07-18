@@ -44,7 +44,7 @@ pub enum ServerError {
     UuidError(
         #[serde(skip_serializing)]
         UuidError
-    ),
+    )
 }
 
 impl ServerError {

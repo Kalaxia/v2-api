@@ -24,9 +24,7 @@ use crate::{
     ws::protocol,
 };
 use chrono::{DateTime, Utc};
-use futures::{
-    executor::block_on,
-};
+use futures::executor::block_on;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Transaction, Postgres, types::Json};

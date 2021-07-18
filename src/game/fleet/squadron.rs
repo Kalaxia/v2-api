@@ -32,14 +32,14 @@ use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postg
 use sqlx_core::row::Row;
 use futures::join;
 
-#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
+#[derive(Deserialize, Serialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetSquadronID(pub Uuid);
 
 impl From<FleetSquadronID> for Uuid {
     fn from(fsid: FleetSquadronID) -> Self { fsid.0 }
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct FleetSquadron {
     pub id: FleetSquadronID,
     pub fleet: FleetID,
@@ -48,7 +48,7 @@ pub struct FleetSquadron {
     pub quantity: u16,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 pub struct SquadronAssignmentData {
     pub formation: FleetFormation,
     pub category: ShipModelCategory,

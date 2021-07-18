@@ -208,7 +208,7 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
 
 async fn process_arrival_outcome(outcome: &FleetArrivalOutcome, server: &GameServer) -> Result<()> {
     match outcome {
-        FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::prepare(&fleet, &fleets, &system, *defender_faction, &server).await,
+        FleetArrivalOutcome::Battle { fleet, fleets, system, defender_faction } => Battle::engage(&fleet, &fleets, &system, *defender_faction, &server).await,
         FleetArrivalOutcome::Colonize { fleet, system } => Conquest::resume(fleet, &system, None, &server).await,
         FleetArrivalOutcome::Conquer { fleet, system } => Conquest::resume(fleet, &system, None, &server).await,
         _ => Ok(())

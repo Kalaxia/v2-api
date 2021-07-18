@@ -1,18 +1,3 @@
-DROP TABLE IF EXISTS lobby__lobbies CASCADE;
-DROP TABLE IF EXISTS fleet__squadrons CASCADE;
-DROP TABLE IF EXISTS fleet__fleets CASCADE;
-DROP TABLE IF EXISTS fleet__combat__reports CASCADE;
-DROP TABLE IF EXISTS fleet__combat__conquests CASCADE;
-DROP TABLE IF EXISTS fleet__combat__battles CASCADE;
-DROP TABLE IF EXISTS system__ship_queues CASCADE;
-DROP TABLE IF EXISTS map__systems CASCADE;
-DROP TABLE IF EXISTS map__system_buildings CASCADE;
-DROP TABLE IF EXISTS map__system_squadrons CASCADE;
-DROP TABLE IF EXISTS game__games CASCADE;
-DROP TABLE IF EXISTS game__factions CASCADE;
-DROP TABLE IF EXISTS player__players CASCADE;
-DROP TABLE IF EXISTS faction__factions CASCADE;
-
 CREATE TABLE faction__factions(
     id SERIAL PRIMARY KEY,
     name VARCHAR(25) NOT NULL,

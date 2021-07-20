@@ -16,13 +16,13 @@ RUN mkdir src/
 
 RUN echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs
 
-RUN cargo build --release --features=vendored,$FEATURES
+RUN cargo build --release --features="vendored,$FEATURES"
 
 RUN rm -f target/release/deps/kalaxia_api*
 
 COPY src src/
 
-RUN cargo build --release --features=vendored,$FEATURES
+RUN cargo build --release --features="vendored,$FEATURES"
 
 # ------------------------------------------------------------------------------
 # Final Stage

@@ -7,6 +7,7 @@ use crate::{
         Result,
         error::{ServerError, InternalError},
         time::Time,
+        log::log,
         auth::Claims
     },
     game::{
@@ -24,10 +25,10 @@ use std::collections::HashMap;
 
 pub const FLEET_RANGE: f64 = 20.0;
 
-#[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
+#[derive(Serialize, Debug, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct FleetID(pub Uuid);
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Fleet{
     pub id: FleetID,
     pub system: SystemID,
@@ -194,6 +195,13 @@ pub async fn donate(
     fleet.player = other_player.id;
 
     fleet.update(&mut &state.db_pool).await?;
+
+    log(gelf::Level::Informational, "Fleet donation", "A fleet has been given", vec![
+        ("donator_id", player.id.0.to_string()),
+        ("receiver_id", other_player.id.0.to_string()),
+        ("fleet_id", fleet.id.0.to_string()),
+        ("system_id", system.id.0.to_string()),
+    ], &state.logger);
 
     #[derive(Serialize)]
     pub struct FleetTransferData{

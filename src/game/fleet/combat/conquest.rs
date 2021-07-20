@@ -182,6 +182,11 @@ impl Conquest {
         ));
         server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
 
+        log(gelf::Level::Informational, "Conquest cancelled", "The last fleet executing the conquest has travelled elsewhere", vec![
+            ("conquest_id", conquest.id.0.to_string()),
+            ("system_id", conquest.system.0.to_string()),
+        ], &server.state.logger);
+
         Ok(())
     }
 
@@ -255,8 +260,9 @@ impl Conquest {
     }
 
     pub async fn new(fleet: &Fleet, fleets: Vec<&Fleet>, system: &System, game_speed: GameOptionSpeed, server: &GameServer) -> Result<()> {
+        let conquest_id = ConquestID(Uuid::new_v4());
         let mut conquest = Conquest{
-            id: ConquestID(Uuid::new_v4()),
+            id: conquest_id,
             player: fleets[0].player.clone(),
             system: system.id,
             fleet: Some(fleet.id),
@@ -271,6 +277,7 @@ impl Conquest {
         conquest.insert(&mut &server.state.db_pool).await?;
 
         log(gelf::Level::Informational, "New conquest", "A new conquest has started", vec![
+            ("conquest_id", conquest_id.0.to_string()),
             ("player_id", fleets[0].player.0.to_string()),
             ("fleet_id", fleets[0].id.0.to_string()),
             ("system_id", system.id.0.to_string())
@@ -302,6 +309,12 @@ impl Conquest {
             ConquestData{ system, fleets },
             None
         ));
+
+        log(gelf::Level::Informational, "Conquest succeeded", "A new conquest has started", vec![
+            ("conquest_id", self.id.0.to_string()),
+            ("player_id", self.player.0.to_string()),
+            ("system_id", self.system.0.to_string())
+        ], &server.state.logger);
 
         Ok(())
     }

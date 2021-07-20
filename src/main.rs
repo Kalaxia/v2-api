@@ -240,12 +240,15 @@ async fn create_pool() -> Result<PgPool> {
 
 fn create_logger() -> GelfLogger {
     #[cfg(feature="graylog")]
-    let backend = TcpBackend::new(&format!(
-        "{}:{}",
-        &get_env("GRAYLOG_HOST", "kalaxia_v2_graylog"),
-        &get_env("GRAYLOG_PORT", "1514")
-    ))
-        .expect("Failed to create TCP backend");
+    let backend = {
+        println!("Graylog feature enabled");
+
+        TcpBackend::new(&format!(
+            "{}:{}",
+            &get_env("GRAYLOG_HOST", "kalaxia_v2_graylog"),
+            &get_env("GRAYLOG_PORT", "1514")
+        )).expect("Failed to create TCP backend")
+    };
     #[cfg(not(feature="graylog"))]
     let backend = NullBackend::new();
 

@@ -255,7 +255,7 @@ impl System {
 }
 
 pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Result<(Vec<System>, u32)> {
-    let graph = map_size.to_galaxy_builder().build(Point { x:0f64, y:0f64 }).expect("Failed to generate the galaxy map");
+    let graph = map_size.to_galaxy_builder().build(Point { x: 0_f64, y: 0_f64 }).expect("Failed to generate the galaxy map");
 
     let mut probability: f64 = 0.5;
     let mut nb_victory_systems: u32 = 0;
@@ -272,7 +272,7 @@ pub async fn generate_systems(gid: GameID, map_size: GameOptionMapSize) -> Resul
     if nb_victory_systems == 0 {
         // We ensure that there is at least on victory system
         let coord_random = Coordinates::polar(
-            rng.gen_range(0_f64, 0.2_f64.powi(2)).sqrt(),
+            rng.gen_range(0_f64, 0.2_f64 * 0.2_f64).sqrt(),
             rng.gen_range( - std::f64::consts::PI, std::f64::consts::PI)
         );
         system_list.iter_mut()

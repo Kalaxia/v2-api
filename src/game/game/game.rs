@@ -132,7 +132,9 @@ pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Pa
     let games = state.games();
     let game_server = games.get(&game.id).expect("Game exists in DB but not in HashMap");
     let (client, is_empty) = Arc::try_unwrap(game_server.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
-    state.add_client(&player.id, client.clone());
+    if let Some(c) = client {
+        state.add_client(&player.id, c);
+    }
     if is_empty {
         drop(games);
         state.clear_game(&game).await?;

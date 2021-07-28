@@ -33,7 +33,6 @@ use sqlx::PgPool;
 extern crate gelf;
 
 use gelf::{Logger as GelfLogger, TcpBackend, NullBackend, Message, Level};
-use log::LevelFilter;
 
 mod ws;
 mod game;
@@ -57,6 +56,7 @@ use game::{
     ship::squadron
 };
 use lib::Result;
+use ws::protocol;
 
 /// Global state of the game, containing everything we need to access from everywhere.
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
@@ -66,6 +66,7 @@ pub struct AppState {
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
+    missing_messages: RwLock<HashMap<player::PlayerID, Vec<protocol::Message>>>,
 }
 
 macro_rules! res_access {
@@ -99,9 +100,7 @@ impl AppState {
     pub async fn clear_game(&self, game: &g::Game) -> lib::Result<()> {
         let game_server = {
             let mut games = self.games_mut();
-            let g = games.get(&game.id).unwrap().clone();
-            games.remove(&game.id);
-            g
+            games.remove(&game.id).unwrap()
         };
         game_server.do_send(GameEndMessage{});
         let mut tx = self.db_pool.begin().await?;
@@ -129,6 +128,7 @@ impl AppState {
     res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<GameServer>> }
     res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
     res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
+    res_access!{ missing_messages, missing_messages_mut : HashMap<player::PlayerID, Vec<protocol::Message>> }
 }
 
 async fn generate_state() -> AppState {
@@ -138,6 +138,7 @@ async fn generate_state() -> AppState {
         games: RwLock::new(HashMap::new()),
         lobbies: RwLock::new(HashMap::new()),
         clients: RwLock::new(HashMap::new()),
+        missing_messages: RwLock::new(HashMap::new()),
     }
 }
 

@@ -105,7 +105,6 @@ impl Round {
         battle.fleets = update_fleets(&battle, &server).await?;
         battle.update(&mut &server.state.db_pool).await?;
 
-        // remaining fleets are grouped by faction ID. If there is less than two factions present, the fight is over
         if battle.is_over() {
             battle.end(server).await?;
         } else {

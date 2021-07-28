@@ -50,12 +50,12 @@ impl From<PlayerID> for Uuid {
 impl<'a> FromRow<'a, PgRow<'a>> for Player {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
         Ok(Player {
-            id: row.try_get::<Uuid, _>("id").ok().map(PlayerID).unwrap(),
+            id: row.try_get("id").map(PlayerID)?,
             username: row.try_get("username")?,
-            faction: row.try_get::<i32, _>("faction_id").ok().map(|id| FactionID(id as u8)),
-            game: row.try_get::<Uuid, _>("game_id").ok().map(GameID),
-            lobby: row.try_get::<Uuid, _>("lobby_id").ok().map(LobbyID),
-            wallet: row.try_get::<i32, _>("wallet").map(|w| w as usize)?,
+            faction: row.try_get("faction_id").map(|id: i32| FactionID(id as u8)).ok(),
+            game: row.try_get("game_id").map(GameID).ok(),
+            lobby: row.try_get("lobby_id").map(LobbyID).ok(),
+            wallet: row.try_get("wallet").map(|w: i32| w as usize)?,
             ready: row.try_get("is_ready")?,
             is_connected: row.try_get("is_connected")?,
         })
@@ -101,23 +101,25 @@ impl Player {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_faction(fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM player__players WHERE faction_id = $1")
+    pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
+        sqlx::query_as("SELECT id FROM player__players WHERE game_id = $1 AND faction_id = $2")
+            .bind(Uuid::from(gid))
             .bind(i32::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
     
-    pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1 AND faction_id = $2")
-            .bind(Uuid::from(gid))
-            .bind(i32::from(fid))
-            .fetch_all(db_pool).await.map_err(ServerError::from)
+    pub async fn find_ids_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<PlayerID>> {
+       Self::find_by_game_and_faction(gid, fid, db_pool).await.map(|vec| vec.iter().map(|p| p.id).collect())
     }
     
     pub async fn find_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<Self>> {
         sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1")
             .bind(Uuid::from(gid))
             .fetch_all(db_pool).await.map_err(ServerError::from)
+    }
+    
+    pub async fn find_ids_by_game(gid: GameID, db_pool: &PgPool) -> Result<Vec<PlayerID>> {
+        Self::find_by_game(gid, db_pool).await.map(|vec| vec.iter().map(|p| p.id).collect())
     }
     
     pub async fn find_by_lobby(lid: LobbyID, db_pool: &PgPool) -> Result<Vec<Self>> {

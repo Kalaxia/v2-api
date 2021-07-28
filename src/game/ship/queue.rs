@@ -163,7 +163,7 @@ impl ShipQueue {
 
         tx.commit().await?;
 
-        server.ws_send(&player.id, protocol::Message::new(
+        server.player_broadcast(&player.id, &protocol::Message::new(
             protocol::Action::ShipQueueFinished,
             self.clone(),
             None,

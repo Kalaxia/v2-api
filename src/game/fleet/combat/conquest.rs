@@ -179,7 +179,7 @@ impl Conquest {
             protocol::Action::ConquestCancelled,
             conquest.clone(),
             None
-        ));
+        )).await?;
         server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
 
         log(gelf::Level::Informational, "Conquest cancelled", "The last fleet executing the conquest has travelled elsewhere", vec![
@@ -287,7 +287,7 @@ impl Conquest {
             protocol::Action::ConquestStarted,
             conquest.clone(),
             None
-        ));
+        )).await?;
 
         server.state.games().get(&server.id).unwrap().do_send(task!(conquest -> move |server| block_on(conquest.end(&server))));
 
@@ -308,7 +308,7 @@ impl Conquest {
             protocol::Action::SystemConquerred,
             ConquestData{ system, fleets },
             None
-        ));
+        )).await?;
 
         log(gelf::Level::Informational, "Conquest succeeded", "A new conquest has started", vec![
             ("conquest_id", self.id.0.to_string()),

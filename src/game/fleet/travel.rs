@@ -170,8 +170,10 @@ pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Re
 
     let outcome = resolve_arrival_outcome(&destination_system, &server, fleet, &player, system_owner).await?;
 
-    Option::<protocol::Message>::from(outcome.clone()).map(|message| server.ws_broadcast(&message));
-
+    if let Some(message) = Option::<protocol::Message>::from(outcome.clone()) {
+        server.ws_broadcast(&message).await?;
+    }
+    
     process_arrival_outcome(&outcome, &server).await
 }
 

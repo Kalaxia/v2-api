@@ -66,7 +66,7 @@ pub struct AppState {
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
-    pub missing_messages: RwLock<HashMap<player::PlayerID, Vec<protocol::Message>>>,
+    missing_messages: RwLock<HashMap<player::PlayerID, Vec<protocol::Message>>>,
 }
 
 macro_rules! res_access {
@@ -100,9 +100,7 @@ impl AppState {
     pub async fn clear_game(&self, game: &g::Game) -> lib::Result<()> {
         let game_server = {
             let mut games = self.games_mut();
-            let g = games.get(&game.id).unwrap().clone();
-            games.remove(&game.id);
-            g
+            games.remove(&game.id).unwrap()
         };
         game_server.do_send(GameEndMessage{});
         let mut tx = self.db_pool.begin().await?;

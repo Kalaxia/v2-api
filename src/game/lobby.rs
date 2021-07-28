@@ -82,12 +82,12 @@ impl LobbyServer {
         clients.insert(pid, client);
     }
 
+    // Remove the player from the lobby's list and notify all remaining players
     pub fn remove_player(&mut self, pid: PlayerID) -> actix::Addr<ClientSession> {
-        let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
-        let client = clients.get(&pid).unwrap().clone();
-        // Remove the player from the lobby's list and notify all remaining players
-        clients.remove(&pid);
-        drop(clients);
+        let client = {
+            let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
+            clients.remove(&pid).unwrap()
+        };
         self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),

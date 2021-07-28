@@ -285,13 +285,7 @@ impl GameServer {
             Some(pid),
         )).await?;
         let mut clients = self.clients.write().expect("Poisoned lock on game players");
-        if let Some(c) = clients.get(&pid) {
-            let client = c.clone();
-            clients.remove(&pid);
-
-            return Ok(Some(client));
-        }
-        Ok(None)
+        Ok(clients.remove(&pid))
     }
 
     pub fn add_task<F>(
@@ -527,12 +521,12 @@ impl Handler<GameEndMessage> for GameServer {
 fn run_interval<F>(
     ctx: &mut <GameServer as Actor>::Context,
     duration: Duration,
-    closure: F
+    mut closure: F
 )
-    where F: FnOnce(&mut GameServer, & <GameServer as Actor>::Context) -> Result<()> + 'static + Clone,
+    where F: FnMut(&mut GameServer, & <GameServer as Actor>::Context) -> Result<()> + 'static,
 {
     ctx.run_interval(duration, move |this, ctx| {
-        let result = closure.clone()(this, ctx).map_err(ServerError::from);
+        let result = closure(this, ctx).map_err(ServerError::from);
         if result.is_err() {
             println!("{:?}", result.err());
         }

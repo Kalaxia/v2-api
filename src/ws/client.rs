@@ -92,12 +92,11 @@ pub struct ClientSession {
 
 impl ClientSession {
     async fn logout(&self) -> Result<()> {
-        let mut clients = self.state.clients_mut();
         let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
-        if clients.contains_key(&self.pid) {
+        {
+            let mut clients = self.state.clients_mut();
             clients.remove(&self.pid);
-        }
-        drop(clients);
+        };
 
         log(
             gelf::Level::Warning,

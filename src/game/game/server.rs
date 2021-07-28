@@ -60,7 +60,7 @@ impl Handler<protocol::Message> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(&msg);
+        block_on(self.ws_broadcast(&msg));
     }
 }
 
@@ -68,18 +68,18 @@ impl Actor for GameServer {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        self.ws_broadcast(&protocol::Message::new(
+        block_on(self.ws_broadcast(&protocol::Message::new(
             protocol::Action::LobbyLaunched,
             self.id.clone(),
             None,
-        ));
+        )));
         
         self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
         self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
-        self.run_interval(ctx, Duration::new(5, 0), move |this, _| {
+        run_interval(ctx, Duration::new(5, 0), move |this, _| {
             block_on(this.produce_income())
         });
-        self.run_interval(ctx, Duration::new(60, 0), move |this, _| {
+        run_interval(ctx, Duration::new(60, 0), move |this, _| {
             block_on(this.distribute_victory_points())
         });
     }
@@ -107,9 +107,7 @@ impl GameServer {
             protocol::Action::SystemsCreated,
             (),
             None
-        ));
-
-        Ok(())
+        )).await
     }
 
     async fn begin(&self) -> Result<()> {
@@ -124,31 +122,44 @@ impl GameServer {
                 victory_points: game.victory_points
             },
             None
-        ));
-        Ok(())
+        )).await
     }
 
-    pub fn ws_broadcast(&self, message: &protocol::Message) {
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for c in clients.values() {
-            c.do_send(message.clone());
+    fn clients(&self) -> std::sync::RwLockReadGuard<HashMap<PlayerID, actix::Addr<ClientSession>>> {
+        self.clients.read().expect("Poisoned lock on game clients")
+    }
+
+    pub async fn ws_broadcast(&self, message: &protocol::Message) -> Result<()> {
+        let clients = self.clients();
+        for pid in Player::find_ids_by_game(self.id, &self.state.db_pool).await? {
+            self.ws_send(&clients, &pid, message);
         }
-    }
-
-    pub fn ws_send(&self, pid: &PlayerID, message: protocol::Message) {
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        clients.get(pid).unwrap().do_send(message);
+        Ok(())
     }
 
     pub async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
-        let ids: Vec<PlayerID> = Player::find_by_faction(fid, &self.state.db_pool).await?.iter().map(|p| p.id).collect();
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for (pid, c) in clients.iter() {
-            if ids.contains(&pid) {
-                c.do_send(message.clone());
-            }
+        let clients = self.clients();
+        for pid in Player::find_ids_by_game_and_faction(self.id, fid, &self.state.db_pool).await? {
+            self.ws_send(&clients, &pid, &message);
         }
         Ok(())
+    }
+
+    pub fn player_broadcast(&self, pid: &PlayerID, message: &protocol::Message) {
+        let clients = self.clients();
+        self.ws_send(&clients, pid, message);
+    }
+
+    pub fn ws_send(&self, clients: &std::sync::RwLockReadGuard<HashMap<PlayerID, actix::Addr<ClientSession>>>, pid: &PlayerID, message: &protocol::Message) {
+        let mut missing_messages = self.state.missing_messages_mut();
+
+        if let Some(client) = clients.get(pid) {
+            client.do_send(message.clone());
+        } else {
+            missing_messages.entry(*pid)
+                .or_default()
+                .push(message.clone());
+        }
     }
 
     async fn produce_income(&mut self) -> Result<()> {
@@ -236,7 +247,7 @@ impl GameServer {
             protocol::Action::FactionPointsUpdated,
             factions.clone(),
             None
-        ));
+        )).await?;
 
         if let Some(f) = victorious_faction {
             self.process_victory(f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
@@ -258,41 +269,29 @@ impl GameServer {
                 scores: factions,
             },
             None,
-        ));
+        )).await?;
 
         let game = Game::find(self.id, &self.state.db_pool).await?;
         self.state.clear_game(&game).await?;
         Ok(())
     }
 
-    pub async fn remove_player(&self, pid: PlayerID) -> Result<actix::Addr<ClientSession>> {
+    pub async fn remove_player(&self, pid: PlayerID) -> Result<Option<actix::Addr<ClientSession>>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
         self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid),
-        ));
+        )).await?;
         let mut clients = self.clients.write().expect("Poisoned lock on game players");
-        let client = clients.get(&pid).unwrap().clone();
-        clients.remove(&pid);
-        Ok(client)
-    }
+        if let Some(c) = clients.get(&pid) {
+            let client = c.clone();
+            clients.remove(&pid);
 
-    pub fn run_interval<F>(
-        &mut self,
-        ctx: &mut <Self as Actor>::Context,
-        duration: Duration,
-        closure: F
-    )
-        where F: FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()> + 'static + Clone,
-    {
-        ctx.run_interval(duration, move |this, ctx| {
-            let result = closure.clone()(this, ctx).map_err(ServerError::from);
-            if result.is_err() {
-                println!("{:?}", result.err());
-            }
-        });
+            return Ok(Some(client));
+        }
+        Ok(None)
     }
 
     pub fn add_task<F>(
@@ -336,8 +335,12 @@ impl GameServer {
 }
 
 #[derive(actix::Message, Serialize, Clone)]
-#[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
+#[rtype(result="Arc<(Option<actix::Addr<ClientSession>>, bool)>")]
 pub struct GameRemovePlayerMessage(pub PlayerID);
+
+#[derive(actix::Message, Clone)]
+#[rtype(result="()")]
+pub struct GameAddClientMessage(pub PlayerID, pub actix::Addr<ClientSession>);
 
 #[derive(actix::Message, Serialize, Clone)]
 #[rtype(result="()")]
@@ -422,8 +425,17 @@ impl GameCancelTaskMessage
 #[rtype(result="()")]
 pub struct GameEndMessage{}
 
+impl Handler<GameAddClientMessage> for GameServer {
+    type Result = ();
+
+    fn handle(&mut self, GameAddClientMessage(pid, client): GameAddClientMessage, _ctx: &mut Self::Context) -> Self::Result {
+        let mut clients = self.clients.write().expect("Poisoned lock on game players");
+        clients.insert(pid, client);
+    }
+}
+
 impl Handler<GameRemovePlayerMessage> for GameServer {
-    type Result = Arc<(actix::Addr<ClientSession>, bool)>;
+    type Result = Arc<(Option<actix::Addr<ClientSession>>, bool)>;
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
@@ -456,11 +468,11 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
-        self.ws_broadcast(&protocol::Message::new(
+        block_on(self.ws_broadcast(&protocol::Message::new(
             protocol::Action::FleetSailed,
             msg.fleet.clone(),
             Some(msg.fleet.player),
-        ));
+        )));
         // In this case, there is no battle, but a in-progress conquest
         // We update the conquest or cancel it depending on the remaining fleets
         if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
@@ -510,4 +522,19 @@ impl Handler<GameEndMessage> for GameServer {
         ctx.stop();
         ctx.terminate();
     }
+}
+
+fn run_interval<F>(
+    ctx: &mut <GameServer as Actor>::Context,
+    duration: Duration,
+    closure: F
+)
+    where F: FnOnce(&mut GameServer, & <GameServer as Actor>::Context) -> Result<()> + 'static + Clone,
+{
+    ctx.run_interval(duration, move |this, ctx| {
+        let result = closure.clone()(this, ctx).map_err(ServerError::from);
+        if result.is_err() {
+            println!("{:?}", result.err());
+        }
+    });
 }

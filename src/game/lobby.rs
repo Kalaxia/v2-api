@@ -313,12 +313,8 @@ pub async fn update_lobby_options(
     if lobby.owner != claims.pid.clone() {
         return Err(InternalError::AccessDenied.into());
     }
-    println!("{:?}", data);
     lobby.game_speed = data.game_speed.clone().map_or(GameOptionSpeed::Medium, |gs| gs);
     lobby.map_size = data.map_size.clone().map_or(GameOptionMapSize::Medium, |ms| ms);
-
-    println!("{:?}", lobby.game_speed.clone());
-    println!("{:?}", lobby.map_size.clone());
 
     let mut tx = state.db_pool.begin().await?;
     lobby.update(&mut tx).await?;

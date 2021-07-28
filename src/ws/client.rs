@@ -4,12 +4,16 @@ use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
 use futures::executor::block_on;
 use crate::{
-    lib::{Result, auth::Claims},
+    lib::{
+        Result,
+        log::log,
+        auth::Claims
+    },
     game::{
-        lobby::{ Lobby, LobbyRemoveClientMessage },
+        lobby::{ Lobby, LobbyAddClientMessage, LobbyRemoveClientMessage },
         game::{
             game::Game,
-            server::GameRemovePlayerMessage
+            server::{GameAddClientMessage, GameRemovePlayerMessage},
         },
         player::{Player, PlayerID},
     },
@@ -30,13 +34,45 @@ pub async fn entrypoint(
 ) -> Result<HttpResponse> {
     let player = Player::find(claims.pid, &state.db_pool).await?;
     // Creates the websocket client for the current player
-    let (addr, resp) = ws::start_with_addr(ClientSession{
+    let (client, resp) = ws::start_with_addr(ClientSession{
         hb: Instant::now(),
         state: state.clone(),
         pid: player.id.clone()
     }, &req, stream)?;
 
-    state.add_client(&player.id, addr);
+    let mut missing_messages = state.missing_messages_mut();
+    if let Some(player_messages) = missing_messages.get_mut(&player.id) {
+        log(
+            gelf::Level::Warning,
+            "Player reconnected",
+            &format!("{} has recover its websocket connection", player.username),
+            vec![
+                ("messages_number", player_messages.len().to_string()),
+            ],
+            &state.logger
+        );
+
+        for message in player_messages {
+            client.do_send(message.clone());
+        }
+
+        missing_messages.remove(&player.id);
+    }
+    
+
+    if let Some(lobby_id) = player.lobby {
+        let lobbies = state.lobbies();
+        let lobby_server = lobbies.get(&lobby_id).expect("Lobby server not found");
+
+        lobby_server.send(LobbyAddClientMessage(player.id.clone(), client)).await?;
+    } else if let Some(game_id) = player.game {
+        let games = state.games();
+        let game_server = games.get(&game_id).expect("Game server not found");
+
+        game_server.send(GameAddClientMessage(player.id.clone(), client)).await?;
+    } else {
+        state.add_client(&player.id, client);
+    }
 
     state.ws_broadcast(&protocol::Message::new(
         protocol::Action::PlayerConnected,
@@ -62,8 +98,17 @@ impl ClientSession {
             clients.remove(&self.pid);
         }
         drop(clients);
-        if player.lobby != None {
-            let mut lobby = Lobby::find(player.clone().lobby.unwrap(), &self.state.db_pool).await.unwrap();
+
+        log(
+            gelf::Level::Warning,
+            "Player disconnected",
+            &format!("{} has lost its websocket connection", player.username),
+            vec![],
+            &self.state.logger
+        );
+
+        if let Some(lobby_id) = player.lobby {
+            let mut lobby = Lobby::find(lobby_id, &self.state.db_pool).await.unwrap();
             let lobbies = self.state.lobbies();
             let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
             let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
@@ -77,15 +122,14 @@ impl ClientSession {
                     None,
                 ));
             }
-        } else if player.game != None {
+        } else if let Some(game_id) = player.game {
             let mut games = self.state.games_mut();
-            let gid = player.clone().game.unwrap();
-            let game = games.get_mut(&gid).expect("Game not found");
+            let game = games.get_mut(&game_id).expect("Game not found");
 
             let (_, is_empty) = std::sync::Arc::try_unwrap(game.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
             if is_empty {
                 drop(games);
-                let game = Game::find(gid, &self.state.db_pool).await?;
+                let game = Game::find(game_id, &self.state.db_pool).await?;
                 self.state.clear_game(&game).await?;
             }
         }

@@ -58,25 +58,14 @@ impl From<BattleID> for Uuid {
 
 impl<'a> FromRow<'a, PgRow<'a>> for Battle {
     fn from_row(row: &PgRow) -> std::result::Result<Self, Error> {
-        let fleets: HashMap<FactionID, HashMap<FleetID, Fleet>> = (&*row.try_get::<Json<HashMap<FactionID, HashMap<FleetID, Fleet>>>, _>("fleets")?).clone();
-        let rounds: Vec<Round> = (&*row.try_get::<Json<Vec<Round>>, _>("rounds")?).clone();
-        let victor = match row.try_get::<i32, _>("victor_id") {
-            Ok(fid) => Some(FactionID(fid as u8)),
-            Err(_) => None
-        };
-        let defender_faction = match row.try_get::<i32, _>("defender_faction_id") {
-            Ok(fid) => Some(FactionID(fid as u8)),
-            Err(_) => None
-        };
-
         Ok(Battle {
             id: row.try_get("id").map(BattleID)?,
             system: row.try_get("system_id").map(SystemID)?,
             attacker: row.try_get("attacker_id").map(FleetID)?,
-            defender_faction,
-            fleets,
-            rounds,
-            victor,
+            defender_faction: row.try_get("defender_faction_id").map(|id: i32| FactionID(id as u8)).ok(),
+            fleets: (&*row.try_get::<Json<HashMap<FactionID, HashMap<FleetID, Fleet>>>, _>("fleets")?).clone(),
+            rounds: (&*row.try_get::<Json<Vec<Round>>, _>("rounds")?).clone(),
+            victor: row.try_get("victor_id").map(|id: i32| FactionID(id as u8)).ok(),
             begun_at: row.try_get("begun_at")?,
             ended_at: row.try_get("ended_at")?,
         })
@@ -199,7 +188,7 @@ impl Battle {
     
         let battle = init_battle(arriver, system, fleets, defender_faction, &server.state.db_pool).await?;
     
-        server.ws_broadcast(&protocol::Message::new(protocol::Action::BattleStarted, &battle, None));
+        server.ws_broadcast(&protocol::Message::new(protocol::Action::BattleStarted, &battle, None)).await?;
     
         let mut round = Round::new(battle.id, 1);
         server.state.games().get(&server.id).unwrap().do_send(task!(round -> move |gs| block_on(round.execute(gs))));
@@ -227,7 +216,7 @@ impl Battle {
             protocol::Action::BattleEnded,
             self.clone(),
             None
-        ));
+        )).await?;
 
         if self.victor == self.defender_faction {
             return Ok(());

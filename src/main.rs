@@ -62,7 +62,7 @@ use ws::protocol;
 /// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
 pub struct AppState {
     db_pool: PgPool,
-    logger: GelfLogger,
+    logger: Option<GelfLogger>,
     clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
     lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
     games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
@@ -239,24 +239,25 @@ async fn create_pool() -> Result<PgPool> {
     Ok(result?)
 }
 
-fn create_logger() -> GelfLogger {
+fn create_logger() -> Option<GelfLogger> {
     #[cfg(feature="graylog")]
-    let backend = {
+    {
         println!("Graylog feature enabled");
 
-        TcpBackend::new(&format!(
+        let tcp_backend = TcpBackend::new(&format!(
             "{}:{}",
             &get_env("GRAYLOG_HOST", "kalaxia_v2_graylog"),
             &get_env("GRAYLOG_PORT", "1514")
-        )).expect("Failed to create TCP backend")
-    };
+        ));
+        if let Some(backend) = tcp_backend.ok() {
+            return GelfLogger::new(Box::new(backend)).ok();
+        }
+        println!("Could not connect to Graylog. Logging to the default output instead");
+
+        None
+    }
     #[cfg(not(feature="graylog"))]
-    let backend = NullBackend::new();
-
-    let logger = GelfLogger::new(Box::new(backend))
-        .expect("Failed to determine hostname");
-
-    logger
+    None
 }
 
 #[actix_rt::main]

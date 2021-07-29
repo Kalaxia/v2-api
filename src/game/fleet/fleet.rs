@@ -17,7 +17,7 @@ use crate::{
         fleet::squadron::{FleetSquadron},
     },
     ws::protocol,
-    AppState
+    game::global::AppState,
 };
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
@@ -136,7 +136,7 @@ impl Fleet {
 }
 
 #[post("/")]
-pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
+pub async fn create_fleet(state: &AppState, info: web::Path<(GameID,SystemID)>, claims: Claims) -> Result<HttpResponse> {
     let system = System::find(info.1, &state.db_pool).await?;
     
     if system.player != Some(claims.pid) {
@@ -167,7 +167,7 @@ pub async fn create_fleet(state: web::Data<AppState>, info: web::Path<(GameID,Sy
 
 #[patch("/donate/")]
 pub async fn donate(
-    state: web::Data<AppState>,
+    state: &AppState,
     info: web::Path<(GameID,SystemID,FleetID,)>,
     claims: Claims
 ) -> Result<HttpResponse> {

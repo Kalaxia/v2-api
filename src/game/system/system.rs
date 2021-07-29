@@ -3,7 +3,7 @@ use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::{
-    AppState,
+    game::global::AppState,
     lib::{
         Result,
         pagination::{Paginator, new_paginated_response},
@@ -403,7 +403,7 @@ async fn find_place<'a>(
 
 #[allow(clippy::eval_order_dependence)] // false positive ?
 #[get("/")]
-pub async fn get_systems(state: web::Data<AppState>, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
+pub async fn get_systems(state: &AppState, info: web::Path<(GameID,)>, pagination: web::Query<Paginator>)
     -> Result<HttpResponse>
 {
     Ok(new_paginated_response(

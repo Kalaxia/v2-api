@@ -1,8 +1,7 @@
 use std::time::{Duration, Instant};
-use actix::*;
+use actix::{*, fut::wrap_future};
 use actix_web::{web, HttpRequest, HttpResponse};
 use actix_web_actors::ws;
-use futures::executor::block_on;
 use crate::{
     lib::{
         Result,
@@ -18,7 +17,7 @@ use crate::{
         player::{Player, PlayerID},
     },
     ws::protocol,
-    AppState,
+    game::global::{AppState, state},
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -29,14 +28,13 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn entrypoint(
     req: HttpRequest,
     stream: web::Payload,
-    state: web::Data<AppState>,
+    state: &AppState,
     claims: Claims,
 ) -> Result<HttpResponse> {
     let player = Player::find(claims.pid, &state.db_pool).await?;
     // Creates the websocket client for the current player
     let (client, resp) = ws::start_with_addr(ClientSession{
         hb: Instant::now(),
-        state: state.clone(),
         pid: player.id.clone()
     }, &req, stream)?;
 
@@ -86,58 +84,61 @@ pub async fn entrypoint(
 /// WebSocket actor used to communicate with a player.
 pub struct ClientSession {
     hb: Instant,
-    state: web::Data<AppState>,
     pid: PlayerID
 }
 
 impl ClientSession {
-    async fn logout(&self) -> Result<()> {
-        let player = Player::find(self.pid, &self.state.db_pool).await.unwrap();
-        {
-            let mut clients = self.state.clients_mut();
-            clients.remove(&self.pid);
-        };
+    fn logout(&self) -> impl ActorFuture<Actor=ClientSession, Output=Result<()>> {
+        let pid = self.pid;
+        wrap_future(async move {
+            let state = state();
+            let player = Player::find(pid, &state.db_pool).await.unwrap();
+            {
+                let mut clients = state.clients_mut();
+                clients.remove(&pid);
+            };
 
-        log(
-            gelf::Level::Warning,
-            "Player disconnected",
-            &format!("{} has lost its websocket connection", player.username),
-            vec![],
-            &self.state.logger
-        );
+            log(
+                gelf::Level::Warning,
+                "Player disconnected",
+                &format!("{} has lost its websocket connection", player.username),
+                vec![],
+                &state.logger
+            );
 
-        if let Some(lobby_id) = player.lobby {
-            let mut lobby = Lobby::find(lobby_id, &self.state.db_pool).await.unwrap();
-            let lobbies = self.state.lobbies();
-            let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
-            let (_, is_empty) = std::sync::Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
-            if is_empty {
-                self.state.clear_lobby(lobby, player.id).await?;
-            } else if player.id == lobby.owner {
-                lobby.update_owner(&self.state.db_pool).await?;
-                lobby_server.do_send(protocol::Message::new(
-                    protocol::Action::LobbyOwnerUpdated,
-                    lobby.owner.clone(),
-                    None,
-                ));
+            if let Some(lobby_id) = player.lobby {
+                let mut lobby = Lobby::find(lobby_id, &state.db_pool).await.unwrap();
+                let lobbies = state.lobbies();
+                let lobby_server = lobbies.get(&lobby.id).expect("Lobby server not found");
+                let (_, is_empty) = lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?.unwrap();
+                if is_empty {
+                    state.clear_lobby(lobby, player.id).await?;
+                } else if player.id == lobby.owner {
+                    lobby.update_owner(&state.db_pool).await?;
+                    lobby_server.do_send(protocol::Message::new(
+                        protocol::Action::LobbyOwnerUpdated,
+                        lobby.owner.clone(),
+                        None,
+                    ));
+                }
+            } else if let Some(game_id) = player.game {
+                let mut games = state.games_mut();
+                let game = games.get_mut(&game_id).expect("Game not found");
+
+                let (_, is_empty) = game.send(GameRemovePlayerMessage(player.id)).await?.unwrap();
+                if is_empty {
+                    drop(games);
+                    let game = Game::find(game_id, &state.db_pool).await?;
+                    state.clear_game(&game).await?;
+                }
             }
-        } else if let Some(game_id) = player.game {
-            let mut games = self.state.games_mut();
-            let game = games.get_mut(&game_id).expect("Game not found");
-
-            let (_, is_empty) = std::sync::Arc::try_unwrap(game.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
-            if is_empty {
-                drop(games);
-                let game = Game::find(game_id, &self.state.db_pool).await?;
-                self.state.clear_game(&game).await?;
-            }
-        }
-        self.state.ws_broadcast(&protocol::Message::new(
-            protocol::Action::PlayerDisconnected,
-            player.clone(),
-            Some(self.pid),
-        ));
-        Ok(())
+            state.ws_broadcast(&protocol::Message::new(
+                protocol::Action::PlayerDisconnected,
+                player.clone(),
+                Some(pid),
+            ));
+            Ok(())
+        })
     }
 }
 
@@ -151,11 +152,12 @@ impl Actor for ClientSession {
         self.hb(ctx);
     }
 
-    fn stopping(&mut self, _: &mut Self::Context) -> Running {
-        let res = block_on(self.logout());
-        if res.is_err() {
-            println!("Logout error : {:?}", res);
-        }
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+        ctx.wait(self.logout().map(|res,_,_| {
+            if res.is_err() {
+                println!("Logout error : {:?}", res);
+            }
+        }));
         Running::Stop
     }
 }

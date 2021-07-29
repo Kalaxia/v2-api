@@ -1,13 +1,13 @@
 use actix_web::{get, post, web, HttpResponse};
+use actix::AsyncContext;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
-use futures::executor::block_on;
 use crate::{
     task,
-    AppState,
+    game::global::{AppState, state},
     lib::{
         Result,
         auth::Claims,
@@ -194,16 +194,17 @@ impl Building {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    async fn construct(&mut self, server: &GameServer) -> Result<()> {
-        let player = Player::find_system_owner(self.system.clone(), &server.state.db_pool).await?;
+    async fn construct(&mut self, gid: GameID) -> Result<()> {
+        let state = state();
+        let player = Player::find_system_owner(self.system.clone(), &state.db_pool).await?;
 
         self.status = BuildingStatus::Operational;
 
-        let mut tx = server.state.db_pool.begin().await?;
+        let mut tx = state.db_pool.begin().await?;
         self.update(&mut tx).await?;
         tx.commit().await?;
 
-        server.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
+        GameServer::faction_broadcast(gid, player.faction.unwrap(), protocol::Message::new(
             protocol::Action::BuildingConstructed,
             self.clone(),
             None,
@@ -214,7 +215,7 @@ impl Building {
 }
 
 #[get("/")]
-pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>)
+pub async fn get_system_buildings(state: &AppState, info: web::Path<(GameID, SystemID)>)
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Building::find_by_system(info.1, &state.db_pool).await?))
@@ -222,7 +223,7 @@ pub async fn get_system_buildings(state: web::Data<AppState>, info: web::Path<(G
 
 #[post("/")]
 pub async fn create_building(
-    state: web::Data<AppState>,
+    state: &AppState,
     info: web::Path<(GameID,SystemID)>,
     data: web::Json<BuildingRequest>,
     claims: Claims
@@ -253,7 +254,13 @@ pub async fn create_building(
     tx.commit().await?;
 
     let mut b = building.clone();
-    state.games().get(&info.0).unwrap().do_send(task!(building -> move |gs: &GameServer| block_on(b.construct(gs))));
+    state.games().get(&info.0).unwrap().do_send(task!(building -> move |gs, ctx| {
+        let gid = gs.id;
+        ctx.wait(actix::fut::wrap_future(async move {
+            b.construct(gid).await;
+        }));
+        Ok(())
+    }));
 
     Ok(HttpResponse::Created().json(building))
 }

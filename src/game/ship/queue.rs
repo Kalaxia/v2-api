@@ -1,4 +1,5 @@
 use actix_web::{get, post, web, HttpResponse};
+use actix::AsyncContext;
 use sqlx::{PgPool, Executor, postgres::{PgRow, PgQueryAs}, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use serde::{Serialize, Deserialize};
@@ -33,10 +34,9 @@ use crate::{
         },
     },
     ws::protocol,
-    AppState,
+    game::global::{AppState, state},
 };
 use futures::join;
-use futures::executor::block_on;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ShipQueueID(pub Uuid);
@@ -136,9 +136,10 @@ impl ShipQueue {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn produce(&self, server: &GameServer) -> Result<()> {
-        let player = Player::find_system_owner(self.system.clone(), &server.state.db_pool).await?;
-        let mut tx = server.state.db_pool.begin().await?;
+    pub async fn produce(&self, gid: GameID) -> Result<()> {
+        let state = state();
+        let player = Player::find_system_owner(self.system.clone(), &state.db_pool).await?;
+        let mut tx = state.db_pool.begin().await?;
 
         if let Some(assigned_fleet) = self.assigned_fleet.clone() {
             let fleet_data: Vec<&str> = assigned_fleet.split(':').collect();
@@ -149,21 +150,21 @@ impl ShipQueue {
                 formation,
                 self.category,
                 self.quantity,
-                &server.state.db_pool
+                &state.db_pool
             ).await?;
         } else {
             Squadron::assign_existing(
                 self.system,
                 self.category,
                 self.quantity as i32,
-                &server.state.db_pool
+                &state.db_pool
             ).await?;
         }
         self.remove(&mut tx).await?;
 
         tx.commit().await?;
 
-        server.player_broadcast(&player.id, &protocol::Message::new(
+        GameServer::player_broadcast(&player.id, protocol::Message::new(
             protocol::Action::ShipQueueFinished,
             self.clone(),
             None,
@@ -222,7 +223,7 @@ impl ShipQueue {
 
 #[post("/")]
 pub async fn add_ship_queue(
-    state: web::Data<AppState>,
+    state: &AppState,
     info: web::Path<(GameID, SystemID)>,
     json_data: web::Json<ShipQuantityData>,
     claims: Claims
@@ -251,13 +252,19 @@ pub async fn add_ship_queue(
     ).await?.unwrap();
 
     let sq = ship_queue.clone();
-    state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
+    state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs, ctx| {
+        let gid = gs.id;
+        ctx.wait(actix::fut::wrap_future(async move {
+            sq.produce(gid).await;
+        }));
+        Ok(())
+    }));
 
     Ok(HttpResponse::Created().json(ship_queue))
 }
 
 #[get("/")]
-pub async fn get_ship_queues(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>, claims: Claims)
+pub async fn get_ship_queues(state: &AppState, info: web::Path<(GameID, SystemID)>, claims: Claims)
     -> Result<HttpResponse>
 {
     let (s, p) = futures::join!(

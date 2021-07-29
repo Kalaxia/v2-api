@@ -15,7 +15,7 @@ use crate::{
         system::system::{SystemID, System},
         ship::model::ShipModelCategory,
     },
-    AppState,
+    game::global::AppState,
 };
 
 #[derive(Serialize, Clone)]
@@ -128,7 +128,7 @@ impl Squadron {
 }
 
 #[get("/")]
-pub async fn get_system_squadrons(state: web::Data<AppState>, info: web::Path<(GameID, SystemID)>, claims: Claims)
+pub async fn get_system_squadrons(state: &AppState, info: web::Path<(GameID, SystemID)>, claims: Claims)
     -> Result<HttpResponse>
 {
     let (s, p) = futures::join!(

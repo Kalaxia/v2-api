@@ -11,6 +11,7 @@ use crate::{
     lib::{
         Result,
         auth::Claims,
+        log::log,
         error::{ServerError, InternalError},
         time::Time
     },
@@ -202,6 +203,17 @@ impl Building {
         let mut tx = server.state.db_pool.begin().await?;
         self.update(&mut tx).await?;
         tx.commit().await?;
+
+        log(
+            gelf::Level::Informational,
+            "New building",
+            &format!("A new {:?} belonging to {} is fully operational", self.kind, player.username),
+            vec![
+                ("player_id", player.id.0.to_string()),
+                ("system_id", self.system.0.to_string())
+            ],
+            &server.state.logger
+        );
 
         server.faction_broadcast(player.faction.unwrap(), protocol::Message::new(
             protocol::Action::BuildingConstructed,

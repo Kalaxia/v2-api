@@ -102,7 +102,7 @@ impl Player {
     }
     
     pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT id FROM player__players WHERE game_id = $1 AND faction_id = $2")
+        sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1 AND faction_id = $2")
             .bind(Uuid::from(gid))
             .bind(i32::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)

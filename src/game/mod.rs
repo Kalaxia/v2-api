@@ -5,3 +5,4 @@ pub mod game;
 pub mod fleet;
 pub mod ship;
 pub mod system;
+pub mod global;

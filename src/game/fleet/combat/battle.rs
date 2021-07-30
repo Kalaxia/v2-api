@@ -1,5 +1,6 @@
 use std::collections::{HashSet, HashMap};
 use crate::{
+    game::global::state,
     task,
     lib::{
         error::{ServerError, InternalError},
@@ -9,7 +10,7 @@ use crate::{
     },
     game::{
         faction::FactionID,
-        game::server::GameServer,
+        game::{game::GameID, server::GameServer},
         fleet::{
             combat::{
                 conquest::Conquest,
@@ -23,12 +24,12 @@ use crate::{
     },
     ws::protocol,
 };
+use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, PgConnection, pool::PoolConnection, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Transaction, Postgres, Error, types::Json};
 use sqlx_core::row::Row;
 use rand::prelude::*;
 use uuid::Uuid;
-use futures::executor::block_on;
 
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct BattleID(pub Uuid);
@@ -180,24 +181,31 @@ impl Battle {
         Err(InternalError::NotFound.into())
     }
 
-    pub async fn engage(arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
-        Conquest::stop(&system, &server).await?;
+    pub async fn engage(arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, gid: GameID) -> Result<()> {
+        let state = state();
+        Conquest::stop(&system, gid).await?;
         
         let mut fleets = orbiting_fleets.clone();
         fleets.insert(arriver.id.clone(), arriver.clone());
     
-        let battle = init_battle(arriver, system, fleets, defender_faction, &server.state.db_pool).await?;
+        let battle = init_battle(arriver, system, fleets, defender_faction, &state.db_pool).await?;
     
-        server.ws_broadcast(&protocol::Message::new(protocol::Action::BattleStarted, &battle, None)).await?;
+        GameServer::ws_broadcast(gid, protocol::Message::new(protocol::Action::BattleStarted, &battle, None)).await?;
     
         let mut round = Round::new(battle.id, 1);
-        server.state.games().get(&server.id).unwrap().do_send(task!(round -> move |gs| block_on(round.execute(gs))));
+        state.games().get(&gid).unwrap().do_send(task!(round -> move |gs, ctx| {
+            let gid = gs.id;
+            ctx.wait(actix::fut::wrap_future(async move {
+                round.execute(gid).await;
+            }));
+            Ok(())
+        }));
 
         log(gelf::Level::Informational, "Battle started", "A new battle has started", vec![
             ("battle_id", battle.id.0.to_string()),
             ("system_id", system.id.0.to_string()),
             ("fleet_id", arriver.id.0.to_string()),
-        ], &server.state.logger);
+        ], &state.logger);
 
         Ok(())
     }
@@ -207,12 +215,13 @@ impl Battle {
         2 > self.fleets.keys().len()
     }
 
-    pub async fn end(&mut self, server: &GameServer) -> Result<()> {
+    pub async fn end(&mut self, gid: GameID) -> Result<()> {
+        let state = state();
         self.victor = Some(self.process_victor()?);
         self.ended_at = Some(Time::now());
-        self.update(&mut &server.state.db_pool).await?;
+        self.update(&mut &state.db_pool).await?;
         
-        server.ws_broadcast(&protocol::Message::new(
+        GameServer::ws_broadcast(gid, protocol::Message::new(
             protocol::Action::BattleEnded,
             self.clone(),
             None
@@ -222,16 +231,16 @@ impl Battle {
             return Ok(());
         }
 
-        let fleet = Fleet::find(&self.attacker, &server.state.db_pool).await?;
-        let system = System::find(self.system, &server.state.db_pool).await?;
+        let fleet = Fleet::find(&self.attacker, &state.db_pool).await?;
+        let system = System::find(self.system, &state.db_pool).await?;
 
         log(gelf::Level::Informational, "Battle ended", "A battle has finished", vec![
             ("battle_id", self.id.0.to_string()),
             ("victor_id", self.victor.unwrap().0.to_string()),
             ("system_id", self.system.0.to_string())
-        ], &server.state.logger);
+        ], &state.logger);
 
-        Conquest::resume(&fleet, &system, self.victor, &server).await
+        Conquest::resume(&fleet, &system, self.victor, gid).await
     }
 }
 
@@ -292,8 +301,9 @@ async fn init_battle(attacker: &Fleet, system: &System, fleets: HashMap<FleetID,
     Ok(battle)
 }
 
-pub async fn update_fleets(battle: &Battle, server: &GameServer) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
-    let mut tx = server.state.db_pool.begin().await?;
+pub async fn update_fleets(battle: &Battle) -> Result<HashMap<FactionID, HashMap<FleetID, Fleet>>> {
+    let state = state();
+    let mut tx = state.db_pool.begin().await?;
     let mut remaining_fleets = HashMap::new();
 
     for (faction_id, fleets) in battle.fleets.iter() {
@@ -304,7 +314,7 @@ pub async fn update_fleets(battle: &Battle, server: &GameServer) -> Result<HashM
                 log(gelf::Level::Informational, "Fleet destroyed", "A fleet has been destroyed in combat", vec![
                     ("fleet_id", fleet.id.0.to_string()),
                     ("battle_id", battle.id.0.to_string()),
-                ], &server.state.logger);
+                ], &state.logger);
             } else {
                 faction_remaining_fleets.insert(*fleet_id, fleet.clone());
             }

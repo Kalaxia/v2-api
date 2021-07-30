@@ -4,7 +4,7 @@ use uuid::Uuid;
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, Executor, FromRow, Error, Postgres};
 use sqlx_core::row::Row;
 use crate::{
-    AppState,
+    game::global::AppState,
     game::game::{
         game::{GameID, GAME_START_WALLET},
         server::GameNotifyPlayerMessage,
@@ -196,7 +196,7 @@ pub async fn init_player_wallets(players: &mut Vec<Player>, db_pool: &PgPool) ->
 }
 
 #[post("/login")]
-pub async fn login(state:web::Data<AppState>)
+pub async fn login(state: &AppState)
     -> Result<auth::Claims>
 {
     let player = Player {
@@ -217,7 +217,7 @@ pub async fn login(state:web::Data<AppState>)
 }
 
 #[get("/count/")]
-pub async fn get_nb_players(state:web::Data<AppState>)
+pub async fn get_nb_players(state: &AppState)
     -> Option<HttpResponse>
 {
     #[derive(Serialize)]
@@ -230,14 +230,14 @@ pub async fn get_nb_players(state:web::Data<AppState>)
 }
 
 #[get("/me/")]
-pub async fn get_current_player(state:web::Data<AppState>, claims: auth::Claims)
+pub async fn get_current_player(state: &AppState, claims: auth::Claims)
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Player::find(claims.pid, &state.db_pool).await?))
 }
 
 #[patch("/me/")]
-pub async fn update_current_player(state: web::Data<AppState>, json_data: web::Json<PlayerUpdateData>, claims: auth::Claims)
+pub async fn update_current_player(state: &AppState, json_data: web::Json<PlayerUpdateData>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
@@ -280,14 +280,14 @@ pub async fn update_current_player(state: web::Data<AppState>, json_data: web::J
 }
 
 #[get("/players/")]
-pub async fn get_faction_members(state: web::Data<AppState>, info: web::Path<(GameID, FactionID)>)
+pub async fn get_faction_members(state: &AppState, info: web::Path<(GameID, FactionID)>)
     -> Result<HttpResponse>
 {
     Ok(HttpResponse::Ok().json(Player::find_by_game_and_faction(info.0, info.1, &state.db_pool).await?))
 }
 
 #[patch("/players/{player_id}/money/")]
-pub async fn transfer_money(state: web::Data<AppState>, info: web::Path<(GameID, FactionID, PlayerID)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
+pub async fn transfer_money(state: &AppState, info: web::Path<(GameID, FactionID, PlayerID)>, data: web::Json<PlayerMoneyTransferRequest>, claims: auth::Claims)
     -> Result<HttpResponse>
 {
     let mut current_player = Player::find(claims.pid, &state.db_pool).await?;

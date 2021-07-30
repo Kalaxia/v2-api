@@ -1,4 +1,5 @@
 use actix_web::{post , web, HttpResponse};
+use actix::AsyncContext;
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use crate::{
@@ -25,9 +26,8 @@ use crate::{
         },
         player::Player,
     },
-    AppState
+    game::global::AppState
 };
-use futures::executor::block_on;
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
 use futures::join;
@@ -175,7 +175,7 @@ impl FleetSquadron {
 
 #[post("/")]
 pub async fn assign_ships(
-    state: web::Data<AppState>,
+    state: &AppState,
     info: web::Path<(GameID, SystemID, FleetID)>,
     json_data: web::Json<SquadronAssignmentData>,
     claims: Claims
@@ -259,7 +259,13 @@ pub async fn assign_ships(
 
     if let Some(sq) = ship_queue {
         let data = sq.clone();
-        state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs: &GameServer| block_on(sq.produce(gs))));
+        state.games().get(&info.0).unwrap().do_send(task!(sq -> move |gs, ctx| {
+            let gid = gs.id;
+            ctx.wait(actix::fut::wrap_future(async move {
+                sq.produce(gid).await;
+            }));
+            Ok(())
+        }));
         return Ok(HttpResponse::Created().json(data));
     }
     Ok(HttpResponse::NoContent().finish())

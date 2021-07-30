@@ -23,9 +23,11 @@
 
 use actix_web::{web, App, HttpServer};
 use actix_web::middleware::Logger;
-use std::collections::HashMap;
-use std::sync::RwLock;
-use std::env;
+use std::{
+    sync::RwLock,
+    collections::HashMap,
+    env,
+};
 #[cfg(feature="ssl-secure")]
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
 use sqlx::PgPool;
@@ -53,94 +55,11 @@ use game::{
     system::system,
     ship::model,
     ship::queue,
-    ship::squadron
+    ship::squadron,
+    global::AppState,
 };
 use lib::Result;
 use ws::protocol;
-
-/// Global state of the game, containing everything we need to access from everywhere.
-/// Each attribute is between a [`RwLock`](https://doc.rust-lang.org/std/sync/struct.RwLock.html)
-pub struct AppState {
-    db_pool: PgPool,
-    logger: Option<GelfLogger>,
-    clients: RwLock<HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>>>,
-    lobbies: RwLock<HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>>>,
-    games: RwLock<HashMap<g::GameID, actix::Addr<GameServer>>>,
-    missing_messages: RwLock<HashMap<player::PlayerID, Vec<protocol::Message>>>,
-}
-
-macro_rules! res_access {
-    { $name:ident , $name_mut:ident : $t:ty } => {
-        pub fn $name(&self) -> std::sync::RwLockReadGuard<$t> {
-            self.$name.read().expect(stringify!("AppState::", $name, "() RwLock poisoned"))
-        }
-        pub fn $name_mut(&self) -> std::sync::RwLockWriteGuard<$t> {
-            self.$name.write().expect(stringify!("AppState::", $name_mut, "() RwLock poisoned"))
-        }
-    };
-}
-
-impl AppState {
-    pub fn ws_broadcast(&self, message: &ws::protocol::Message) {
-        self.clients().iter().for_each(|(_, c)| c.do_send(message.clone()));
-    }
-
-    pub async fn clear_lobby(&self, lobby: lobby::Lobby, pid: player::PlayerID) -> lib::Result<()> {
-        let mut tx = self.db_pool.begin().await?;
-        lobby.remove(&mut tx).await?;
-        tx.commit().await?;
-        self.ws_broadcast(&ws::protocol::Message::new(
-            ws::protocol::Action::LobbyRemoved,
-            lobby,
-            Some(pid),
-        ));
-        Ok(())
-    }
-
-    pub async fn clear_game(&self, game: &g::Game) -> lib::Result<()> {
-        let game_server = {
-            let mut games = self.games_mut();
-            games.remove(&game.id).unwrap()
-        };
-        game_server.do_send(GameEndMessage{});
-        let mut tx = self.db_pool.begin().await?;
-        game.remove(&mut tx).await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub fn add_client(&self, pid: &player::PlayerID, client: actix::Addr<ws::client::ClientSession>) {
-        self.clients_mut().insert(pid.clone(), client);
-    }
-
-    #[allow(clippy::or_fun_call)]
-    pub fn retrieve_client(&self, pid: &player::PlayerID) -> Result<actix::Addr<ws::client::ClientSession>> {
-        let mut clients = self.clients_mut();
-        clients.remove_entry(&pid)
-            .ok_or(lib::error::InternalError::PlayerUnknown.into())
-            .map(|t| t.1)
-    }
-
-    pub fn remove_client(&self, pid: &player::PlayerID) {
-        self.clients_mut().remove(pid);
-    }
-
-    res_access!{ games, games_mut : HashMap<g::GameID, actix::Addr<GameServer>> }
-    res_access!{ lobbies, lobbies_mut : HashMap<lobby::LobbyID, actix::Addr<lobby::LobbyServer>> }
-    res_access!{ clients, clients_mut : HashMap<player::PlayerID, actix::Addr<ws::client::ClientSession>> }
-    res_access!{ missing_messages, missing_messages_mut : HashMap<player::PlayerID, Vec<protocol::Message>> }
-}
-
-async fn generate_state() -> AppState {
-    AppState {
-        db_pool: create_pool().await.unwrap(),
-        logger: create_logger(),
-        games: RwLock::new(HashMap::new()),
-        lobbies: RwLock::new(HashMap::new()),
-        clients: RwLock::new(HashMap::new()),
-        missing_messages: RwLock::new(HashMap::new()),
-    }
-}
 
 // this function could be located in different module
 fn config(cfg: &mut web::ServiceConfig) {
@@ -260,16 +179,22 @@ fn create_logger() -> Option<GelfLogger> {
     None
 }
 
+async fn generate_state() -> AppState {
+    AppState::new(create_pool().await.unwrap(), create_logger())
+}
+
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
 
-    let state = web::Data::new(generate_state().await);
+
+    let state = generate_state().await;
+    game::global::init(state);
 
     let mut server = HttpServer::new(move || App::new()
         .wrap(Logger::default())
-        .app_data(state.clone()).configure(config));
+        .configure(config));
 
     #[cfg(feature="ssl-secure")]
     {

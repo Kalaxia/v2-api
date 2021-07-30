@@ -1,5 +1,8 @@
 use actix_web::{delete, get, patch, post, web, HttpResponse};
-use actix::prelude::*;
+use actix::{
+    fut,
+    prelude::*,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use crate::{
@@ -14,9 +17,9 @@ use crate::{
     },
     game::player::{PlayerID, Player},
     ws::{ client::ClientSession, protocol},
-    AppState,
+    game::global::AppState,
 };
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::collections::{HashMap};
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
@@ -31,7 +34,7 @@ impl From<LobbyID> for Uuid {
 
 pub struct LobbyServer {
     pub id: LobbyID,
-    pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub clients: HashMap<PlayerID, actix::Addr<ClientSession>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -64,30 +67,24 @@ impl<'a> FromRow<'a, PgRow<'a>> for Lobby {
 
 impl LobbyServer {
     pub fn ws_broadcast(&self, message: &protocol::Message) {
-        let clients = self.clients.read().expect("Poisoned lock on lobby clients");
-        for c in clients.values() {
+        for c in self.clients.values() {
             c.do_send(message.clone());
         }
     }
     
     pub fn is_empty(&self) -> bool {
-        let clients = self.clients.read().expect("Poisoned lock on lobby clients");
+        let clients = &self.clients;
 
         clients.len() == 0
     }
 
     pub fn add_player(&mut self, pid: PlayerID, client: actix::Addr<ClientSession>) {
-        let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
-
-        clients.insert(pid, client);
+        self.clients.insert(pid, client);
     }
 
     // Remove the player from the lobby's list and notify all remaining players
     pub fn remove_player(&mut self, pid: PlayerID) -> actix::Addr<ClientSession> {
-        let client = {
-            let mut clients = self.clients.write().expect("Poisoned lock on lobby clients");
-            clients.remove(&pid).unwrap()
-        };
+        let client = self.clients.remove(&pid).unwrap();
         self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
@@ -155,11 +152,11 @@ impl Actor for LobbyServer {
 pub struct LobbyAddClientMessage(pub PlayerID, pub actix::Addr<ClientSession>);
 
 #[derive(actix::Message, Serialize, Clone)]
-#[rtype(result="Arc<(actix::Addr<ClientSession>, bool)>")]
+#[rtype(result="Option<(actix::Addr<ClientSession>, bool)>")]
 pub struct LobbyRemoveClientMessage(pub PlayerID);
 
 #[derive(actix::Message, Clone)]
-#[rtype(result="Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>")]
+#[rtype(result="Option<HashMap<PlayerID, actix::Addr<ClientSession>>>")]
 pub struct LobbyGetClientsMessage();
 
 impl Handler<LobbyAddClientMessage> for LobbyServer {
@@ -171,26 +168,24 @@ impl Handler<LobbyAddClientMessage> for LobbyServer {
 }
 
 impl Handler<LobbyRemoveClientMessage> for LobbyServer {
-    type Result = Arc<(actix::Addr<ClientSession>, bool)>;
+    type Result = Option<(actix::Addr<ClientSession>, bool)>;
 
     fn handle(&mut self, LobbyRemoveClientMessage(pid): LobbyRemoveClientMessage, ctx: &mut Self::Context) -> Self::Result {
         let client = self.remove_player(pid);
         if self.is_empty() {
             ctx.stop();
             ctx.terminate();
-            return Arc::new((client, true));
+            return Some((client, true));
         }
-        Arc::new((client, false))
+        Some((client, false))
     }
 }
 
 impl Handler<LobbyGetClientsMessage> for LobbyServer {
-    type Result = Arc<HashMap<PlayerID, actix::Addr<ClientSession>>>;
+    type Result = Option<HashMap<PlayerID, actix::Addr<ClientSession>>>;
 
     fn handle(&mut self, _msg: LobbyGetClientsMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let clients = self.clients.read().expect("Poisoned lock on lobby players");
-
-        Arc::new(clients.clone())
+        Some(self.clients.clone())
     }
 }
 
@@ -203,7 +198,7 @@ impl Handler<protocol::Message> for LobbyServer {
 }
 
 #[get("/")]
-pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
+pub async fn get_lobbies(state: &AppState) -> Result<HttpResponse> {
     #[derive(Serialize)]
     struct LobbyData{
         id: LobbyID,
@@ -237,7 +232,7 @@ pub async fn get_lobbies(state: web::Data<AppState>) -> Result<HttpResponse> {
 
 #[allow(clippy::eval_order_dependence)]
 #[get("/{id}")]
-pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
+pub async fn get_lobby(state: &AppState, info: web::Path<(LobbyID,)>) -> Result<HttpResponse> {
     let lobby = Lobby::find(info.0, &state.db_pool).await?;
 
     #[derive(Serialize)]
@@ -259,7 +254,7 @@ pub async fn get_lobby(state: web::Data<AppState>, info: web::Path<(LobbyID,)>) 
 }
 
 #[post("/")]
-pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<HttpResponse> {
+pub async fn create_lobby(state: &AppState, claims: Claims) -> Result<HttpResponse> {
     // Get the requesting player identity
     let mut player = Player::find(claims.pid, &state.db_pool).await?;
     let mut lobby_servers = state.lobbies_mut();
@@ -278,7 +273,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
     };
     let lobby_server = LobbyServer{
         id: new_lobby.id.clone(),
-        clients: RwLock::new(HashMap::new()),
+        clients: HashMap::new(),
     }.start();
     let client = state.retrieve_client(&claims.pid)?;
     lobby_server.do_send(LobbyAddClientMessage(player.id.clone(), client));
@@ -302,7 +297,7 @@ pub async fn create_lobby(state: web::Data<AppState>, claims: Claims) -> Result<
 
 #[patch("/{id}/")]
 pub async fn update_lobby_options(
-    state: web::Data<AppState>,
+    state: &AppState,
     info: web::Path<(LobbyID,)>,
     data: web::Json<LobbyOptionsPatch>,
     claims: Claims
@@ -331,7 +326,7 @@ pub async fn update_lobby_options(
 }
 
 #[post("/{id}/launch/")]
-pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::Path<(LobbyID,)>)
+pub async fn launch_game(state: &AppState, claims:Claims, info: web::Path<(LobbyID,)>)
     -> Result<HttpResponse>
 {
     let mut games = state.games_mut();
@@ -341,11 +336,11 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
     if lobby.owner != claims.pid.clone() {
         return Err(InternalError::AccessDenied.into());
     }
-    let clients = Arc::try_unwrap({
+    let clients = {
         let lobbies = state.lobbies();
         let lobby_server = lobbies.get(&lobby.id).ok_or(InternalError::LobbyUnknown)?;
         lobby_server.send(LobbyGetClientsMessage{})
-    }.await?).ok().unwrap();
+    }.await?.unwrap();
     let (game_id, game) = create_game(&lobby, state.clone(), clients).await?;
     games.insert(game_id, game);
 
@@ -363,7 +358,7 @@ pub async fn launch_game(state: web::Data<AppState>, claims:Claims, info: web::P
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Path<(LobbyID,)>)
+pub async fn leave_lobby(state: &AppState, claims:Claims, info:web::Path<(LobbyID,)>)
     -> Result<HttpResponse>
 {
     let mut lobby = Lobby::find(info.0, &state.db_pool).await?;
@@ -376,7 +371,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 
     let lobbies = state.lobbies();
     let lobby_server = lobbies.get(&lobby.id).expect("Lobby exists in DB but not in HashMap");
-    let (client, is_empty) = Arc::try_unwrap(lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?).ok().unwrap();
+    let (client, is_empty) = lobby_server.send(LobbyRemoveClientMessage(player.id.clone())).await?.unwrap();
     state.add_client(&player.id, client.clone());
     if is_empty {
         state.clear_lobby(lobby, player.id).await?;
@@ -392,7 +387,7 @@ pub async fn leave_lobby(state:web::Data<AppState>, claims:Claims, info:web::Pat
 }
 
 #[post("/{id}/players/")]
-pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: web::Data<AppState>, claims: Claims)
+pub async fn join_lobby(info: web::Path<(LobbyID,)>, state: &AppState, claims: Claims)
     -> Result<HttpResponse>
 {
     let lobby = Lobby::find(info.0, &state.db_pool).await?;

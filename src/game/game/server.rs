@@ -1,13 +1,8 @@
-use actix_web::web;
-use actix::prelude::*;
+use actix::{fut::wrap_future, prelude::*};
 use serde::{Serialize};
-use std::sync::{Arc, RwLock};
 use std::collections::{HashMap};
 use std::time::Duration;
 use chrono::{DateTime, Utc};
-use futures::{
-    executor::block_on,
-};
 use crate::{
     lib::{
         Result,
@@ -29,13 +24,12 @@ use crate::{
         },
     },
     ws::{ client::ClientSession, protocol},
-    AppState,
+    game::global::state,
 };
 
 pub struct GameServer {
     pub id: GameID,
-    pub state: web::Data<AppState>,
-    pub clients: RwLock<HashMap<PlayerID, actix::Addr<ClientSession>>>,
+    pub clients: HashMap<PlayerID, actix::Addr<ClientSession>>,
     pub tasks: HashMap<String, actix::SpawnHandle>,
 }
 
@@ -59,8 +53,8 @@ pub trait GameServerTask{
 impl Handler<protocol::Message> for GameServer {
     type Result = ();
 
-    fn handle(&mut self, msg: protocol::Message, _ctx: &mut Self::Context) -> Self::Result {
-        block_on(self.ws_broadcast(&msg));
+    fn handle(&mut self, msg: protocol::Message, ctx: &mut Self::Context) -> Self::Result {
+        ctx.wait(wrap_future(Self::ws_broadcast(self.id, msg)).map(|_,_,_| ()));
     }
 }
 
@@ -68,90 +62,100 @@ impl Actor for GameServer {
     type Context = Context<Self>;
     
     fn started(&mut self, ctx: &mut Context<Self>) {
-        block_on(self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::LobbyLaunched,
-            self.id.clone(),
-            None,
-        )));
+        ctx.wait(
+            wrap_future(Self::ws_broadcast(self.id, protocol::Message::new(
+                protocol::Action::LobbyLaunched,
+                self.id.clone(),
+                None,
+            ))).map(|_,_,_| { () })
+        );
         
-        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, _| block_on(this.init()));
-        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, _| block_on(this.begin()));
-        run_interval(ctx, Duration::new(5, 0), move |this, _| {
-            block_on(this.produce_income())
+        self.add_task(ctx, "init".to_string(), Duration::new(1, 0), |this, ctx| { Ok(ctx.wait(this.init())) });
+        self.add_task(ctx, "begin".to_string(), Duration::new(4, 0), |this, ctx| { Ok(ctx.wait(this.begin())) });
+        run_interval(ctx, Duration::new(5, 0), move |this, ctx| {
+            Ok(ctx.wait(wrap_future(Self::produce_income(this.id)).map(|_,_,_| ())))
         });
-        run_interval(ctx, Duration::new(60, 0), move |this, _| {
-            block_on(this.distribute_victory_points())
+        run_interval(ctx, Duration::new(60, 0), move |this, ctx| {
+            Ok(ctx.wait(wrap_future(Self::distribute_victory_points(this.id)).map(|_,_,_| ())))
         });
     }
 }
 
 impl GameServer {
-    async fn init(&mut self) -> Result<()> {
-        generate_game_factions(self.id.clone(), &self.state.db_pool).await?;
+    fn init(&mut self) -> impl ActorFuture<Actor=Self, Output=()> {
+        let gid = self.id;
+        wrap_future(async move {
+            let state = state();
+            generate_game_factions(gid, &state.db_pool).await?;
 
-        let mut game = Game::find(self.id.clone(), &self.state.db_pool).await?;
+            let mut game = Game::find(gid, &state.db_pool).await?;
 
-        let (mut systems, nb_victory_systems) = generate_systems(self.id.clone(), game.map_size).await?;
+            let (mut systems, nb_victory_systems) = generate_systems(gid, game.map_size).await?;
 
-        game.victory_points = nb_victory_systems as i32 * 100;
+            game.victory_points = nb_victory_systems as i32 * 100;
 
-        Game::update(game.clone(), &self.state.db_pool).await?;
+            Game::update(game.clone(), &state.db_pool).await?;
 
-        let mut players = Player::find_by_game(self.id, &self.state.db_pool).await?;
-        assign_systems(&players, &mut systems).await?;
-        init_player_wallets(&mut players, &self.state.db_pool).await?;
-        System::insert_all(systems.iter(), &self.state.db_pool).await?;
-        init_player_systems(&systems, game.game_speed, &self.state.db_pool).await?;
-        
-        self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::SystemsCreated,
-            (),
-            None
-        )).await
+            let mut players = Player::find_by_game(gid, &state.db_pool).await?;
+            assign_systems(&players, &mut systems).await?;
+            init_player_wallets(&mut players, &state.db_pool).await?;
+            System::insert_all(systems.iter(), &state.db_pool).await?;
+            init_player_systems(&systems, game.game_speed, &state.db_pool).await?;
+            
+            Self::ws_broadcast(gid, protocol::Message::new(
+                protocol::Action::SystemsCreated,
+                (),
+                None
+            )).await
+        }).map(|_,_,_| ())
     }
 
-    async fn begin(&self) -> Result<()> {
-        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
-        #[derive(Serialize)]
-        struct GameData{
-            victory_points: i32
-        }
-        self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::GameStarted,
-            GameData{
-                victory_points: game.victory_points
-            },
-            None
-        )).await
+    fn begin(&self) -> impl ActorFuture<Actor=Self, Output=()> {
+        let gid = self.id;
+        wrap_future(async move {
+            let state = state();
+            let game = Game::find(gid, &state.db_pool).await.expect("Game not found");
+            #[derive(Serialize)]
+            struct GameData{
+                victory_points: i32
+            }
+            Self::ws_broadcast(gid, protocol::Message::new(
+                protocol::Action::GameStarted,
+                GameData{
+                    victory_points: game.victory_points
+                },
+                None
+            )).await;
+        })
     }
 
-    fn clients(&self) -> std::sync::RwLockReadGuard<HashMap<PlayerID, actix::Addr<ClientSession>>> {
-        self.clients.read().expect("Poisoned lock on game clients")
-    }
+//    fn clients(&self) -> std::sync::RwLockReadGuard<HashMap<PlayerID, actix::Addr<ClientSession>>> {
+//        self.clients.read().expect("Poisoned lock on game clients")
+//    }
 
-    pub async fn ws_broadcast(&self, message: &protocol::Message) -> Result<()> {
-        let clients = self.clients();
-        for pid in Player::find_ids_by_game(self.id, &self.state.db_pool).await? {
-            self.ws_send(&clients, &pid, message);
+    pub async fn ws_broadcast(gid: GameID, message: protocol::Message) -> Result<()> {
+        let state = state();
+        for pid in Player::find_ids_by_game(gid, &state.db_pool).await? {
+            state.ws_send(&pid, &message);
         }
         Ok(())
     }
 
-    pub async fn faction_broadcast(&self, fid: FactionID, message: protocol::Message) -> Result<()> {
-        let clients = self.clients();
-        for pid in Player::find_ids_by_game_and_faction(self.id, fid, &self.state.db_pool).await? {
-            self.ws_send(&clients, &pid, &message);
+    pub async fn faction_broadcast(gid: GameID, fid: FactionID, message: protocol::Message) -> Result<()> {
+        let state = state();
+        for pid in Player::find_ids_by_game_and_faction(gid, fid, &state.db_pool).await? {
+            state.ws_send(&pid, &message);
         }
         Ok(())
     }
 
-    pub fn player_broadcast(&self, pid: &PlayerID, message: &protocol::Message) {
-        let clients = self.clients();
-        self.ws_send(&clients, pid, message);
+    pub fn player_broadcast(pid: &PlayerID, message: protocol::Message) {
+        state().ws_send(pid, &message);
     }
 
     pub fn ws_send(&self, clients: &std::sync::RwLockReadGuard<HashMap<PlayerID, actix::Addr<ClientSession>>>, pid: &PlayerID, message: &protocol::Message) {
-        let mut missing_messages = self.state.missing_messages_mut();
+        let state = state();
+        let mut missing_messages = state.missing_messages_mut();
 
         if let Some(client) = clients.get(pid) {
             client.do_send(message.clone());
@@ -162,13 +166,14 @@ impl GameServer {
         }
     }
 
-    async fn produce_income(&mut self) -> Result<()> {
-        let mut players: HashMap<PlayerID, Player> = Player::find_by_game(self.id.clone(), &self.state.db_pool).await?
+    async fn produce_income(gid: GameID) -> Result<()> {
+        let state = state();
+        let mut players: HashMap<PlayerID, Player> = Player::find_by_game(gid, &state.db_pool).await?
             .into_iter()
             .map(|p| (p.id.clone(), p))
             .collect();
         let mut players_income = HashMap::new();
-        let mines: Vec<SystemID> = Building::find_by_kind(BuildingKind::Mine, &self.state.db_pool).await?
+        let mines: Vec<SystemID> = Building::find_by_kind(BuildingKind::Mine, &state.db_pool).await?
             .into_iter()
             .filter(|b| b.status == BuildingStatus::Operational)
             .map(|b| b.system)
@@ -176,7 +181,7 @@ impl GameServer {
 
         // Add money to each player based on the number of
         // currently, the income is `some_player.income = some_player.number_of_systems_owned * 15`
-        System::find_possessed(self.id.clone(), &self.state.db_pool).await?
+        System::find_possessed(gid, &state.db_pool).await?
             .into_iter()
             .for_each(|system| {
                 let mut income = 10;
@@ -191,20 +196,17 @@ impl GameServer {
         struct PlayerIncome {
             income: usize
         }
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
         for (pid, income) in players_income {
             if let Some(p) = players.get_mut(&pid.unwrap()) {
                 p.wallet += income;
-                if let Some(c) = clients.get(&pid.unwrap()){
-                    c.do_send(protocol::Message::new(
+                state.ws_send(&pid.unwrap(), &protocol::Message::new(
                         protocol::Action::PlayerIncome,
                         PlayerIncome{ income },
                         None,
                     ));
-                }
             }
         }
-        let mut tx = self.state.db_pool.begin().await?;
+        let mut tx = state.db_pool.begin().await?;
         for p in players.values() {
             p.update(&mut tx).await?;
         }
@@ -212,14 +214,15 @@ impl GameServer {
         Ok(())
     }
 
-    async fn distribute_victory_points(&mut self) -> Result<()> {
-        let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
-        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
-        let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
+    async fn distribute_victory_points(gid: GameID) -> Result<()> {
+        let state = state();
+        let victory_systems = System::find_possessed_victory_systems(gid, &state.db_pool).await?;
+        let game = Game::find(gid, &state.db_pool).await?;
+        let mut factions = GameFaction::find_all(gid, &state.db_pool).await?
             .into_iter()
             .map(|gf| (gf.faction.clone(), gf))
             .collect::<HashMap<FactionID, GameFaction>>();
-        let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
+        let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &state.db_pool).await?
             .into_iter()
             .map(|p| (p.id.clone(), p))
             .collect::<HashMap<PlayerID, Player>>();
@@ -234,7 +237,7 @@ impl GameServer {
         }
 
         let mut victorious_faction: Option<&GameFaction> = None;
-        let mut tx = self.state.db_pool.begin().await?;
+        let mut tx = state.db_pool.begin().await?;
         for f in factions.values() {
             GameFaction::update(f, &mut tx).await?;
             if f.victory_points >= game.victory_points {
@@ -243,26 +246,27 @@ impl GameServer {
         }
         tx.commit().await?;
 
-        self.ws_broadcast(&protocol::Message::new(
+        Self::ws_broadcast(gid, protocol::Message::new(
             protocol::Action::FactionPointsUpdated,
             factions.clone(),
             None
         )).await?;
 
         if let Some(f) = victorious_faction {
-            self.process_victory(f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
+            Self::process_victory(gid, f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
         }
 
         Ok(())
     }
 
-    async fn process_victory(&mut self, victorious_faction: &GameFaction, factions: Vec<GameFaction>) -> Result<()> {
+    async fn process_victory(gid: GameID, victorious_faction: &GameFaction, factions: Vec<GameFaction>) -> Result<()> {
+        let state = state();
         #[derive(Serialize, Clone)]
         struct VictoryData {
             victorious_faction: FactionID,
             scores: Vec<GameFaction>
         }
-        self.ws_broadcast(&protocol::Message::new(
+        Self::ws_broadcast(gid, protocol::Message::new(
             protocol::Action::Victory,
             VictoryData{
                 victorious_faction: victorious_faction.faction,
@@ -271,21 +275,26 @@ impl GameServer {
             None,
         )).await?;
 
-        let game = Game::find(self.id, &self.state.db_pool).await?;
-        self.state.clear_game(&game).await?;
+        let game = Game::find(gid, &state.db_pool).await?;
+        state.clear_game(&game).await?;
         Ok(())
     }
 
-    pub async fn remove_player(&self, pid: PlayerID) -> Result<Option<actix::Addr<ClientSession>>> {
-        let mut player = Player::find(pid, &self.state.db_pool).await?;
-        player.is_connected = false;
-        self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::PlayerLeft,
-            pid.clone(),
-            Some(pid),
-        )).await?;
-        let mut clients = self.clients.write().expect("Poisoned lock on game players");
-        Ok(clients.remove(&pid))
+    pub fn remove_player(gid: GameID, pid: PlayerID) -> impl ActorFuture<Actor=GameServer, Output=Result<Option<actix::Addr<ClientSession>>>> {
+        wrap_future(async move {
+            let state = state();
+            let mut player = Player::find(pid, &state.db_pool).await.unwrap();
+            player.is_connected = false;
+            Self::ws_broadcast(gid, protocol::Message::new(
+                protocol::Action::PlayerLeft,
+                pid.clone(),
+                Some(pid),
+            )).await;
+            player.id
+        })
+        .map(|pid, this:&mut Self, _| {
+            Ok(this.clients.remove(&pid))
+        })
     }
 
     pub fn add_task<F>(
@@ -295,7 +304,7 @@ impl GameServer {
         duration: Duration,
         closure: F
     )
-        where F: 'static + FnOnce(&mut Self, & <Self as Actor>::Context) -> Result<()>,
+        where F: 'static + FnOnce(&mut Self, &mut <Self as Actor>::Context) -> Result<()>,
     {
         self.tasks.insert(task_name.clone(), ctx.run_later(
             duration,
@@ -322,14 +331,12 @@ impl GameServer {
     }
 
     pub fn is_empty(&self) -> bool {
-        let clients = self.clients.read().expect("Poisoned lock on game players");
-        
-        clients.len() == 0
+        self.clients.len() == 0
     }
 }
 
 #[derive(actix::Message, Serialize, Clone)]
-#[rtype(result="Arc<(Option<actix::Addr<ClientSession>>, bool)>")]
+#[rtype(result="std::result::Result<(Option<actix::Addr<ClientSession>>, bool), ()>")]
 pub struct GameRemovePlayerMessage(pub PlayerID);
 
 #[derive(actix::Message, Clone)]
@@ -355,7 +362,9 @@ pub struct GameFleetTravelMessage{
 /// This macro helps keeping the code readable:
 /// ```ignore
 /// let ship_queue = todo!();
-/// server.do_send(task!(ship_queue -> move |gs: &GameServer| block_on(ship_queue.so_something)));
+/// server.do_send(task!(ship_queue -> move |gs, ctx| {
+///     do_something()
+/// }));
 /// ```
 #[macro_export]
 macro_rules! task {
@@ -385,7 +394,7 @@ pub struct GameScheduleTaskMessage
 {
     task_id: String,
     task_duration: Option<Duration>,
-    callback: Box<dyn FnOnce(&GameServer) -> Result<()> + Send + 'static>,
+    callback: Box<dyn FnOnce(&mut GameServer, &mut Context<GameServer>) -> Result<()> + Send + 'static>,
 }
 
 #[derive(actix::Message)]
@@ -397,7 +406,7 @@ pub struct GameCancelTaskMessage
 
 impl GameScheduleTaskMessage
 {
-    pub fn new<F:FnOnce(&GameServer) -> Result<()> + Send + 'static>(task_id: String, task_duration:Option<Duration>, callback: F) -> Self {
+    pub fn new<F:FnOnce(&mut GameServer, &mut Context<GameServer>) -> Result<()> + Send + 'static>(task_id: String, task_duration:Option<Duration>, callback: F) -> Self {
         Self {
             task_id,
             task_duration,
@@ -423,17 +432,20 @@ impl Handler<GameAddClientMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, GameAddClientMessage(pid, client): GameAddClientMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let mut clients = self.clients.write().expect("Poisoned lock on game players");
-        clients.insert(pid, client);
+        self.clients.insert(pid, client);
     }
 }
 
 impl Handler<GameRemovePlayerMessage> for GameServer {
-    type Result = Arc<(Option<actix::Addr<ClientSession>>, bool)>;
+    type Result = ResponseActFuture<Self, std::result::Result<(Option<actix::Addr<ClientSession>>, bool), ()>>;
 
     fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let client = block_on(self.remove_player(pid)).unwrap();
-        Arc::new((client, self.is_empty()))
+        Box::new(
+            Self::remove_player(self.id, pid)
+            .map(|client, this, _| {
+                Ok((client.map_err(|_| ())?, this.is_empty())) 
+            })
+        )
     }
 }
 
@@ -441,8 +453,7 @@ impl Handler<GameNotifyPlayerMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameNotifyPlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        let client = clients.get(&msg.0).unwrap().clone();
+        let client = self.clients.get(&msg.0).unwrap();
         client.do_send(msg.1);
     }
 }
@@ -450,11 +461,14 @@ impl Handler<GameNotifyPlayerMessage> for GameServer {
 impl Handler<GameNotifyFactionMessage> for GameServer {
     type Result = ();
 
-    fn handle(&mut self, msg: GameNotifyFactionMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let res = block_on(self.faction_broadcast(msg.0, msg.1));
-        if res.is_err() {
-            println!("Faction broadcast failed : {:?}", res.err());
-        }
+    fn handle(&mut self, msg: GameNotifyFactionMessage, ctx: &mut Self::Context) -> Self::Result {
+        let gid = self.id;
+        ctx.wait(wrap_future(async move {
+            let res = Self::faction_broadcast(gid, msg.0, msg.1).await;
+            if res.is_err() {
+                println!("Faction broadcast failed : {:?}", res.err());
+            }
+        }));
     }
 }
 
@@ -462,22 +476,37 @@ impl Handler<GameFleetTravelMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, msg: GameFleetTravelMessage, ctx: &mut Self::Context) -> Self::Result {
-        block_on(self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::FleetSailed,
-            msg.fleet.clone(),
-            Some(msg.fleet.player),
-        )));
+        let gid = self.id;
+        let state = state();
+        let fleet = msg.fleet.clone();
+        let player = fleet.player;
+        let fid = fleet.id;
+        ctx.wait(wrap_future(async move {
+            Self::ws_broadcast(gid, protocol::Message::new(
+                protocol::Action::FleetSailed,
+                fleet,
+                Some(player),
+            )).await;
+        }));
         // In this case, there is no battle, but a in-progress conquest
         // We update the conquest or cancel it depending on the remaining fleets
-        if let Some(mut conquest) = block_on(Conquest::find_current_by_system(&msg.system.id, &self.state.db_pool)).map_err(ServerError::from).ok().unwrap() {
-            block_on(conquest.remove_fleet(&msg.system, &msg.fleet, &self)).map_err(ServerError::from).ok().unwrap();
-        }
-        let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
-        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, _| {
-            let res = block_on(process_fleet_arrival(&this, msg.fleet.id));
-            if res.is_err() {
-                println!("Fleet arrival fail : {:?}", res.err());
+        let fleet = msg.fleet.clone();
+        let system = msg.system.clone();
+        ctx.wait(wrap_future(async move {
+            if let Some(mut conquest) = Conquest::find_current_by_system(&system.id, &state.db_pool).await.unwrap() {
+                conquest.remove_fleet(&system, &fleet, gid).await;
             }
+        }));
+
+        let datetime: DateTime<Utc> = msg.fleet.destination_arrival_date.unwrap().into();
+        ctx.run_later(datetime.signed_duration_since(Utc::now()).to_std().unwrap(), move |this, ctx| {
+            let gid = this.id;
+            ctx.wait(wrap_future(async move {
+                let res = process_fleet_arrival(gid, fid).await;
+                if res.is_err() {
+                    println!("Fleet arrival fail : {:?}", res.err());
+                }
+            }));
         });
     }
 }
@@ -491,7 +520,7 @@ impl Handler<GameScheduleTaskMessage> for GameServer
             &mut ctx,
             msg.task_id.clone(),
             msg.task_duration.unwrap_or(Duration::new(0, 0)),
-            move |this, _| (msg.callback)(&this)
+            move |this, ctx| (msg.callback)(this, ctx)
         )
     }
 }
@@ -509,9 +538,9 @@ impl Handler<GameEndMessage> for GameServer {
     type Result = ();
 
     fn handle(&mut self, _msg: GameEndMessage, ctx: &mut Self::Context) -> Self::Result {
-        let clients = self.clients.read().expect("Poisoned lock on game clients");
-        for (pid, c) in clients.iter() {
-            self.state.add_client(&pid, c.clone());
+        let state = state();
+        for (pid, c) in self.clients.iter() {
+            state.add_client(&pid, c.clone());
         }
         ctx.stop();
         ctx.terminate();
@@ -523,7 +552,7 @@ fn run_interval<F>(
     duration: Duration,
     mut closure: F
 )
-    where F: FnMut(&mut GameServer, & <GameServer as Actor>::Context) -> Result<()> + 'static,
+    where F: FnMut(&mut GameServer, &mut <GameServer as Actor>::Context) -> Result<()> + 'static,
 {
     ctx.run_interval(duration, move |this, ctx| {
         let result = closure(this, ctx).map_err(ServerError::from);

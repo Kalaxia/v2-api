@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use actix::AsyncContext;
 use crate::{
+    game::global::state,
     task,
     lib::{
         time::Time,
@@ -15,10 +17,9 @@ use crate::{
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadronID, FleetSquadron},
         },
-        game::server::{ GameServer, GameServerTask }
+        game::{game::GameID, server::{ GameServer, GameServerTask }},
     }
 };
-use futures::executor::block_on;
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use rand::prelude::*;
@@ -87,29 +88,36 @@ impl Round {
         }
     }
 
-    pub async fn execute(&mut self, server: &GameServer) -> Result<()> {
-        let mut battle = Battle::find(self.battle, &server.state.db_pool).await?;
+    pub async fn execute(&mut self, gid: GameID) -> Result<()> {
+        let state = state();
+        let mut battle = Battle::find(self.battle, &state.db_pool).await?;
 
         log(gelf::Level::Informational, "Battle round started", "A new round has been added to the battle", vec![
             ("battle_id", battle.id.0.to_string()),
             ("round_number", self.number.to_string()),
-        ], &server.state.logger);
+        ], &state.logger);
         
-        let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
-        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
+        let new_fleets = battle.get_joined_fleets(&state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
+        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &state.db_pool).await? {
             battle.fleets.get_mut(&fid).unwrap().extend(fleets);
         }
 
         self.fight(&mut battle, &new_fleets);
         battle.rounds.push(self.clone());
-        battle.fleets = update_fleets(&battle, &server).await?;
-        battle.update(&mut &server.state.db_pool).await?;
+        battle.fleets = update_fleets(&battle).await?;
+        battle.update(&mut &state.db_pool).await?;
 
         if battle.is_over() {
-            battle.end(server).await?;
+            battle.end(gid).await?;
         } else {
             let mut next_round = Round::new(battle.id, self.number + 1);
-            server.state.games().get(&server.id).unwrap().do_send(task!(next_round -> move |gs| block_on(next_round.execute(gs))));
+            state.games().get(&gid).unwrap().do_send(task!(next_round -> move |gs, ctx| {
+                let gid = gs.id;
+                ctx.wait(actix::fut::wrap_future(async move {
+                    next_round.execute(gid).await;
+                }));
+                Ok(())
+            }));
         }
         Ok(())
     }

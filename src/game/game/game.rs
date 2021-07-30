@@ -20,7 +20,7 @@ use crate::{
         player::{PlayerID, Player},
     },
     ws::client::ClientSession,
-    AppState,
+    game::global::AppState,
 };
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Error, Executor, Postgres};
 use sqlx_core::row::Row;
@@ -87,13 +87,12 @@ impl Game {
     }
 }
 
-pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
+pub async fn create_game(lobby: &Lobby, state: &AppState, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
     let id = GameID(Uuid::new_v4());
     
     let game_server = GameServer{
         id: id.clone(),
-        state: state.clone(),
-        clients: RwLock::new(clients),
+        clients: clients,
         tasks: HashMap::new(),
     };
     let game = Game{
@@ -113,12 +112,12 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
 }
 
 #[get("/{id}/players/")]
-pub async fn get_players(state: web::Data<AppState>, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
+pub async fn get_players(state: &AppState, info: web::Path<(GameID,)>) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(Player::find_by_game(info.0, &state.db_pool).await?))
 }
 
 #[delete("/{id}/players/")]
-pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Path<(GameID,)>)
+pub async fn leave_game(state: &AppState, claims: Claims, info: web::Path<(GameID,)>)
     -> Result<HttpResponse>
 {
     let game = Game::find(info.0, &state.db_pool).await?;
@@ -131,7 +130,7 @@ pub async fn leave_game(state:web::Data<AppState>, claims: Claims, info: web::Pa
 
     let games = state.games();
     let game_server = games.get(&game.id).expect("Game exists in DB but not in HashMap");
-    let (client, is_empty) = Arc::try_unwrap(game_server.send(GameRemovePlayerMessage(player.id.clone())).await?).ok().unwrap();
+    let (client, is_empty) = game_server.send(GameRemovePlayerMessage(player.id)).await?.unwrap();
     if let Some(c) = client {
         state.add_client(&player.id, c);
     }

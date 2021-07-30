@@ -1,7 +1,7 @@
 use actix_web::{get, web, HttpResponse};
 use serde::{Serialize, Deserialize};
 use crate::{
-    AppState,
+    game::global::AppState,
     game::{
         game::game::GameID,
     },
@@ -119,7 +119,7 @@ impl GameFaction {
 }
 
 #[get("/")]
-pub async fn get_factions(state: web::Data<AppState>) -> Result<HttpResponse> {
+pub async fn get_factions(state: &AppState) -> Result<HttpResponse> {
     Ok(HttpResponse::Ok().json(Faction::find_all(&state.db_pool).await?))
 }
 

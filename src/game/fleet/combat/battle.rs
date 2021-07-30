@@ -218,10 +218,6 @@ impl Battle {
             None
         )).await?;
 
-        if self.victor == self.defender_faction {
-            return Ok(());
-        }
-
         let fleet = Fleet::find(&self.attacker, &server.state.db_pool).await?;
         let system = System::find(self.system, &server.state.db_pool).await?;
 
@@ -230,6 +226,10 @@ impl Battle {
             ("victor_id", self.victor.unwrap().0.to_string()),
             ("system_id", self.system.0.to_string())
         ], &server.state.logger);
+
+        if self.victor == self.defender_faction {
+            return Ok(());
+        }
 
         Conquest::resume(&fleet, &system, self.victor, &server).await
     }

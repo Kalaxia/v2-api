@@ -31,7 +31,7 @@ impl<T> SyncOnceCell<T> {
 
     pub fn get(&self) -> Option<&T> {
         if self.state.load(Ordering::Acquire) == INIT {
-            Some(unsafe { (&*self.inner.get()).assume_init_ref() })
+            Some(unsafe { &*(self.inner.get() as *const T)})
         } else {
             None
         }

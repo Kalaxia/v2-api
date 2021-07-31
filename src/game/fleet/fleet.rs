@@ -225,6 +225,10 @@ pub fn get_fleet_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
     fleets.iter().map(|(_, f)| f.player).collect()
 }
 
+pub fn has_other_fleets_than(fleets: &HashMap<FleetID, Fleet>, fleet: &Fleet) -> bool {
+    1 <= fleets.keys().filter(|fid| **fid != fleet.id).collect::<Vec<&FleetID>>().len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +284,24 @@ mod tests {
         assert_eq!(fleet.system, system.id);
         assert_eq!(fleet.destination_system, None);
         assert_eq!(fleet.destination_arrival_date, None);
+    }
+
+    #[test]
+    fn test_has_other_fleets_than() {
+        let mut fleets = HashMap::new();
+        let fleet = get_fleet_mock();
+
+        assert_eq!(false, has_other_fleets_than(&fleets, &fleet));
+
+        let other_fleet = get_fleet_mock();
+        fleets.insert(other_fleet.id, other_fleet.clone());
+
+        assert_eq!(false, has_other_fleets_than(&fleets, &other_fleet));
+        assert_eq!(true, has_other_fleets_than(&fleets, &fleet));
+
+        fleets.insert(fleet.id, fleet.clone());
+
+        assert_eq!(true, has_other_fleets_than(&fleets, &fleet));
     }
 
     fn get_fleet_mock() -> Fleet {

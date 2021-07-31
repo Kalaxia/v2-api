@@ -19,7 +19,7 @@ use crate::{
                 battle::Battle,
                 conquest::Conquest,
             },
-            fleet::{Fleet, FleetID, FLEET_RANGE},
+            fleet::{Fleet, FleetID, has_other_fleets_than, FLEET_RANGE},
         },
         system::system::{System, SystemID, Coordinates},
         fleet::squadron::{FleetSquadron},
@@ -199,11 +199,10 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
             }
             // The fleet landed in an enemy system. We check if it is defended by some fleets and initiate a battle
             let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?;
-            // If there is only the current fleet, a conquest begins
-            if 1 == fleets.len() {
-                return Ok(FleetArrivalOutcome::Conquer{ system: system.clone(), fleet });
+            if has_other_fleets_than(&fleets, &fleet) {
+                return Ok(FleetArrivalOutcome::Battle{ system: system.clone(), fleet, fleets, defender_faction: system_owner.faction });
             }
-            return Ok(FleetArrivalOutcome::Battle{ system: system.clone(), fleet, fleets, defender_faction: system_owner.faction })
+            return Ok(FleetArrivalOutcome::Conquer{ system: system.clone(), fleet });
         },
         None => {
             // The fleet landed in a neutral system. We check if it is currently being colonized by some fleets and initiate a battle

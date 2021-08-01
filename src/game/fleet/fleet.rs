@@ -77,7 +77,7 @@ impl Fleet {
     }
 
     pub fn can_fight(&self) -> bool {
-        !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
+        !self.is_destroyed && !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -264,6 +264,11 @@ mod tests {
 
         assert!(fleet.can_fight());
 
+        fleet.is_destroyed = true;
+
+        assert!(!fleet.can_fight());
+
+        fleet.is_destroyed = false;
         fleet.squadrons[0].quantity = 0;
 
         assert!(!fleet.can_fight());
@@ -303,17 +308,17 @@ mod tests {
         let mut fleets = HashMap::new();
         let fleet = get_fleet_mock();
 
-        assert_eq!(false, has_other_fleets_than(&fleets, &fleet));
+        assert!(!has_other_fleets_than(&fleets, &fleet));
 
         let other_fleet = get_fleet_mock();
         fleets.insert(other_fleet.id, other_fleet.clone());
 
-        assert_eq!(false, has_other_fleets_than(&fleets, &other_fleet));
-        assert_eq!(true, has_other_fleets_than(&fleets, &fleet));
+        assert!(!has_other_fleets_than(&fleets, &other_fleet));
+        assert!(has_other_fleets_than(&fleets, &fleet));
 
         fleets.insert(fleet.id, fleet.clone());
 
-        assert_eq!(true, has_other_fleets_than(&fleets, &fleet));
+        assert!(has_other_fleets_than(&fleets, &fleet));
     }
 
     fn get_fleet_mock() -> Fleet {

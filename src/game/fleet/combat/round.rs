@@ -144,16 +144,30 @@ impl Round {
         // make each squadron fight
         for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
             // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
-            if let Some(act) = attack(&mut battle, fid, &squadron, self.number) {
+            if let Some(act) = attack(&mut battle, fid, &squadron, self.number, &server) {
                 self.squadron_actions.push(act);
             }
         }
     }
 }
 
-fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Option<SquadronAction> {
+fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16, server: &GameServer) -> Option<SquadronAction> {
     let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker)?;
     let (remaining_ships, loss) = fire(&attacker, &target);
+
+    log(
+        gelf::Level::Debug,
+        "Squadron attack",
+        &format!(
+            "Squadron {} of fleet {} has attacked squadron {} of fleet {}",
+            attacker.to_log_message(),
+            attacker.fleet.to_string(),
+            target.to_log_message(),
+            target.fleet.to_string()
+        ),
+        vec![],
+        &server.state.logger
+    );
 
     battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons
         .iter_mut()

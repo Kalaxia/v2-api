@@ -4,7 +4,7 @@ use crate::{
     lib::{
         error::{ServerError, InternalError},
         time::Time,
-        log::log,
+        log::{log, Loggable},
         Result
     },
     game::{
@@ -193,11 +193,17 @@ impl Battle {
         let mut round = Round::new(battle.id, 1);
         server.state.games().get(&server.id).unwrap().do_send(task!(round -> move |gs| block_on(round.execute(gs))));
 
-        log(gelf::Level::Informational, "Battle started", "A new battle has started", vec![
-            ("battle_id", battle.id.0.to_string()),
-            ("system_id", system.id.0.to_string()),
-            ("fleet_id", arriver.id.0.to_string()),
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle started",
+            &format!("Fleet {} has started a new battle on system {}", arriver.to_log_message(), system.to_log_message()),
+            vec![
+                ("battle_id", battle.id.0.to_string()),
+                ("system_id", system.id.0.to_string()),
+                ("fleet_id", arriver.id.to_string()),
+            ],
+            &server.state.logger
+        );
 
         Ok(())
     }
@@ -221,11 +227,17 @@ impl Battle {
         let fleet = Fleet::find(&self.attacker, &server.state.db_pool).await?;
         let system = System::find(self.system, &server.state.db_pool).await?;
 
-        log(gelf::Level::Informational, "Battle ended", "A battle has finished", vec![
-            ("battle_id", self.id.0.to_string()),
-            ("victor_id", self.victor.unwrap().0.to_string()),
-            ("system_id", self.system.0.to_string())
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle ended",
+            &format!("The battle on {} is over", system.to_log_message()),
+            vec![
+                ("battle_id", self.id.0.to_string()),
+                ("victor_id", self.victor.unwrap().0.to_string()),
+                ("system_id", self.system.0.to_string())
+            ],
+            &server.state.logger
+        );
 
         if self.victor == self.defender_faction {
             return Ok(());
@@ -301,10 +313,16 @@ pub async fn update_fleets(battle: &Battle, server: &GameServer) -> Result<HashM
         for (fleet_id, fleet) in fleets.iter() {
             let is_destroyed = update_fleet(fleet.clone(), &mut tx).await?;
             if is_destroyed {
-                log(gelf::Level::Informational, "Fleet destroyed", "A fleet has been destroyed in combat", vec![
-                    ("fleet_id", fleet.id.0.to_string()),
-                    ("battle_id", battle.id.0.to_string()),
-                ], &server.state.logger);
+                log(
+                    gelf::Level::Informational,
+                    "Fleet destroyed",
+                    &format!("Fleet {} has been destroyed in combat", fleet.to_log_message()),
+                    vec![
+                        ("fleet_id", fleet.id.to_string()),
+                        ("battle_id", battle.id.0.to_string()),
+                    ],
+                    &server.state.logger
+                );
             } else {
                 faction_remaining_fleets.insert(*fleet_id, fleet.clone());
             }

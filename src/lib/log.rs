@@ -1,5 +1,9 @@
 use gelf::{Logger, Message, Level};
 
+pub trait Loggable {
+    fn to_log_message(&self) -> String;
+}
+
 #[cfg(feature="graylog")]
 pub fn log(level: Level, message: &str, full_message: &str, metadata: Vec<(&str, String)>, logger: &Option<Logger>) {
     if let Some(log) = logger {

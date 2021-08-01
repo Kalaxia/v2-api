@@ -12,7 +12,12 @@ use crate::{
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,
-    lib::{Result, error::{InternalError, ServerError}, auth},
+    lib::{
+        Result,
+        log::Loggable,
+        error::{InternalError, ServerError},
+        auth
+    },
     ws::protocol,
 };
 
@@ -41,6 +46,12 @@ pub struct PlayerUpdateData{
 #[derive(Deserialize)]
 pub struct PlayerMoneyTransferRequest{
     pub amount: usize
+}
+
+impl Loggable for Player {
+    fn to_log_message(&self) -> String {
+        format!("{}", self.username)
+    }
 }
 
 impl From<PlayerID> for Uuid {

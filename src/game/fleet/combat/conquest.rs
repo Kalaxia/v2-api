@@ -4,7 +4,7 @@ use crate::{
     cancel_task,
     lib::{
         time::{ms_to_time, Time},
-        log::log,
+        log::{log, Loggable},
         error::ServerError,
         Result
     },
@@ -182,10 +182,18 @@ impl Conquest {
         )).await?;
         server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
 
-        log(gelf::Level::Informational, "Conquest cancelled", "The last fleet executing the conquest has travelled elsewhere", vec![
-            ("conquest_id", conquest.id.0.to_string()),
-            ("system_id", conquest.system.0.to_string()),
-        ], &server.state.logger);
+        let system = System::find(conquest.system, &server.state.db_pool).await?;
+
+        log(
+            gelf::Level::Informational,
+            "Conquest cancelled",
+            &format!("The last fleet executing the conquest on {} is gone", system.to_log_message()),
+            vec![
+                ("conquest_id", conquest.id.0.to_string()),
+                ("system_id", conquest.system.0.to_string()),
+            ],
+            &server.state.logger
+        );
 
         Ok(())
     }
@@ -276,12 +284,20 @@ impl Conquest {
         };
         conquest.insert(&mut &server.state.db_pool).await?;
 
-        log(gelf::Level::Informational, "New conquest", "A new conquest has started", vec![
-            ("conquest_id", conquest_id.0.to_string()),
-            ("player_id", fleets[0].player.0.to_string()),
-            ("fleet_id", fleets[0].id.0.to_string()),
-            ("system_id", system.id.0.to_string())
-        ], &server.state.logger);
+        let player = Player::find(conquest.player, &server.state.db_pool).await?;
+
+        log(
+            gelf::Level::Informational,
+            "New conquest",
+            &format!("A new conquest has started on system {} from player {}", system.to_log_message(), player.to_log_message()),
+            vec![
+                ("conquest_id", conquest_id.0.to_string()),
+                ("player_id", fleets[0].player.0.to_string()),
+                ("fleet_id", fleets[0].id.0.to_string()),
+                ("system_id", system.id.0.to_string())
+            ],
+            &server.state.logger
+        );
 
         server.ws_broadcast(&protocol::Message::new(
             protocol::Action::ConquestStarted,
@@ -304,17 +320,24 @@ impl Conquest {
         system.player = Some(self.player.clone());
         system.update(&mut &server.state.db_pool).await?;
 
+        log(
+            gelf::Level::Informational,
+            "Conquest succeeded",
+            &format!("System {} has been conquerred",
+            system.to_log_message()),
+            vec![
+                ("conquest_id", self.id.0.to_string()),
+                ("player_id", self.player.0.to_string()),
+                ("system_id", self.system.0.to_string())
+            ],
+            &server.state.logger
+        );
+
         server.ws_broadcast(&protocol::Message::new(
             protocol::Action::SystemConquerred,
             ConquestData{ system, fleets },
             None
         )).await?;
-
-        log(gelf::Level::Informational, "Conquest succeeded", "A new conquest has started", vec![
-            ("conquest_id", self.id.0.to_string()),
-            ("player_id", self.player.0.to_string()),
-            ("system_id", self.system.0.to_string())
-        ], &server.state.logger);
 
         Ok(())
     }

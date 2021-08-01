@@ -3,7 +3,7 @@ use crate::{
     task,
     lib::{
         time::Time,
-        log::log,
+        log::{log, Loggable},
         Result
     },
     game::{
@@ -90,17 +90,23 @@ impl Round {
     pub async fn execute(&mut self, server: &GameServer) -> Result<()> {
         let mut battle = Battle::find(self.battle, &server.state.db_pool).await?;
 
-        log(gelf::Level::Informational, "Battle round started", "A new round has been added to the battle", vec![
-            ("battle_id", battle.id.0.to_string()),
-            ("round_number", self.number.to_string()),
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle round started",
+            "A new round has been added to the battle",
+            vec![
+                ("battle_id", battle.id.0.to_string()),
+                ("round_number", self.number.to_string()),
+            ],
+            &server.state.logger
+        );
         
         let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
         for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
             battle.fleets.get_mut(&fid).unwrap().extend(fleets);
         }
 
-        self.fight(&mut battle, &new_fleets);
+        self.fight(&mut battle, &new_fleets, &server);
         battle.rounds.push(self.clone());
         battle.fleets = update_fleets(&battle, &server).await?;
         battle.update(&mut &server.state.db_pool).await?;
@@ -114,9 +120,19 @@ impl Round {
         Ok(())
     }
 
-    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>) {
+    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) {
         // new fleets arrival
         for fleet in new_fleets.values() {
+            log(
+                gelf::Level::Debug,
+                "Fleet joined battle",
+                &format!("Fleet {} has joined the fray", fleet.to_log_message()),
+                vec![
+                    ("battle_id", battle.id.0.to_string()),
+                    ("system_id", battle.system.0.to_string()),
+                ],
+                &server.state.logger
+            );
             self.fleet_actions.push(FleetAction{
                 battle: battle.id,
                 fleet: fleet.id,

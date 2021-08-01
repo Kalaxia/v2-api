@@ -7,7 +7,7 @@ use crate::{
         Result,
         error::{ServerError, InternalError},
         time::Time,
-        log::log,
+        log::{log, Loggable},
         auth::Claims
     },
     game::{
@@ -42,6 +42,12 @@ pub struct Fleet{
 impl fmt::Display for FleetID {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+impl Loggable for Fleet {
+    fn to_log_message(&self) -> String {
+        self.id.to_string()
     }
 }
 
@@ -196,12 +202,18 @@ pub async fn donate(
 
     fleet.update(&mut &state.db_pool).await?;
 
-    log(gelf::Level::Informational, "Fleet donation", "A fleet has been given", vec![
-        ("donator_id", player.id.0.to_string()),
-        ("receiver_id", other_player.id.0.to_string()),
-        ("fleet_id", fleet.id.0.to_string()),
-        ("system_id", system.id.0.to_string()),
-    ], &state.logger);
+    log(
+        gelf::Level::Informational,
+        "Fleet donation",
+        &format!("{} has given fleet {} to {} on system {}", player.to_log_message(), fleet.to_log_message(), other_player.to_log_message(), system.to_log_message()),
+        vec![
+            ("donator_id", player.id.0.to_string()),
+            ("receiver_id", other_player.id.0.to_string()),
+            ("fleet_id", fleet.id.to_string()),
+            ("system_id", system.id.0.to_string()),
+        ],
+        &state.logger
+    );
 
     #[derive(Serialize)]
     pub struct FleetTransferData{

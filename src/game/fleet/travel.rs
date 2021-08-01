@@ -4,7 +4,7 @@ use crate::{
     lib::{
         Result,
         error::InternalError,
-        log::log,
+        log::{log, Loggable},
         auth::Claims
     },
     game::{
@@ -141,13 +141,20 @@ pub async fn travel(
             conquest.halt(&state, &game_id).await?;
         }
     }
-    game.do_send(GameFleetTravelMessage{ system, fleet: fleet.clone() });
 
-    log(gelf::Level::Informational, "Fleet travel", "A fleet has gone to another system", vec![
-        ("fleet_id", fleet.id.0.to_string()),
-        ("system_id", info.1.0.to_string()),
-        ("destination_id", destination_system.id.0.to_string()),
-    ], &state.logger);
+    log(
+        gelf::Level::Informational,
+        "Fleet travel",
+        &format!("Fleet {} has gone to system {}", fleet.to_log_message(), destination_system.to_log_message()),
+        vec![
+            ("fleet_id", fleet.id.to_string()),
+            ("system_id", system.id.0.to_string()),
+            ("destination_id", destination_system.id.0.to_string()),
+        ],
+        &state.logger
+    );
+
+    game.do_send(GameFleetTravelMessage{ system, fleet: fleet.clone() });
 
     Ok(HttpResponse::Ok().json(fleet))
 }
@@ -179,10 +186,16 @@ pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Re
 async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fleet, player: &Player, system_owner: Option<Player>) -> Result<FleetArrivalOutcome> {
     // First we check if a battle rages in the destination system. No matter the opponents, the fleet joins in
     if Battle::count_current_by_system(&system.id, &server.state.db_pool).await? > 0 {
-        log(gelf::Level::Informational, "Fleet joined battle", "A fleet has finished its journey to another system and encounter an ongoing battle", vec![
-            ("fleet_id", fleet.id.0.to_string()),
-            ("system_id", system.id.0.to_string()),
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Fleet joined battle",
+            &format!("Fleet {} has finished its journey to system {} and encountered an ongoing battle", fleet.to_log_message(), system.to_log_message()),
+            vec![
+                ("fleet_id", fleet.id.to_string()),
+                ("system_id", system.id.0.to_string()),
+            ],
+            &server.state.logger
+        );
 
         return Ok(FleetArrivalOutcome::JoinedBattle{ fleet });
     }
@@ -190,10 +203,16 @@ async fn resolve_arrival_outcome(system: &System, server: &GameServer, fleet: Fl
         Some(system_owner) => {
             // Both players have the same faction, the arrived fleet just parks here
             if system_owner.faction == player.faction {
-                log(gelf::Level::Informational, "Fleet arrived", "A fleet has finished its journey to another system", vec![
-                    ("fleet_id", fleet.id.0.to_string()),
-                    ("system_id", system.id.0.to_string()),
-                ], &server.state.logger);
+                log(
+                    gelf::Level::Informational,
+                    "Fleet arrived",
+                    &format!("Fleet {} has finished its journey to system {}", fleet.to_log_message(), system.to_log_message()),
+                    vec![
+                        ("fleet_id", fleet.id.to_string()),
+                        ("system_id", system.id.0.to_string()),
+                    ],
+                    &server.state.logger
+                );
 
                 return Ok(FleetArrivalOutcome::Arrived{ fleet });
             }

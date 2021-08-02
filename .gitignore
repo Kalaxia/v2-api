@@ -6,3 +6,6 @@ kalaxia.env
 /var/ssl/*
 /var/data
 !/**/.gitkeep
+
+/logs/*
+!/logs/.gitkeep

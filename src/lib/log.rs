@@ -1,4 +1,6 @@
 use gelf::{Logger, Message, Level};
+use chrono::Utc;
+use std::io::Write;
 
 pub trait Loggable {
     fn to_log_message(&self) -> String;
@@ -28,5 +30,16 @@ pub fn log(level: Level, message: &str, full_message: &str, metadata: Vec<(&str,
 }
 
 fn print_log(level: Level, full_message: &str) {
-    println!("app.{}: {}", level.to_rust().to_string().to_uppercase(), full_message);
+    let writer = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open("logs/current.log");
+
+    let date = Utc::now().to_string();
+
+    match writer {
+        Ok(mut file) => { write!(file, "[{}] app.{}: {}\n", date, level.to_rust().to_string().to_uppercase(), full_message); },
+        Err(_err) => { println!("[{}] app.{}: {}", date, level.to_rust().to_string().to_uppercase(), full_message); }
+    };
 }

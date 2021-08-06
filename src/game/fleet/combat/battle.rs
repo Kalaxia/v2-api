@@ -106,11 +106,19 @@ impl Battle {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND id != any($2)")
-            .bind(Uuid::from(self.id))
+    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let fleets: Vec<Fleet> = sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND is_destroyed = FALSE AND NOT id = ANY($2)")
+            .bind(Uuid::from(self.system))
             .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
-            .fetch_all(db_pool).await.map_err(ServerError::from)
+            .fetch_all(db_pool).await.map_err(ServerError::from)?;
+
+        let mut result = HashMap::new();
+        for mut fleet in fleets {
+            fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id, db_pool).await?;
+            result.insert(fleet.id, fleet);
+        }
+
+        Ok(result)
     }
 
     pub async fn count_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
@@ -141,12 +149,15 @@ impl Battle {
         Ok(())
     }
 
-    pub fn get_fighting_squadrons_by_initiative(&self) -> Vec<(FactionID, FleetSquadron)> {
+    pub fn get_fighting_squadrons_by_initiative(&self, new_fleets: &HashMap<FleetID, Fleet>) -> Vec<(FactionID, FleetSquadron)> {
         let mut squadrons: HashMap<i32, Vec<(FactionID, FleetSquadron)>> = HashMap::new();
         let mut rng = thread_rng();
 
         for (fid, fleets) in &self.fleets {
             for fleet in fleets.values() {
+                if new_fleets.contains_key(&fleet.id) {
+                    continue;
+                }
                 for squadron in &fleet.squadrons {
                     if squadron.quantity > 0 {
                         let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;

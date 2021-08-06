@@ -6,6 +6,8 @@ use std::fmt::{Display, Formatter, Error as FmtError};
 use sqlx_core::{Error as SqlxError};
 use serde::Serialize;
 use uuid::{Error as UuidError};
+use gelf::Level;
+use crate::lib::log::log;
 
 /// This is the global server error type implemented as a convenient wrapper around all kind of
 /// errors we could encounter using externam libraries.
@@ -102,25 +104,28 @@ impl ResponseError for ServerError {
 
         use InternalError::*;
 
-        println!("{:?}", self);
-        match self {
-            ServerError::ActixWebError(e) => e.as_response_error().status_code(),
-            ServerError::JwtError(_) => StatusCode::UNAUTHORIZED,
+        let (status_code, level) = match self {
+            ServerError::ActixWebError(e) => (e.as_response_error().status_code(), Level::Critical),
+            ServerError::JwtError(_) => (StatusCode::UNAUTHORIZED, Level::Warning),
             ServerError::InternalError(e) => match e {
-                NoAuthorizationGiven => StatusCode::UNAUTHORIZED,
-                AccessDenied => StatusCode::FORBIDDEN,
-                Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | FleetEmpty | PlayerUsernameAlreadyTaken => StatusCode::CONFLICT,
-                NotFound | FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                NoAuthorizationGiven => (StatusCode::UNAUTHORIZED, Level::Warning),
+                AccessDenied => (StatusCode::FORBIDDEN, Level::Warning),
+                Conflict | AlreadyInLobby | NotInLobby | NotEnoughMoney | FleetInvalidDestination | FleetAlreadyTravelling | FleetEmpty | PlayerUsernameAlreadyTaken => (StatusCode::CONFLICT, Level::Warning),
+                NotFound | FactionUnknown | PlayerUnknown | LobbyUnknown | FleetUnknown | GameUnknown | SystemUnknown => (StatusCode::NOT_FOUND, Level::Warning),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, Level::Error),
             },
-            ServerError::ActixWSError(e) => e.status_code(),
-            ServerError::MailboxError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ServerError::ActixWSError(e) => (e.status_code(), Level::Error),
+            ServerError::MailboxError(_) => (StatusCode::INTERNAL_SERVER_ERROR, Level::Critical),
             ServerError::SqlxError(e) => match e {
-                SqlxError::RowNotFound => StatusCode::NOT_FOUND,
-                _ => StatusCode::INTERNAL_SERVER_ERROR,
+                SqlxError::RowNotFound => (StatusCode::NOT_FOUND, Level::Error),
+                _ => (StatusCode::INTERNAL_SERVER_ERROR, Level::Critical),
             },
-            ServerError::UuidError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        }
+            ServerError::UuidError(_) => (StatusCode::INTERNAL_SERVER_ERROR, Level::Error)
+        };
+
+        println!("app.{} : {:?}", level.to_rust().to_string(), self);
+
+        status_code
     }
 
     fn error_response(&self) -> HttpResponse {

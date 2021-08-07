@@ -7,7 +7,7 @@ use crate::{
         Result,
         error::{ServerError, InternalError},
         time::Time,
-        log::log,
+        log::{log, Loggable},
         auth::Claims
     },
     game::{
@@ -45,6 +45,12 @@ impl fmt::Display for FleetID {
     }
 }
 
+impl Loggable for Fleet {
+    fn to_log_message(&self) -> String {
+        self.id.to_string()
+    }
+}
+
 impl From<FleetID> for Uuid {
     fn from(fid: FleetID) -> Self { fid.0 }
 }
@@ -71,7 +77,7 @@ impl Fleet {
     }
 
     pub fn can_fight(&self) -> bool {
-        !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
+        !self.is_destroyed && !self.squadrons.is_empty() && self.squadrons.iter().any(|s| s.quantity > 0)
     }
 
     pub fn is_travelling(&self) -> bool {
@@ -196,12 +202,18 @@ pub async fn donate(
 
     fleet.update(&mut &state.db_pool).await?;
 
-    log(gelf::Level::Informational, "Fleet donation", "A fleet has been given", vec![
-        ("donator_id", player.id.0.to_string()),
-        ("receiver_id", other_player.id.0.to_string()),
-        ("fleet_id", fleet.id.0.to_string()),
-        ("system_id", system.id.0.to_string()),
-    ], &state.logger);
+    log(
+        gelf::Level::Informational,
+        "Fleet donation",
+        &format!("{} has given fleet {} to {} on system {}", player.to_log_message(), fleet.to_log_message(), other_player.to_log_message(), system.to_log_message()),
+        vec![
+            ("donator_id", player.id.0.to_string()),
+            ("receiver_id", other_player.id.0.to_string()),
+            ("fleet_id", fleet.id.to_string()),
+            ("system_id", system.id.0.to_string()),
+        ],
+        &state.logger
+    );
 
     #[derive(Serialize)]
     pub struct FleetTransferData{
@@ -223,6 +235,10 @@ pub async fn donate(
 
 pub fn get_fleet_player_ids(fleets: &HashMap<FleetID, Fleet>) -> Vec<PlayerID> {
     fleets.iter().map(|(_, f)| f.player).collect()
+}
+
+pub fn has_other_fleets_than(fleets: &HashMap<FleetID, Fleet>, fleet: &Fleet) -> bool {
+    1 <= fleets.keys().filter(|fid| **fid != fleet.id).collect::<Vec<&FleetID>>().len()
 }
 
 #[cfg(test)]
@@ -248,6 +264,11 @@ mod tests {
 
         assert!(fleet.can_fight());
 
+        fleet.is_destroyed = true;
+
+        assert!(!fleet.can_fight());
+
+        fleet.is_destroyed = false;
         fleet.squadrons[0].quantity = 0;
 
         assert!(!fleet.can_fight());
@@ -280,6 +301,24 @@ mod tests {
         assert_eq!(fleet.system, system.id);
         assert_eq!(fleet.destination_system, None);
         assert_eq!(fleet.destination_arrival_date, None);
+    }
+
+    #[test]
+    fn test_has_other_fleets_than() {
+        let mut fleets = HashMap::new();
+        let fleet = get_fleet_mock();
+
+        assert!(!has_other_fleets_than(&fleets, &fleet));
+
+        let other_fleet = get_fleet_mock();
+        fleets.insert(other_fleet.id, other_fleet.clone());
+
+        assert!(!has_other_fleets_than(&fleets, &other_fleet));
+        assert!(has_other_fleets_than(&fleets, &fleet));
+
+        fleets.insert(fleet.id, fleet.clone());
+
+        assert!(has_other_fleets_than(&fleets, &fleet));
     }
 
     fn get_fleet_mock() -> Fleet {

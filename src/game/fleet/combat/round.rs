@@ -3,7 +3,7 @@ use crate::{
     task,
     lib::{
         time::Time,
-        log::log,
+        log::{log, Loggable},
         Result
     },
     game::{
@@ -90,17 +90,28 @@ impl Round {
     pub async fn execute(&mut self, server: &GameServer) -> Result<()> {
         let mut battle = Battle::find(self.battle, &server.state.db_pool).await?;
 
-        log(gelf::Level::Informational, "Battle round started", "A new round has been added to the battle", vec![
-            ("battle_id", battle.id.0.to_string()),
-            ("round_number", self.number.to_string()),
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle round started",
+            "A new round has been added to the battle",
+            vec![
+                ("battle_id", battle.id.0.to_string()),
+                ("round_number", self.number.to_string()),
+            ],
+            &server.state.logger
+        );
         
-        let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?.iter().map(|f| (f.id.clone(), f.clone())).collect::<HashMap<FleetID, Fleet>>();
-        for (fid, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
-            battle.fleets.get_mut(&fid).unwrap().extend(fleets);
+        let new_fleets = battle.get_joined_fleets(&server.state.db_pool).await?;
+
+        for (faction_id, fleets) in get_factions_fleets(new_fleets.clone(), &server.state.db_pool).await? {
+            if let Some(faction_fleets) = battle.fleets.get_mut(&faction_id) {
+                faction_fleets.extend(fleets);
+            } else {
+                battle.fleets.insert(faction_id, fleets);
+            }
         }
 
-        self.fight(&mut battle, &new_fleets);
+        self.fight(&mut battle, &new_fleets, &server);
         battle.rounds.push(self.clone());
         battle.fleets = update_fleets(&battle, &server).await?;
         battle.update(&mut &server.state.db_pool).await?;
@@ -114,9 +125,19 @@ impl Round {
         Ok(())
     }
 
-    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>) {
+    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) {
         // new fleets arrival
         for fleet in new_fleets.values() {
+            log(
+                gelf::Level::Debug,
+                "Fleet joined battle",
+                &format!("Fleet {} has joined the fray", fleet.to_log_message()),
+                vec![
+                    ("battle_id", battle.id.0.to_string()),
+                    ("system_id", battle.system.0.to_string()),
+                ],
+                &server.state.logger
+            );
             self.fleet_actions.push(FleetAction{
                 battle: battle.id,
                 fleet: fleet.id,
@@ -126,18 +147,34 @@ impl Round {
         }
     
         // make each squadron fight
-        for (fid, squadron) in battle.get_fighting_squadrons_by_initiative() {
+        for (fid, squadron) in battle.get_fighting_squadrons_by_initiative(&new_fleets) {
             // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
-            if let Some(act) = attack(&mut battle, fid, &squadron, self.number) {
+            if let Some(act) = attack(&mut battle, fid, &squadron, self.number, &new_fleets, &server) {
                 self.squadron_actions.push(act);
             }
         }
     }
 }
 
-fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16) -> Option<SquadronAction> {
-    let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker)?;
+fn attack(battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16, excluded_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) -> Option<SquadronAction> {
+    let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker, &excluded_fleets)?;
     let (remaining_ships, loss) = fire(&attacker, &target);
+
+    log(
+        gelf::Level::Debug,
+        "Squadron attack",
+        &format!(
+            "Squadron {} of fleet {} containings {} ships has attacked squadron {} of fleet {} containing {} ships",
+            attacker.to_log_message(),
+            attacker.fleet.to_string(),
+            attacker.quantity.to_string(),
+            target.to_log_message(),
+            target.fleet.to_string(),
+            target.quantity.to_string()
+        ),
+        vec![],
+        &server.state.logger
+    );
 
     battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons
         .iter_mut()
@@ -160,7 +197,7 @@ fn attack (battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_
 ///
 /// Also, when attacking, it is not fleet vs fleet but squadron vs squadron. Because of this, each
 /// squadron of a fleet can attack a different fleet each turn.
-fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron) -> Option<(FactionID, FleetSquadron)> {
+fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &FleetSquadron, excluded_fleets: &HashMap<FleetID, Fleet>) -> Option<(FactionID, FleetSquadron)> {
     let mut potential_targets : Vec<(FactionID, &FleetSquadron)> = Vec::new();
 
     // c.f. game::fleet::formation::FleetFormation::attack_order()
@@ -173,7 +210,7 @@ fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &Fleet
                 .flat_map(|(_, fleet)| &fleet.squadrons)
                 .map(move |fs| (*fid, fs))
             )
-            .filter(|(_, squadron)| squadron.formation == *target_formation && squadron.quantity > 0)
+            .filter(|(_, squadron)| !excluded_fleets.contains_key(&squadron.fleet) && squadron.formation == *target_formation && squadron.quantity > 0)
         );
 
         if !potential_targets.is_empty() { break }
@@ -234,10 +271,12 @@ mod tests {
             (2, 1, FleetFormation::Right),
             (2, 1, FleetFormation::Left),
         ];
+        let mut excluded_fleets = HashMap::new();
+        excluded_fleets.insert(FleetID(Uuid::new_v4()), get_fleet_mock());
         
         for (fid, tfid, formation) in data {
             let squadron = get_squadron_mock(ShipModelCategory::Corvette, formation, 5);
-            let target = pick_target_squadron(&battle, FactionID(fid), &squadron);
+            let target = pick_target_squadron(&battle, FactionID(fid), &squadron, &excluded_fleets);
 
             assert_eq!(true, target.is_some());
 

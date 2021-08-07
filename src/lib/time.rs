@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, sqlx::Type, PartialEq)]
@@ -20,6 +20,14 @@ impl From<Time> for DateTime<Utc> {
 
 impl From<Time> for i64 {
     fn from(time: Time) -> i64 { time.0.timestamp_millis() }
+}
+
+impl From<i64> for Time {
+    fn from(timestamp: i64) -> Self {
+        let naive = NaiveDateTime::from_timestamp(timestamp, 0);
+        
+        Self(DateTime::from_utc(naive, Utc))
+    }
 }
 
 pub fn ms_to_time(ms: f64) -> Time {

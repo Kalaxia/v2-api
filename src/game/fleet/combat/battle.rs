@@ -4,7 +4,7 @@ use crate::{
     lib::{
         error::{ServerError, InternalError},
         time::Time,
-        log::log,
+        log::{log, Loggable},
         Result
     },
     game::{
@@ -106,11 +106,19 @@ impl Battle {
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
-    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<Vec<Fleet>> {
-        sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND id != any($2)")
-            .bind(Uuid::from(self.id))
+    pub async fn get_joined_fleets(&self, db_pool: &PgPool) -> Result<HashMap<FleetID, Fleet>> {
+        let fleets: Vec<Fleet> = sqlx::query_as("SELECT * FROM fleet__fleets WHERE system_id = $1 AND destination_id IS NULL AND is_destroyed = FALSE AND NOT id = ANY($2)")
+            .bind(Uuid::from(self.system))
             .bind(self.get_fleet_ids().into_iter().map(Uuid::from).collect::<Vec<Uuid>>())
-            .fetch_all(db_pool).await.map_err(ServerError::from)
+            .fetch_all(db_pool).await.map_err(ServerError::from)?;
+
+        let mut result = HashMap::new();
+        for mut fleet in fleets {
+            fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id, db_pool).await?;
+            result.insert(fleet.id, fleet);
+        }
+
+        Ok(result)
     }
 
     pub async fn count_current_by_system(sid: &SystemID, db_pool: &PgPool) -> Result<i16> {
@@ -141,12 +149,15 @@ impl Battle {
         Ok(())
     }
 
-    pub fn get_fighting_squadrons_by_initiative(&self) -> Vec<(FactionID, FleetSquadron)> {
+    pub fn get_fighting_squadrons_by_initiative(&self, new_fleets: &HashMap<FleetID, Fleet>) -> Vec<(FactionID, FleetSquadron)> {
         let mut squadrons: HashMap<i32, Vec<(FactionID, FleetSquadron)>> = HashMap::new();
         let mut rng = thread_rng();
 
         for (fid, fleets) in &self.fleets {
             for fleet in fleets.values() {
+                if new_fleets.contains_key(&fleet.id) {
+                    continue;
+                }
                 for squadron in &fleet.squadrons {
                     if squadron.quantity > 0 {
                         let initiative = (f64::from(squadron.category.to_data().combat_speed) * rng.gen_range(0.5, 1.5)).round() as i32;
@@ -193,11 +204,17 @@ impl Battle {
         let mut round = Round::new(battle.id, 1);
         server.state.games().get(&server.id).unwrap().do_send(task!(round -> move |gs| block_on(round.execute(gs))));
 
-        log(gelf::Level::Informational, "Battle started", "A new battle has started", vec![
-            ("battle_id", battle.id.0.to_string()),
-            ("system_id", system.id.0.to_string()),
-            ("fleet_id", arriver.id.0.to_string()),
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle started",
+            &format!("Fleet {} has started a new battle on system {}", arriver.to_log_message(), system.to_log_message()),
+            vec![
+                ("battle_id", battle.id.0.to_string()),
+                ("system_id", system.id.0.to_string()),
+                ("fleet_id", arriver.id.to_string()),
+            ],
+            &server.state.logger
+        );
 
         Ok(())
     }
@@ -218,18 +235,24 @@ impl Battle {
             None
         )).await?;
 
-        if self.victor == self.defender_faction {
-            return Ok(());
-        }
-
         let fleet = Fleet::find(&self.attacker, &server.state.db_pool).await?;
         let system = System::find(self.system, &server.state.db_pool).await?;
 
-        log(gelf::Level::Informational, "Battle ended", "A battle has finished", vec![
-            ("battle_id", self.id.0.to_string()),
-            ("victor_id", self.victor.unwrap().0.to_string()),
-            ("system_id", self.system.0.to_string())
-        ], &server.state.logger);
+        log(
+            gelf::Level::Informational,
+            "Battle ended",
+            &format!("The battle on {} is over", system.to_log_message()),
+            vec![
+                ("battle_id", self.id.0.to_string()),
+                ("victor_id", self.victor.unwrap().0.to_string()),
+                ("system_id", self.system.0.to_string())
+            ],
+            &server.state.logger
+        );
+
+        if self.victor == self.defender_faction {
+            return Ok(());
+        }
 
         Conquest::resume(&fleet, &system, self.victor, &server).await
     }
@@ -301,10 +324,16 @@ pub async fn update_fleets(battle: &Battle, server: &GameServer) -> Result<HashM
         for (fleet_id, fleet) in fleets.iter() {
             let is_destroyed = update_fleet(fleet.clone(), &mut tx).await?;
             if is_destroyed {
-                log(gelf::Level::Informational, "Fleet destroyed", "A fleet has been destroyed in combat", vec![
-                    ("fleet_id", fleet.id.0.to_string()),
-                    ("battle_id", battle.id.0.to_string()),
-                ], &server.state.logger);
+                log(
+                    gelf::Level::Informational,
+                    "Fleet destroyed",
+                    &format!("Fleet {} has been destroyed in combat", fleet.to_log_message()),
+                    vec![
+                        ("fleet_id", fleet.id.to_string()),
+                        ("battle_id", battle.id.0.to_string()),
+                    ],
+                    &server.state.logger
+                );
             } else {
                 faction_remaining_fleets.insert(*fleet_id, fleet.clone());
             }

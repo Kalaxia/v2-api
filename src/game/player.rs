@@ -12,7 +12,12 @@ use crate::{
     game::lobby::{LobbyID, Lobby},
     game::faction::FactionID,
     game::system::system::SystemID,
-    lib::{Result, error::{InternalError, ServerError}, auth},
+    lib::{
+        Result,
+        log::Loggable,
+        error::{InternalError, ServerError},
+        auth
+    },
     ws::protocol,
 };
 
@@ -41,6 +46,12 @@ pub struct PlayerUpdateData{
 #[derive(Deserialize)]
 pub struct PlayerMoneyTransferRequest{
     pub amount: usize
+}
+
+impl Loggable for Player {
+    fn to_log_message(&self) -> String {
+        format!("{}", self.username)
+    }
 }
 
 impl From<PlayerID> for Uuid {
@@ -102,7 +113,7 @@ impl Player {
     }
     
     pub async fn find_by_game_and_faction(gid: GameID, fid: FactionID, db_pool: &PgPool) -> Result<Vec<Self>> {
-        sqlx::query_as("SELECT id FROM player__players WHERE game_id = $1 AND faction_id = $2")
+        sqlx::query_as("SELECT * FROM player__players WHERE game_id = $1 AND faction_id = $2")
             .bind(Uuid::from(gid))
             .bind(i32::from(fid))
             .fetch_all(db_pool).await.map_err(ServerError::from)

@@ -5,6 +5,7 @@ use crate::{
     task,
     lib::{
         Result,
+        log::Loggable,
         error::{ServerError, InternalError},
         auth::Claims
     },
@@ -53,6 +54,12 @@ pub struct SquadronAssignmentData {
     pub formation: FleetFormation,
     pub category: ShipModelCategory,
     pub quantity: usize
+}
+
+impl Loggable for FleetSquadron {
+    fn to_log_message(&self) -> String {
+        self.id.0.to_string()
+    }
 }
 
 impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {

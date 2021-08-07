@@ -6,6 +6,7 @@ use crate::{
     AppState,
     lib::{
         Result,
+        log::Loggable,
         pagination::{Paginator, new_paginated_response},
         error::{ServerError, InternalError}
     },
@@ -86,6 +87,12 @@ impl Coordinates {
     
     pub const fn new(x: f64, y: f64) -> Self {
         Self{x, y}
+    }
+}
+
+impl Loggable for System {
+    fn to_log_message(&self) -> String {
+        format!("({:.2};{:.2})", self.coordinates.x, self.coordinates.y)
     }
 }
 

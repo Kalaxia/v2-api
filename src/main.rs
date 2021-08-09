@@ -39,6 +39,7 @@ mod game;
 mod lib;
 
 use game::{
+    communication::chat,
     fleet::fleet,
     fleet::travel,
     fleet::squadron as fleet_squadron,
@@ -154,6 +155,10 @@ fn config(cfg: &mut web::ServiceConfig) {
             web::scope("/games")
             .service(g::get_players)
             .service(g::leave_game)
+            .service(
+                web::scope("/{game_id}/communications/")
+                .service(chat::send_message)
+            )
             .service(
                 web::scope("/{game_id}/factions")
                 .service(

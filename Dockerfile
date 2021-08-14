@@ -16,6 +16,8 @@ RUN mkdir src/
 
 RUN echo "fn main() {println!(\"if you see this, the build broke\")}" > src/main.rs
 
+RUN cargo install sqlx-cli --no-default-features --features postgres
+
 RUN cargo build --release --features="vendored,$FEATURES"
 
 RUN rm -f target/release/deps/kalaxia_api*
@@ -33,6 +35,8 @@ FROM ubuntu:latest
 WORKDIR /home/kalaxia/bin/
 
 COPY --from=cargo-build /usr/src/kalaxia-api/target/release/kalaxia-api .
+
+# COPY --from=cargo-build /usr/local/cargo/sqlx /usr/bin/
 
 RUN apt-get update
 

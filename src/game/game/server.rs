@@ -11,6 +11,7 @@ use futures::{
 use crate::{
     lib::{
         Result,
+        log::log,
         error::ServerError,
         time::Time
     },
@@ -303,7 +304,13 @@ impl GameServer {
                 let result = closure(this, ctx).map_err(ServerError::from);
                 this.remove_task(&task_name);
                 if result.is_err() {
-                    println!("{:?}", result.err());
+                    log(
+                        gelf::Level::Error,
+                        &format!("Task {} failed", task_name),
+                        &format!("{:?}", result.err()),
+                        vec![],
+                        &this.state.logger
+                    );
                 }
             }
         ));

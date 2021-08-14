@@ -23,6 +23,7 @@ pub enum Action {
     LobbyNameUpdated,
     LobbyRemoved,
     LobbyLaunched,
+    NewChatMessage,
     PlayerConnected,
     PlayerJoined,
     PlayerUpdate,

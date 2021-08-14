@@ -162,7 +162,8 @@ pub async fn travel(
 pub async fn process_fleet_arrival(server: &GameServer, fleet_id: FleetID) -> Result<()> {
     let mut fleet = Fleet::find(&fleet_id, &server.state.db_pool).await?;
     fleet.squadrons = FleetSquadron::find_by_fleet(fleet.id.clone(), &server.state.db_pool).await?;
-    let destination_system = System::find(fleet.destination_system.unwrap(), &server.state.db_pool).await?;
+    let destination_system_id = fleet.destination_system.ok_or(InternalError::SystemUnknown)?;
+    let destination_system = System::find(destination_system_id, &server.state.db_pool).await?;
     let player = Player::find(fleet.player, &server.state.db_pool).await?;
 
     let system_owner = {

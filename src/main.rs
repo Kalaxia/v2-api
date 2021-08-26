@@ -156,7 +156,7 @@ fn config(cfg: &mut web::ServiceConfig) {
             .service(g::get_players)
             .service(g::leave_game)
             .service(
-                web::scope("/{game_id}/communications/")
+                web::scope("/{game_id}/communications")
                 .service(chat::send_message)
             )
             .service(

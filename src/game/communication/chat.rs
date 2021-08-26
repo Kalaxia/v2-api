@@ -1,7 +1,6 @@
 use actix_web::{post, web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use std::fmt;
 use crate::{
     lib::{
         Result,
@@ -23,7 +22,6 @@ use crate::{
 };
 use sqlx::{PgPool, postgres::{PgRow, PgQueryAs}, FromRow, Executor, Error, Postgres};
 use sqlx_core::row::Row;
-use std::collections::HashMap;
 
 #[derive(Serialize, Debug, Deserialize, Clone, Hash, PartialEq, Eq, Copy)]
 pub struct ChatMessageID(pub Uuid);

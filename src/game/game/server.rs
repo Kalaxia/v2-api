@@ -22,7 +22,10 @@ use crate::{
             fleet::Fleet,
             travel::process_fleet_arrival,
         },
-        game::game::{Game, GameID, VICTORY_POINTS_PER_MINUTE},
+        game::{
+            game::{Game, GameID},
+            victory::{check_forfeit_victory, distribute_victory_points},
+        },
         player::{PlayerID, Player, init_player_wallets},
         system::{
             building::{Building, BuildingStatus, BuildingKind},
@@ -80,8 +83,8 @@ impl Actor for GameServer {
         run_interval(ctx, Duration::new(5, 0), move |this, _| {
             block_on(this.produce_income())
         });
-        run_interval(ctx, Duration::new(60, 0), move |this, _| {
-            block_on(this.distribute_victory_points())
+        run_interval(ctx, Duration::new(60, 0), move |mut this, _| {
+            block_on(distribute_victory_points(&mut this))
         });
     }
 }
@@ -213,78 +216,16 @@ impl GameServer {
         Ok(())
     }
 
-    async fn distribute_victory_points(&mut self) -> Result<()> {
-        let victory_systems = System::find_possessed_victory_systems(self.id.clone(), &self.state.db_pool).await?;
-        let game = Game::find(self.id.clone(), &self.state.db_pool).await?;
-        let mut factions = GameFaction::find_all(self.id.clone(), &self.state.db_pool).await?
-            .into_iter()
-            .map(|gf| (gf.faction.clone(), gf))
-            .collect::<HashMap<FactionID, GameFaction>>();
-        let mut players = Player::find_by_ids(victory_systems.clone().into_iter().map(|s| s.player.clone().unwrap()).collect(), &self.state.db_pool).await?
-            .into_iter()
-            .map(|p| (p.id.clone(), p))
-            .collect::<HashMap<PlayerID, Player>>();
-
-        for system in victory_systems.iter() {
-            factions.get_mut(
-                &players.get_mut(&system.player.unwrap())
-                    .unwrap()
-                    .faction
-                    .unwrap()
-            ).unwrap().victory_points += VICTORY_POINTS_PER_MINUTE;
-        }
-
-        let mut victorious_faction: Option<&GameFaction> = None;
-        let mut tx = self.state.db_pool.begin().await?;
-        for f in factions.values() {
-            GameFaction::update(f, &mut tx).await?;
-            if f.victory_points >= game.victory_points {
-                victorious_faction = Some(f);
-            }
-        }
-        tx.commit().await?;
-
-        self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::FactionPointsUpdated,
-            factions.clone(),
-            None
-        )).await?;
-
-        if let Some(f) = victorious_faction {
-            self.process_victory(f, factions.values().cloned().collect::<Vec<GameFaction>>()).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn process_victory(&mut self, victorious_faction: &GameFaction, factions: Vec<GameFaction>) -> Result<()> {
-        #[derive(Serialize, Clone)]
-        struct VictoryData {
-            victorious_faction: FactionID,
-            scores: Vec<GameFaction>
-        }
-        self.ws_broadcast(&protocol::Message::new(
-            protocol::Action::Victory,
-            VictoryData{
-                victorious_faction: victorious_faction.faction,
-                scores: factions,
-            },
-            None,
-        )).await?;
-
-        let game = Game::find(self.id, &self.state.db_pool).await?;
-        self.state.clear_game(&game).await?;
-        Ok(())
-    }
-
     pub async fn remove_player(&self, pid: PlayerID) -> Result<Option<actix::Addr<ClientSession>>> {
         let mut player = Player::find(pid, &self.state.db_pool).await?;
         player.is_connected = false;
+        player.update(&mut &self.state.db_pool).await?;
         self.ws_broadcast(&protocol::Message::new(
             protocol::Action::PlayerLeft,
             pid.clone(),
             Some(pid),
         )).await?;
+
         let mut clients = self.clients.write().expect("Poisoned lock on game players");
         Ok(clients.remove(&pid))
     }
@@ -438,8 +379,14 @@ impl Handler<GameAddClientMessage> for GameServer {
 impl Handler<GameRemovePlayerMessage> for GameServer {
     type Result = Arc<(Option<actix::Addr<ClientSession>>, bool)>;
 
-    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, GameRemovePlayerMessage(pid): GameRemovePlayerMessage, ctx: &mut Self::Context) -> Self::Result {
         let client = block_on(self.remove_player(pid)).unwrap();
+        ctx.run_later(Duration::new(5, 0), move |this, _| {
+            let res = block_on(check_forfeit_victory(&this));
+            if res.is_err() {
+                println!("Error during forfeit victory check : {:?}", res.err());
+            }
+        });
         Arc::new((client, self.is_empty()))
     }
 }

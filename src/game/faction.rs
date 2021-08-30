@@ -99,6 +99,20 @@ impl GameFaction {
             .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
     }
 
+    pub async fn count_remaining(gid: &GameID, db_pool: &PgPool) -> Result<i16> {
+        sqlx::query_as("SELECT COUNT(DISTINCT(faction_id)) FROM player__players WHERE game_id = $1 AND is_connected = true")
+            .bind(Uuid::from(*gid))
+            .fetch_one(db_pool).await
+            .map(|count: (i64,)| count.0 as i16)
+            .map_err(ServerError::from)
+    }
+
+    pub async fn find_remaining(gid: GameID, db_pool: &PgPool) -> Result<Self> {
+        sqlx::query_as("SELECT gf.* FROM game__factions gf LEFT JOIN player__players p ON p.game_id = gf.game_id AND p.faction_id = gf.faction_id AND p.is_connected = true WHERE gf.game_id = $1 GROUP BY gf.faction_id, gf.game_id, gf.victory_points HAVING COUNT(p.*) > 0 LIMIT 1")
+            .bind(Uuid::from(gid))
+            .fetch_one(db_pool).await.map_err(ServerError::if_row_not_found(InternalError::FactionUnknown))
+    }
+
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO game__factions(game_id, faction_id, victory_points) VALUES($1, $2, $3)")

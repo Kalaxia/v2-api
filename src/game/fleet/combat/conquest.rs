@@ -17,6 +17,7 @@ use crate::{
             game::{Game, GameID},
             option::GameOptionSpeed,
             server::{GameServer, GameServerTask},
+            victory::check_supremacy_victory,
         },
         player::{Player, PlayerID},
         system::system::{SystemID, System},
@@ -338,6 +339,8 @@ impl Conquest {
             ConquestData{ system, fleets },
             None
         )).await?;
+
+        check_supremacy_victory(server).await?;
 
         Ok(())
     }

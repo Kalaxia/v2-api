@@ -22,7 +22,7 @@ use crate::{
             option::GameOptionSpeed
         },
         system::system::{System, SystemID},
-        player::Player
+        player::player::Player
     },
     ws::protocol,
 };

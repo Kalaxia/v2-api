@@ -1,4 +1,4 @@
-use crate::game::player::PlayerID;
+use crate::game::player::player::PlayerID;
 
 /// Tokens representing the type of WS message sent to notify a player.
 #[derive(serde::Serialize, Clone, Debug)]

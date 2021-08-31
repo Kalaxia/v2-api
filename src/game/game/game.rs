@@ -17,7 +17,7 @@ use crate::{
             server::{GameServer, GameRemovePlayerMessage},
         },
         lobby::Lobby,
-        player::{PlayerID, Player},
+        player::player::{PlayerID, Player},
     },
     ws::client::ClientSession,
     AppState,

@@ -24,7 +24,7 @@ use crate::{
             squadron::Squadron,
             model::ShipModelCategory,
         },
-        player::Player,
+        player::player::Player,
     },
     AppState
 };

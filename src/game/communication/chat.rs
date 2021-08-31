@@ -13,7 +13,7 @@ use crate::{
         faction::FactionID,
         game::game::GameID,
         game::server::GameNotifyFactionMessage,
-        player::{Player, PlayerID},
+        player::player::{Player, PlayerID},
         system::system::{System, SystemID},
         fleet::squadron::{FleetSquadron},
     },

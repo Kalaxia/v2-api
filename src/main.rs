@@ -48,7 +48,7 @@ use game::{
         server::{GameEndMessage, GameServer},
     },
     faction,
-    player,
+    player::player,
     lobby,
     system::building,
     system::system,

@@ -258,7 +258,7 @@ mod tests {
             },
             ship::model::ShipModelCategory,
             system::system::{SystemID},
-            player::{PlayerID}
+            player::player::{PlayerID}
         }
     };
 

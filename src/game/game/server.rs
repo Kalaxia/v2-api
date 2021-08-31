@@ -26,7 +26,7 @@ use crate::{
             game::{Game, GameID},
             victory::{check_forfeit_victory, distribute_victory_points},
         },
-        player::{PlayerID, Player, init_player_wallets},
+        player::player::{PlayerID, Player, init_player_wallets},
         system::{
             building::{Building, BuildingStatus, BuildingKind},
             system::{System, SystemID, assign_systems, generate_systems, init_player_systems}

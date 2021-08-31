@@ -19,7 +19,7 @@ use crate::{
             fleet::{Fleet, FleetID, get_fleet_player_ids},
         },
         system::system::{System, SystemID},
-        player::{PlayerID, Player},
+        player::player::{PlayerID, Player},
     },
     ws::protocol,
 };

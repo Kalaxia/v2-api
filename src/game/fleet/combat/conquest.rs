@@ -19,7 +19,7 @@ use crate::{
             server::{GameServer, GameServerTask},
             victory::check_supremacy_victory,
         },
-        player::{Player, PlayerID},
+        player::player::{Player, PlayerID},
         system::system::{SystemID, System},
     },
     AppState,

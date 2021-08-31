@@ -10,7 +10,7 @@ use crate::{
         error::{ServerError, InternalError},
     },
     game::{
-        player::{Player},
+        player::player::{Player},
         game::game::GameID,
         system::system::{SystemID, System},
         ship::model::ShipModelCategory,

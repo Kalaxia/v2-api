@@ -10,7 +10,7 @@ use crate::{
             game::{Game, VICTORY_POINTS_PER_MINUTE},
             server::GameServer,
         },
-        player::{Player, PlayerID},
+        player::player::{Player, PlayerID},
         system::{
             system::{System, SystemDominion}
         },

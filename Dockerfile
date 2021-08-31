@@ -36,7 +36,7 @@ WORKDIR /home/kalaxia/bin/
 
 COPY --from=cargo-build /usr/src/kalaxia-api/target/release/kalaxia-api .
 
-# COPY --from=cargo-build /usr/local/cargo/sqlx /usr/bin/
+COPY --from=cargo-build /usr/local/cargo/bin/sqlx /usr/bin/
 
 RUN apt-get update
 

@@ -21,7 +21,7 @@ pub struct ShipModel {
     pub precision: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Hash, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]

@@ -10,7 +10,10 @@ use crate::{
             game::{Game, VICTORY_POINTS_PER_MINUTE},
             server::GameServer,
         },
-        player::player::{Player, PlayerID},
+        player::{
+            player::{Player, PlayerID},
+            ranking::{GameRankings, PlayerRanking, generate_game_rankings}
+        },
         system::{
             system::{System, SystemDominion}
         },
@@ -31,7 +34,8 @@ pub enum VictoryKind {
 struct VictoryData {
     kind: VictoryKind,
     victorious_faction: FactionID,
-    scores: Vec<GameFaction>
+    faction_scores: Vec<GameFaction>,
+    player_rankings: GameRankings,
 }
 
 pub async fn distribute_victory_points(gs: &mut GameServer) -> Result<()> {
@@ -87,12 +91,16 @@ pub async fn distribute_victory_points(gs: &mut GameServer) -> Result<()> {
 }
 
 async fn process_victory(kind: VictoryKind, gs: &GameServer, victorious_faction: &GameFaction, factions: Vec<GameFaction>) -> Result<()> {
+    let players = Player::find_by_game(gs.id, &gs.state.db_pool).await?;
+    let player_rankings = PlayerRanking::find_by_game(gs.id, &gs.state.db_pool).await?;
+
     gs.ws_broadcast(&protocol::Message::new(
         protocol::Action::Victory,
         VictoryData{
             kind,
             victorious_faction: victorious_faction.faction,
-            scores: factions,
+            faction_scores: factions,
+            player_rankings: generate_game_rankings(players, player_rankings)
         },
         None,
     )).await?;

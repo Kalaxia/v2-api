@@ -17,7 +17,10 @@ use crate::{
             server::{GameServer, GameRemovePlayerMessage},
         },
         lobby::Lobby,
-        player::player::{PlayerID, Player},
+        player::{
+            player::{PlayerID, Player},
+            ranking::PlayerRanking
+        }
     },
     ws::client::ClientSession,
     AppState,
@@ -89,6 +92,13 @@ impl Game {
 
 pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: HashMap<PlayerID, actix::Addr<ClientSession>>) -> Result<(GameID, Addr<GameServer>)> {
     let id = GameID(Uuid::new_v4());
+
+    let mut tx = state.db_pool.begin().await?;
+
+    for player_id in clients.keys() {
+        let player_ranking = PlayerRanking::new(*player_id);
+        player_ranking.insert(&mut tx).await?;
+    }
     
     let game_server = GameServer{
         id: id.clone(),
@@ -103,11 +113,11 @@ pub async fn create_game(lobby: &Lobby, state: web::Data<AppState>, clients: Has
         map_size: lobby.map_size.clone(),
     };
 
-    let mut tx = state.db_pool.begin().await?;
     game.insert(&mut tx).await?;
-    tx.commit().await?;
 
-    Player::transfer_from_lobby_to_game(&lobby.id, &id, &state.db_pool).await?;
+    Player::transfer_from_lobby_to_game(&lobby.id, &id, &mut tx).await?;
+
+    tx.commit().await?;
 
     Ok((id, game_server.start()))
 }

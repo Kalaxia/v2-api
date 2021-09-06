@@ -68,6 +68,39 @@ impl PlayerRanking {
             .fetch_all(db_pool).await.map_err(ServerError::from)
     }
 
+    pub async fn increment_lost_systems<E>(pid: PlayerID, exec: &mut E) -> Result<u64> 
+        where E: Executor<Database = Postgres> {
+        sqlx::query("UPDATE player__rankings SET lost_systems = lost_systems + 1 WHERE player_id = $1")
+            .bind(Uuid::from(pid))
+            .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+
+    pub async fn increment_successful_conquests<E>(pid: PlayerID, exec: &mut E) -> Result<u64> 
+        where E: Executor<Database = Postgres> {
+        sqlx::query("UPDATE player__rankings SET successful_conquests = successful_conquests + 1 WHERE player_id = $1")
+            .bind(Uuid::from(pid))
+            .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+
+    pub async fn add_lost_ships<E>(player_id: PlayerID, ship_category: ShipModelCategory, quantity: i32, strength: u16, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
+            Self::add_ships("lost_ships", player_id, ship_category, quantity, strength, exec).await
+        }
+
+    pub async fn add_destroyed_ships<E>(player_id: PlayerID, ship_category: ShipModelCategory, quantity: i32, strength: u16, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
+            Self::add_ships("destroyed_ships", player_id, ship_category, quantity, strength, exec).await
+        }
+
+    pub async fn add_ships<E>(column: &str, player_id: PlayerID, ship_category: ShipModelCategory, quantity: i32, strength: u16, exec: &mut E) -> Result<u64>
+        where E: Executor<Database = Postgres> {
+        sqlx::query(&format!("UPDATE player__rankings SET {data} = jsonb_set({data}, '{{{category}}}', to_jsonb(COALESCE(({data}::json->>'{category}')::int, 0) + $2)), {score} = {score} + $3 WHERE player_id = $1", data=column, category=ship_category.to_string().to_lowercase(), score=format!("{}_score", column)))
+            .bind(Uuid::from(player_id))
+            .bind(quantity)
+            .bind(i32::from(strength))
+            .execute(&mut *exec).await.map_err(ServerError::from)
+    }
+    
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
         where E: Executor<Database = Postgres> {
         sqlx::query("INSERT INTO player__rankings (player_id, destroyed_ships, destroyed_ships_score, lost_ships, lost_ships_score, successful_conquests, lost_systems) VALUES($1, $2, $3, $4, $5, $6, $7)")

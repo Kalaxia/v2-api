@@ -8,6 +8,7 @@ use crate::{
     },
     game::game::option::GameOptionSpeed,
 };
+use std::fmt;
 
 #[derive(Serialize, Copy, Clone)]
 pub struct ShipModel {
@@ -30,6 +31,12 @@ pub enum ShipModelCategory {
     Corvette,
     Frigate,
     Cruiser,
+}
+
+impl fmt::Display for ShipModelCategory {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl ShipModelCategory {

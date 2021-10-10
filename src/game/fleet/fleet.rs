@@ -12,7 +12,7 @@ use crate::{
     },
     game::{
         game::game::GameID,
-        player::{Player, PlayerID},
+        player::player::{Player, PlayerID},
         system::system::{System, SystemID},
         fleet::squadron::{FleetSquadron},
     },
@@ -254,7 +254,7 @@ mod tests {
             },
             ship::model::ShipModelCategory,
             system::system::{System, SystemID, SystemKind,  Coordinates},
-            player::{PlayerID}
+            player::player::{PlayerID}
         }
     };
 

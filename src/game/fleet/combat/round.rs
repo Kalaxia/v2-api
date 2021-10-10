@@ -3,6 +3,7 @@ use crate::{
     task,
     lib::{
         time::Time,
+        error::InternalError,
         log::{log, Loggable},
         Result
     },
@@ -15,6 +16,7 @@ use crate::{
             fleet::{FleetID, Fleet},
             squadron::{FleetSquadronID, FleetSquadron},
         },
+        player::ranking::PlayerRanking,
         game::server::{ GameServer, GameServerTask }
     }
 };
@@ -111,7 +113,7 @@ impl Round {
             }
         }
 
-        self.fight(&mut battle, &new_fleets, &server);
+        self.fight(&mut battle, &new_fleets, &server).await?;
         battle.rounds.push(self.clone());
         battle.fleets = update_fleets(&battle, &server).await?;
         battle.update(&mut &server.state.db_pool).await?;
@@ -125,7 +127,7 @@ impl Round {
         Ok(())
     }
 
-    pub fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) {
+    pub async fn fight(&mut self, mut battle: &mut Battle, new_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) -> Result<()> {
         // new fleets arrival
         for fleet in new_fleets.values() {
             log(
@@ -149,44 +151,133 @@ impl Round {
         // make each squadron fight
         for (fid, squadron) in battle.get_fighting_squadrons_by_initiative(&new_fleets) {
             // a squadron may have no ennemy to attack, this is why we wrap its action into an Option
-            if let Some(act) = attack(&mut battle, fid, &squadron, self.number, &new_fleets, &server) {
+            if let Some(act) = attack(&mut battle, fid, &squadron, self.number, &new_fleets, &server).await? {
                 self.squadron_actions.push(act);
             }
         }
+        Ok(())
     }
 }
 
-fn attack(battle: &mut Battle, fid: FactionID, attacker: &FleetSquadron, round_number: u16, excluded_fleets: &HashMap<FleetID, Fleet>, server: &GameServer) -> Option<SquadronAction> {
-    let (target_faction, target) = pick_target_squadron(&battle, fid, &attacker, &excluded_fleets)?;
+async fn attack(
+    battle: &mut Battle,
+    fid: FactionID,
+    attacker: &FleetSquadron,
+    round_number: u16,
+    excluded_fleets: &HashMap<FleetID, Fleet>,
+    server: &GameServer
+) -> Result<Option<SquadronAction>> {
+    let (target_faction, target) = match pick_target_squadron(&battle, fid, &attacker, &excluded_fleets) {
+        Some(target_squadron) => target_squadron,
+        None => return Ok(None)
+    };
     let (remaining_ships, loss) = fire(&attacker, &target);
 
     log(
         gelf::Level::Debug,
         "Squadron attack",
         &format!(
-            "Squadron {} of fleet {} containings {} ships has attacked squadron {} of fleet {} containing {} ships",
+            "Squadron {} of fleet {} containings {} ships has destroyed {}/{} ships from squadron {} of fleet {}",
             attacker.to_log_message(),
             attacker.fleet.to_string(),
             attacker.quantity.to_string(),
+            loss.to_string(),
+            target.quantity.to_string(),
             target.to_log_message(),
-            target.fleet.to_string(),
-            target.quantity.to_string()
+            target.fleet.to_string()
         ),
         vec![],
         &server.state.logger
     );
 
-    battle.fleets.get_mut(&target_faction).unwrap().get_mut(&target.fleet).unwrap().squadrons
-        .iter_mut()
-        .filter(|fs| fs.id == target.id )
-        .for_each(|fs| fs.quantity = remaining_ships);
+    let mut tx = server.state.db_pool.begin().await?;
+    let loss_strength = target.category.to_data().strength * loss;
 
-    Some(SquadronAction{
+    if let Some(attacker_faction_fleets) = battle.fleets.get(&fid) {
+        if let Some(attacker_fleet) = attacker_faction_fleets.get(&attacker.fleet) {
+            if 0 < loss {
+                PlayerRanking::add_destroyed_ships(attacker_fleet.player, target.category, loss as i32, loss_strength, &mut tx).await?;
+            }
+        } else {
+            log(
+                gelf::Level::Warning,
+                "Attacker fleet not found",
+                &format!(
+                    "Attacker fleet {} of faction {} was not found in the battle data",
+                    attacker.fleet.to_string(),
+                    fid.0.to_string()
+                ),
+                vec![
+                    ("attacker_fleet", attacker.fleet.to_string()),
+                    ("attacker_faction", fid.0.to_string())
+                ],
+                &server.state.logger
+            );
+            return Ok(None);
+        }
+    } else {
+        log(
+            gelf::Level::Warning,
+            "Attacker faction not found",
+            &format!(
+                "Attacker faction {} was not found in the battle data",
+                fid.0.to_string()
+            ),
+            vec![
+                ("attacker_faction", fid.0.to_string())
+            ],
+            &server.state.logger
+        );
+        return Ok(None);
+    }
+    if let Some(target_faction_fleets) = battle.fleets.get_mut(&target_faction) {
+        if let Some(target_fleet) = target_faction_fleets.get_mut(&target.fleet) {
+            if 0 < loss {
+                PlayerRanking::add_lost_ships(target_fleet.player, target.category, loss as i32, loss_strength, &mut tx).await?;
+            
+                target_fleet.squadrons.iter_mut().filter(|fs| fs.id == target.id).for_each(|fs| fs.quantity = remaining_ships);
+            }
+        } else {
+            log(
+                gelf::Level::Warning,
+                "Target fleet not found",
+                &format!(
+                    "Target fleet {} of faction {} was not found in the battle data",
+                    target.fleet.to_string(),
+                    target_faction.0.to_string()
+                ),
+                vec![
+                    ("target_fleet", target.fleet.to_string()),
+                    ("target_faction", target_faction.0.to_string())
+                ],
+                &server.state.logger
+            );
+            return Ok(None);
+        }
+    } else {
+        log(
+            gelf::Level::Warning,
+            "Target faction not found",
+            &format!(
+                "Target faction {} was not found in the battle data",
+                target_faction.0.to_string()
+            ),
+            vec![
+                ("target_faction", target_faction.0.to_string())
+            ],
+            &server.state.logger
+        );
+        return Ok(None);
+    }
+
+    tx.commit().await?;
+
+    Ok(Some(SquadronAction{
         battle: battle.id,
         squadron: attacker.id,
         kind: SquadronActionKind::Attack{ target: target.id, loss },
         round_number,
-    })
+    }))
 }
 
 /// This is an adaptation for multiple-fleet battles of Galadruin's battle idea (c.f. backlog
@@ -258,7 +349,7 @@ mod tests {
             },
             ship::model::ShipModelCategory,
             system::system::{SystemID},
-            player::{PlayerID}
+            player::player::{PlayerID}
         }
     };
 

@@ -12,7 +12,7 @@ use crate::{
         time::Time,
     },
     game::{
-        player::{Player},
+        player::player::{Player},
         fleet::{
             fleet::FleetID,
             formation::FleetFormation,

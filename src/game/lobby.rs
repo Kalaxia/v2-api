@@ -12,7 +12,7 @@ use crate::{
         game::create_game,
         option::{GameOptionMapSize, GameOptionSpeed},
     },
-    game::player::{PlayerID, Player},
+    game::player::player::{PlayerID, Player},
     ws::{ client::ClientSession, protocol},
     AppState,
 };

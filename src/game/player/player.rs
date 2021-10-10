@@ -157,11 +157,12 @@ impl Player {
             .map_err(ServerError::from)
     }
 
-    pub async fn transfer_from_lobby_to_game(lid: &LobbyID, gid: &GameID, db_pool: &PgPool) -> std::result::Result<u64, Error> {
+    pub async fn transfer_from_lobby_to_game<E>(lid: &LobbyID, gid: &GameID, exec: &mut E) -> std::result::Result<u64, Error>
+    where E: Executor<Database = Postgres> {
         sqlx::query("UPDATE player__players SET lobby_id = NULL, game_id = $1 WHERE lobby_id = $2")
             .bind(Uuid::from(gid.clone()))
             .bind(Uuid::from(lid.clone()))
-            .execute(db_pool).await
+            .execute(&mut *exec).await
     }
 
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>

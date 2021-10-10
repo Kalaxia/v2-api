@@ -20,7 +20,7 @@ use crate::{
             game::GameID,
             option::{GameOptionMapSize, GameOptionSpeed},
         },
-        player::{PlayerID, Player},
+        player::player::{PlayerID, Player},
         system::{
             building::{Building, BuildingStatus, BuildingKind},
         },

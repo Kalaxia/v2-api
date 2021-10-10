@@ -12,7 +12,7 @@ use crate::{
             game::{Game, GameID},
             server::{GameServer, GameFleetTravelMessage},
         },
-        player::Player,
+        player::player::Player,
         faction::FactionID,
         fleet::{
             combat::{

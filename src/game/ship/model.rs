@@ -8,6 +8,7 @@ use crate::{
     },
     game::game::option::GameOptionSpeed,
 };
+use std::fmt;
 
 #[derive(Serialize, Copy, Clone)]
 pub struct ShipModel {
@@ -21,7 +22,7 @@ pub struct ShipModel {
     pub precision: u16,
 }
 
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, sqlx::Type)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Hash, sqlx::Type)]
 #[sqlx(rename = "VARCHAR")]
 #[sqlx(rename_all = "snake_case")]
 #[serde(rename_all(serialize = "snake_case", deserialize = "snake_case"))]
@@ -30,6 +31,12 @@ pub enum ShipModelCategory {
     Corvette,
     Frigate,
     Cruiser,
+}
+
+impl fmt::Display for ShipModelCategory {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(self, f)
+    }
 }
 
 impl ShipModelCategory {

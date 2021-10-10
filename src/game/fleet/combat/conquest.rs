@@ -19,7 +19,10 @@ use crate::{
             server::{GameServer, GameServerTask},
             victory::check_supremacy_victory,
         },
-        player::{Player, PlayerID},
+        player::{
+            player::{Player, PlayerID},
+            ranking::PlayerRanking,
+        },
         system::system::{SystemID, System},
     },
     AppState,
@@ -315,11 +318,20 @@ impl Conquest {
         let mut system = System::find(self.system.clone(), &server.state.db_pool).await?;
         let fleets = system.retrieve_orbiting_fleets(&server.state.db_pool).await?.values().cloned().collect();
 
+        let mut tx = server.state.db_pool.begin().await?;
+
         self.is_over = true;
-        self.update(&mut &server.state.db_pool).await?;
+        self.update(&mut tx).await?;
+
+        if let Some(previous_player) = system.player {
+            PlayerRanking::increment_lost_systems(previous_player, &mut tx).await?;
+        }
+        PlayerRanking::increment_successful_conquests(self.player, &mut tx).await?;
 
         system.player = Some(self.player.clone());
-        system.update(&mut &server.state.db_pool).await?;
+        system.update(&mut tx).await?;
+
+        tx.commit().await?;
 
         log(
             gelf::Level::Informational,

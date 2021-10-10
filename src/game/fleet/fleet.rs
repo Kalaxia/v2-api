@@ -335,6 +335,7 @@ mod tests {
                     formation: FleetFormation::Center,
                     category: ShipModelCategory::Fighter,
                     quantity: 1,
+                    damage: 0,
                 }
             ],
             is_destroyed: false,

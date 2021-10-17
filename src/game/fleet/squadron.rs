@@ -47,6 +47,7 @@ pub struct FleetSquadron {
     pub formation: FleetFormation,
     pub category: ShipModelCategory,
     pub quantity: u16,
+    pub damage: u16,
 }
 
 #[derive(Deserialize)]
@@ -70,6 +71,7 @@ impl<'a> FromRow<'a, PgRow<'a>> for FleetSquadron {
             formation: row.try_get("formation")?,
             category: row.try_get("category")?,
             quantity: row.try_get::<i32, _>("quantity")? as u16,
+            damage: row.try_get::<i32, _>("damage")? as u16,
         })
     }
 }
@@ -108,24 +110,26 @@ impl FleetSquadron {
     pub async fn insert<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("INSERT INTO fleet__squadrons (id, fleet_id, category, formation, quantity) VALUES($1, $2, $3, $4, $5)")
+        sqlx::query("INSERT INTO fleet__squadrons (id, fleet_id, category, formation, quantity, damage) VALUES($1, $2, $3, $4, $5, $6)")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.fleet))
             .bind(self.category)
             .bind(self.formation)
             .bind(self.quantity as i32)
+            .bind(self.damage as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
 
     pub async fn update<E>(&self, exec: &mut E) -> Result<u64>
     where
         E: Executor<Database = Postgres> {
-        sqlx::query("UPDATE fleet__squadrons SET fleet_id = $2, category = $3, formation = $4, quantity = $5 WHERE id = $1")
+        sqlx::query("UPDATE fleet__squadrons SET fleet_id = $2, category = $3, formation = $4, quantity = $5, damage = $6 WHERE id = $1")
             .bind(Uuid::from(self.id))
             .bind(Uuid::from(self.fleet))
             .bind(self.category)
             .bind(self.formation)
             .bind(self.quantity as i32)
+            .bind(self.damage as i32)
             .execute(&mut *exec).await.map_err(ServerError::from)
     }
     
@@ -152,6 +156,7 @@ impl FleetSquadron {
                 formation: formation.clone(),
                 quantity: quantity as u16,
                 category: category.clone(),
+                damage: 0,
             };
             fs.insert(&mut *exec).await?;
         } else if fleet_squadron.is_some() && quantity > 0 {
@@ -316,6 +321,7 @@ mod tests {
             formation: FleetFormation::Center,
             category: ShipModelCategory::Corvette,
             quantity: 5,
+            damage: 0,
         });
         let none = None;
         let none_fs = None;

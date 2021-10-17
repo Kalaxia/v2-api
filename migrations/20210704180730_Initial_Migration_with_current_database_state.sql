@@ -91,7 +91,8 @@ CREATE TABLE IF NOT EXISTS fleet__squadrons(
     fleet_id UUID NOT NULL,
     category VARCHAR(25) NOT NULL,
     formation VARCHAR(10) NOT NULL,
-    quantity INT NOT NULL
+    quantity INT NOT NULL,
+    damage INT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS system__ship_queues(
     id UUID PRIMARY KEY,

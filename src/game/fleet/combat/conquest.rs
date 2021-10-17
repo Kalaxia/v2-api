@@ -202,11 +202,25 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn stop(system: &System, server: &GameServer) -> Result<()> {
+    pub async fn stop(system: &System, server: &GameServer, is_over: bool) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         
         if let Some(mut conquest) = c {
-            conquest.halt(&server.state, &server.id).await?;
+            if is_over {
+                conquest.ended_at = Time::now();
+                conquest.is_over = true;
+                conquest.update(&mut &server.state.db_pool).await?;
+
+                server.ws_broadcast(&protocol::Message::new(
+                    protocol::Action::ConquestCancelled,
+                    conquest.clone(),
+                    None
+                )).await?;
+                
+                server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
+            } else {
+                conquest.halt(&server.state, &server.id).await?;
+            }
         }
         Ok(())
     }
@@ -358,7 +372,6 @@ impl Conquest {
     }
 }
 
-    
 fn get_conquest_time(fleets: &Vec<&Fleet>, percent: f32, game_speed: GameOptionSpeed) -> f64 {
     let mut strength = 0;
 
@@ -390,7 +403,7 @@ mod tests
     #[test]
     fn test_get_conquest_time() {
         let mut fleet = get_fleet_mock();
-        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter));
+        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter, 0));
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
@@ -400,7 +413,7 @@ mod tests
     #[test]
     fn test_get_conquest_time_in_fast_mode() {
         let mut fleet = get_fleet_mock();
-        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter));
+        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter, 0));
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Fast;
 
@@ -410,7 +423,7 @@ mod tests
     #[test]
     fn test_get_conquest_time_with_percent() {
         let mut fleet = get_fleet_mock();
-        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter));
+        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter, 0));
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
@@ -420,7 +433,7 @@ mod tests
     #[test]
     fn test_get_conquest_min_time() {
         let mut fleet = get_fleet_mock();
-        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Cruiser));
+        fleet.squadrons.push(get_squadron_mock(100, ShipModelCategory::Cruiser, 0));
         let fleets = vec![&fleet];
         let game_speed = GameOptionSpeed::Medium;
 
@@ -430,10 +443,10 @@ mod tests
     #[test]
     fn test_get_conquest_time_with_multiple_fleets() {
         let mut fleet1 = get_fleet_mock();
-        fleet1.squadrons.push(get_squadron_mock(50, ShipModelCategory::Fighter));
-        fleet1.squadrons.push(get_squadron_mock(50, ShipModelCategory::Fighter));
+        fleet1.squadrons.push(get_squadron_mock(50, ShipModelCategory::Fighter, 0));
+        fleet1.squadrons.push(get_squadron_mock(50, ShipModelCategory::Fighter, 0));
         let mut fleet2 = get_fleet_mock();
-        fleet2.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter));
+        fleet2.squadrons.push(get_squadron_mock(100, ShipModelCategory::Fighter, 0));
         let fleets = vec![&fleet1, &fleet2];
         let game_speed = GameOptionSpeed::Medium;
 
@@ -452,13 +465,14 @@ mod tests
         }
     }
 
-    fn get_squadron_mock(quantity: u16, category: ShipModelCategory) -> FleetSquadron {
+    fn get_squadron_mock(quantity: u16, category: ShipModelCategory, damage: u16) -> FleetSquadron {
         FleetSquadron{
             id: FleetSquadronID(Uuid::new_v4()),
             fleet: FleetID(Uuid::new_v4()),
             formation: FleetFormation::Center,
             quantity,
             category,
+            damage,
         }
     }
 }

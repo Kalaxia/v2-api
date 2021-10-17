@@ -17,7 +17,8 @@ use crate::{
             squadron::{FleetSquadronID, FleetSquadron},
         },
         player::ranking::PlayerRanking,
-        game::server::{ GameServer, GameServerTask }
+        game::server::{ GameServer, GameServerTask },
+        ship::model::ShipModel,
     }
 };
 use futures::executor::block_on;
@@ -171,7 +172,7 @@ async fn attack(
         Some(target_squadron) => target_squadron,
         None => return Ok(None)
     };
-    let (remaining_ships, loss) = fire(&attacker, &target);
+    let (remaining_ships, loss, damage) = fire(&attacker, &target);
 
     log(
         gelf::Level::Debug,
@@ -235,7 +236,13 @@ async fn attack(
             if 0 < loss {
                 PlayerRanking::add_lost_ships(target_fleet.player, target.category, loss as i32, loss_strength, &mut tx).await?;
             
-                target_fleet.squadrons.iter_mut().filter(|fs| fs.id == target.id).for_each(|fs| fs.quantity = remaining_ships);
+                target_fleet.squadrons.iter_mut().filter(|fs| fs.id == target.id).for_each(|fs| {
+                    fs.quantity = remaining_ships;
+                });
+            } else {
+                target_fleet.squadrons.iter_mut().filter(|fs| fs.id == target.id).for_each(|fs| {
+                    fs.damage = damage;
+                });
             }
         } else {
             log(
@@ -314,7 +321,7 @@ fn pick_target_squadron(battle: &Battle, faction_id: FactionID, attacker: &Fleet
     potential_targets.choose(&mut rng).map(|(fid, fs)| (*fid, (*fs).clone()))
 }
 
-fn fire(attacker: &FleetSquadron, defender: &FleetSquadron) -> (u16, u16) {
+fn fire(attacker: &FleetSquadron, defender: &FleetSquadron) -> (u16, u16, u16) {
     let attacker_model = attacker.category.to_data();
     let attack_coeff = attacker.formation.attack_coeff(defender.formation);
     let defender_model = defender.category.to_data();
@@ -323,14 +330,29 @@ fn fire(attacker: &FleetSquadron, defender: &FleetSquadron) -> (u16, u16) {
     let percent = rng.gen_range(attacker_model.precision as f64 / 2.0, attacker_model.precision as f64);
 
     let quantity = attacker.quantity as f64 * percent / 100.0;
-    let damage = (quantity * attacker_model.damage as f64 * attack_coeff).ceil() as u16;
-    let nb_casualties = (damage as f64 / defender_model.hit_points as f64).floor() as i32;
-    let remaining_ships = defender.quantity as i32 - nb_casualties;
+    let damage = (quantity * attacker_model.damage as f64 * attack_coeff).ceil() as u16 + defender.damage;
 
+    let (nb_casualties, remaining_damage) = calculate_casualties(damage as f64, defender_model.hit_points as f64);
+    let remaining_ships = defender.quantity as i32 - nb_casualties;
+    let final_damage = {
+        if 0 < nb_casualties {
+            remaining_damage as u16
+        } else {
+            defender.damage + remaining_damage as u16
+        }
+    };
+    
     if remaining_ships < 0 {
-        return (0, defender.quantity);
+        return (0, defender.quantity, 0);
     }
-    (remaining_ships as u16, nb_casualties as u16)
+    (remaining_ships as u16, nb_casualties as u16, final_damage as u16)
+}
+
+fn calculate_casualties(damage: f64, hit_points: f64) -> (i32, i32) {
+    (
+        (damage / hit_points).floor() as i32,
+        (damage % hit_points) as i32
+    )
 }
 
 #[cfg(test)]
@@ -366,7 +388,7 @@ mod tests {
         excluded_fleets.insert(FleetID(Uuid::new_v4()), get_fleet_mock());
         
         for (fid, tfid, formation) in data {
-            let squadron = get_squadron_mock(ShipModelCategory::Corvette, formation, 5);
+            let squadron = get_squadron_mock(ShipModelCategory::Corvette, formation, 5, 0);
             let target = pick_target_squadron(&battle, FactionID(fid), &squadron, &excluded_fleets);
 
             assert_eq!(true, target.is_some());
@@ -388,10 +410,10 @@ mod tests {
         ];
 
         for (cat, quantity, tcat, tquantity, has_casualties) in data {
-            let attacker = get_squadron_mock(cat, FleetFormation::Right, quantity);
-            let defender = get_squadron_mock(tcat, FleetFormation::Left, tquantity);
+            let attacker = get_squadron_mock(cat, FleetFormation::Right, quantity, 0);
+            let defender = get_squadron_mock(tcat, FleetFormation::Left, tquantity, 0);
 
-            let (remaining_ships, nb_casualties) = fire(&attacker, &defender);
+            let (remaining_ships, nb_casualties, _damage) = fire(&attacker, &defender);
 
             if has_casualties {
                 assert_eq!(true, remaining_ships > 0);
@@ -402,6 +424,30 @@ mod tests {
                 assert_eq!(0, nb_casualties);
             }
         }
+    }
+
+    #[test]
+    fn test_fire_damage() {
+        let attacker = get_squadron_mock(ShipModelCategory::Corvette, FleetFormation::Center, 1, 0);
+        let defender = get_squadron_mock(ShipModelCategory::Corvette, FleetFormation::Center, 1, 0);
+
+        let (remaining_ships, nb_casualties, damage) = fire(&attacker, &defender);
+
+        assert_eq!(0, nb_casualties);
+        assert_eq!(1, remaining_ships);
+        assert_eq!(true, damage > 0);
+    }
+
+    #[test]
+    fn test_fire_with_damaged_ships() {
+        let attacker = get_squadron_mock(ShipModelCategory::Corvette, FleetFormation::Center, 1, 0);
+        let defender = get_squadron_mock(ShipModelCategory::Corvette, FleetFormation::Center, 1, 55);
+        
+        let (remaining_ships, nb_casualties, damage) = fire(&attacker, &defender);
+
+        assert_eq!(1, nb_casualties);
+        assert_eq!(0, remaining_ships);
+        assert_eq!(true, damage < 55);
     }
 
     fn get_battle_mock() -> Battle {
@@ -439,21 +485,22 @@ mod tests {
             destination_system: None,
             destination_arrival_date: None,
             squadrons: vec![
-                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Left, 10),
-                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Rear, 20),
-                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Center, 10),
+                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Left, 10, 0),
+                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Rear, 20, 0),
+                get_squadron_mock(ShipModelCategory::Fighter, FleetFormation::Center, 10, 0),
             ],
             is_destroyed: false,
         }
     }
 
-    fn get_squadron_mock(category: ShipModelCategory, formation: FleetFormation, quantity: u16) -> FleetSquadron {
+    fn get_squadron_mock(category: ShipModelCategory, formation: FleetFormation, quantity: u16, damage: u16) -> FleetSquadron {
         FleetSquadron{
             id: FleetSquadronID(Uuid::new_v4()),
             fleet: FleetID(Uuid::new_v4()),
             formation,
             category,
             quantity,
+            damage,
         }
     }
 }

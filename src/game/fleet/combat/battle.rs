@@ -180,19 +180,19 @@ impl Battle {
             .collect()
     }
 
-    fn process_victor(&self) -> Result<FactionID> {
+    fn process_victor(&self) -> Option<FactionID> {
         for (fid, fleets) in &self.fleets {
             for fleet in fleets.values() {
                 if fleet.squadrons.iter().any(|s| s.quantity > 0) {
-                    return Ok(*fid);
+                    return Some(*fid);
                 }
             }
         }
-        Err(InternalError::NotFound.into())
+        None
     }
 
     pub async fn engage(arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
-        Conquest::stop(&system, &server).await?;
+        Conquest::stop(&system, &server, false).await?;
         
         let mut fleets = orbiting_fleets.clone();
         fleets.insert(arriver.id.clone(), arriver.clone());
@@ -225,7 +225,7 @@ impl Battle {
     }
 
     pub async fn end(&mut self, server: &GameServer) -> Result<()> {
-        self.victor = Some(self.process_victor()?);
+        self.victor = self.process_victor();
         self.ended_at = Some(Time::now());
         self.update(&mut &server.state.db_pool).await?;
         
@@ -237,24 +237,37 @@ impl Battle {
 
         let fleet = Fleet::find(&self.attacker, &server.state.db_pool).await?;
         let system = System::find(self.system, &server.state.db_pool).await?;
+        let mut log_data = vec![
+            ("battle_id", self.id.0.to_string()),
+            ("system_id", self.system.0.to_string())
+        ];
+
+        if let Some(victor) = self.victor {
+            log_data.push(("victor_id", victor.0.to_string()));
+        }
 
         log(
             gelf::Level::Informational,
             "Battle ended",
             &format!("The battle on {} is over", system.to_log_message()),
-            vec![
-                ("battle_id", self.id.0.to_string()),
-                ("victor_id", self.victor.unwrap().0.to_string()),
-                ("system_id", self.system.0.to_string())
-            ],
+            log_data,
             &server.state.logger
         );
 
-        if self.victor == self.defender_faction {
-            return Ok(());
+        // If all the fleets are destroyed, in every case a current conquest would be stopped
+        if self.victor.is_none() {
+            return Conquest::stop(&system, &server, true).await;
+        }
+        // If the victor is from the same faction as the system's owner, conquest ceases
+        if let Some(owner) = system.player {
+            let owner_player = Player::find(owner, &server.state.db_pool).await?;
+
+            if owner_player.faction == self.victor {
+                return Conquest::stop(&system, &server, true).await;
+            }
         }
 
-        Conquest::resume(&fleet, &system, self.victor, &server).await
+        return Conquest::resume(&fleet, &system, self.victor, &server).await;
     }
 }
 

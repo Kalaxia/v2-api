@@ -192,7 +192,7 @@ impl Battle {
     }
 
     pub async fn engage(arriver: &Fleet, orbiting_fleets: &HashMap<FleetID, Fleet>, system: &System, defender_faction: Option<FactionID>, server: &GameServer) -> Result<()> {
-        Conquest::stop(&system, &server).await?;
+        Conquest::stop(&system, &server, false).await?;
         
         let mut fleets = orbiting_fleets.clone();
         fleets.insert(arriver.id.clone(), arriver.clone());
@@ -256,14 +256,14 @@ impl Battle {
 
         // If all the fleets are destroyed, in every case a current conquest would be stopped
         if self.victor.is_none() {
-            return Conquest::stop(&system, &server).await;
+            return Conquest::stop(&system, &server, true).await;
         }
         // If the victor is from the same faction as the system's owner, conquest ceases
         if let Some(owner) = system.player {
             let owner_player = Player::find(owner, &server.state.db_pool).await?;
 
             if owner_player.faction == self.victor {
-                return Conquest::stop(&system, &server).await;
+                return Conquest::stop(&system, &server, true).await;
             }
         }
 

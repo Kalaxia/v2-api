@@ -202,11 +202,25 @@ impl Conquest {
         Ok(())
     }
 
-    pub async fn stop(system: &System, server: &GameServer) -> Result<()> {
+    pub async fn stop(system: &System, server: &GameServer, is_over: bool) -> Result<()> {
         let c = Self::find_current_by_system(&system.id, &server.state.db_pool).await?;
         
         if let Some(mut conquest) = c {
-            conquest.halt(&server.state, &server.id).await?;
+            if is_over {
+                conquest.ended_at = Time::now();
+                conquest.is_over = true;
+                conquest.update(&mut &server.state.db_pool).await?;
+
+                server.ws_broadcast(&protocol::Message::new(
+                    protocol::Action::ConquestCancelled,
+                    conquest.clone(),
+                    None
+                )).await?;
+                
+                server.state.games().get(&server.id).unwrap().do_send(cancel_task!(conquest));
+            } else {
+                conquest.halt(&server.state, &server.id).await?;
+            }
         }
         Ok(())
     }
